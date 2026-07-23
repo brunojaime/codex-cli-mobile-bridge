@@ -4425,9 +4425,16 @@ ROOT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")/.." && pwd)"
 source "$ROOT_DIR/scripts/load_bridge_env.sh"
 PREVIEW_API_BASE_URL="${{PREVIEW_API_BASE_URL:-${{API_BASE_URL:-https://preview.nienfos.com/$SOURCE_APP/api}}}}"
 PREVIEW_API_BASE_URL="${{PREVIEW_API_BASE_URL%/}}"
+PREVIEW_ORIGIN="https://preview.nienfos.com/$SOURCE_APP"
+case "$PREVIEW_API_BASE_URL" in
+  "$PREVIEW_ORIGIN")
+    PREVIEW_API_BASE_URL="$PREVIEW_ORIGIN/api"
+    ;;
+esac
+export PREVIEW_API_BASE_URL
 USER_AGENT="${{PREVIEW_SMOKE_USER_AGENT:-CodexProjectFactoryPreviewSmoke/1.0}}"
 
-[[ "$PREVIEW_API_BASE_URL" == "https://preview.nienfos.com/$SOURCE_APP/api" ]] || \\
+[[ "$PREVIEW_API_BASE_URL" == "$PREVIEW_ORIGIN/api" ]] || \\
   fail "PREVIEW_API_BASE_URL must be https://preview.nienfos.com/$SOURCE_APP/api"
 bridge_env_require PREVIEW_ADMIN_PASSWORD
 
@@ -4508,6 +4515,13 @@ if bootstrap_token:
         {{"bootstrapToken": bootstrap_token, "email": email, "password": password}},
     )
     if status not in (200, 409):
+        if status == 405 and bootstrap.get("error", {{}}).get("code") == "method_not_allowed":
+            raise SystemExit(
+                "bootstrap failed: preview API base resolved to an endpoint that "
+                f"does not accept POST. effective_url={{base_url}}/admin/bootstrap "
+                f"expected_url=https://preview.nienfos.com/{{source_app}}/api/admin/bootstrap "
+                f"body={{bootstrap}}"
+            )
         raise SystemExit(f"bootstrap failed: {{status}} {{bootstrap}}")
 
 status, login = request("POST", "/auth/login", {{"email": email, "password": password}})

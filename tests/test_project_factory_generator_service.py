@@ -627,6 +627,15 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
     assert "for delay in (0.5, 1.0, 2.0, 3.0, 5.0, 8.0)" in (
         smoke_preview_content
     )
+    assert 'PREVIEW_ORIGIN="https://preview.nienfos.com/$SOURCE_APP"' in (
+        smoke_preview_content
+    )
+    assert 'PREVIEW_API_BASE_URL="$PREVIEW_ORIGIN/api"' in smoke_preview_content
+    assert "export PREVIEW_API_BASE_URL" in smoke_preview_content
+    assert "expected_url=https://preview.nienfos.com/{source_app}/api/admin/bootstrap" in (
+        smoke_preview_content
+    )
+    assert "does not accept POST" in smoke_preview_content
     assert "android-preview-v${version//+/-build.}" in android_preview_content
     assert "scripts/smoke_preview_api.sh" in android_preview_content
     assert "scripts/load_bridge_env.sh" in android_preview_content
