@@ -430,6 +430,7 @@ class ProjectFactoryInitService:
             completed_iterations = 0
             completed_by_reviewer = False
             codex_command = self._settings.codex_command if self._settings else "codex"
+            codex_exec_args = self._settings.codex_exec_args if self._settings else None
 
             for iteration in range(1, _MAX_AUTOMATIC_UX_ITERATIONS + 1):
                 generator_prompt_path = _ux_iteration_prompt_path(
@@ -465,6 +466,7 @@ class ProjectFactoryInitService:
                             generator_prompt_path,
                             cwd=target,
                         ),
+                        exec_args=codex_exec_args,
                     ),
                     cwd=target,
                 )
@@ -475,7 +477,11 @@ class ProjectFactoryInitService:
                     iteration=iteration,
                     result=generator_result,
                 )
-                if generator_result.exit_code != 0:
+                if _automatic_ux_result_failed(
+                    generator_result,
+                    target=target,
+                    role="generator",
+                ):
                     return self.block_phase(
                         job.id,
                         ProjectFactoryInitPhaseName.UX_GENERATOR.value,
@@ -496,6 +502,7 @@ class ProjectFactoryInitService:
                             reviewer_prompt_path,
                             cwd=target,
                         ),
+                        exec_args=codex_exec_args,
                     ),
                     cwd=target,
                 )
@@ -506,7 +513,11 @@ class ProjectFactoryInitService:
                     iteration=iteration,
                     result=reviewer_result,
                 )
-                if reviewer_result.exit_code != 0:
+                if _automatic_ux_result_failed(
+                    reviewer_result,
+                    target=target,
+                    role="reviewer",
+                ):
                     job = self.complete_phase(
                         job.id,
                         ProjectFactoryInitPhaseName.UX_GENERATOR.value,
@@ -5605,6 +5616,40 @@ def _automatic_ux_prompt_file_instruction(prompt_path: Path, *, cwd: Path) -> st
         "Do not ask for the prompt contents. Open the file, execute its "
         "instructions exactly, and write the requested `.codex/ux/` evidence."
     )
+
+
+def _automatic_ux_result_failed(
+    result: ProjectFactoryInitCommandResult,
+    *,
+    target: Path,
+    role: str,
+) -> bool:
+    if result.exit_code != 0:
+        return True
+    output = "\n".join(part for part in (result.stdout, result.stderr) if part).lower()
+    blocked_markers = (
+        "bwrap:",
+        "failed rtm_newaddr",
+        "operation not permitted",
+        "current sandbox",
+        "execution sandbox",
+        "workspace tools are blocked",
+        "workspace is mounted read-only",
+        "filesystem is also configured as read-only",
+        "could not execute the ux prompt",
+        "could not open `.codex/factory/prompts/",
+        "could not read the required `visual-ux-polish`",
+        "could not read the prompt",
+        "could not write evidence",
+        "cannot write the requested `.codex/ux/` evidence",
+        "no files were changed",
+    )
+    if any(marker in output for marker in blocked_markers):
+        return True
+    expected_report = target / ".codex" / "ux" / f"ux-{role}-report.md"
+    return not expected_report.is_file() or not expected_report.read_text(
+        encoding="utf-8"
+    ).strip()
 
 
 def _automatic_ux_blocker(

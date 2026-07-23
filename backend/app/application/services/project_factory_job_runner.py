@@ -1108,9 +1108,19 @@ decision:
         )
 
 
-def _codex_argv(command: str, prompt: str) -> tuple[str, ...]:
+def _codex_argv(
+    command: str,
+    prompt: str,
+    *,
+    exec_args: str | None = None,
+) -> tuple[str, ...]:
     base = tuple(shlex.split(command.strip() or "codex"))
-    return (*base, "exec", "--skip-git-repo-check", "--color", "never", prompt)
+    args = tuple(shlex.split(exec_args.strip())) if exec_args else (
+        "--skip-git-repo-check",
+        "--color",
+        "never",
+    )
+    return (*base, "exec", *args, prompt)
 
 
 def _ux_iteration_prompt_path(prompt_root: Path, stem: str, iteration: int) -> Path:
