@@ -11,6 +11,13 @@ from backend.app.application.services.project_factory_init_service import (
     ProjectFactoryInitConflictError,
     ProjectFactoryInitService,
 )
+from backend.app.domain.entities.agent_configuration import AgentId, AgentType
+from backend.app.domain.entities.chat_message import (
+    ChatMessage,
+    ChatMessageAuthorType,
+    ChatMessageRole,
+    ChatMessageStatus,
+)
 from backend.app.domain.entities.chat_session import ChatSession
 from backend.app.domain.entities.project_factory_init import (
     ProjectFactoryInitArtifact,
@@ -320,6 +327,94 @@ def test_init_service_runs_automatic_ux_after_domain_brief_before_validation(
         completed.phase(ProjectFactoryInitPhaseName.UX_REVIEWER).completed_at
         <= completed.phase(ProjectFactoryInitPhaseName.LOCAL_VALIDATION).completed_at
     )
+
+
+def test_init_service_uses_approved_project_factory_chat_as_ux_domain_brief(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    command_runner = _FakeInitCommandRunner(ux_complete_after=1)
+    repository = InMemoryChatRepository(projects_root=str(tmp_path))
+    repository.save_session(
+        ChatSession(
+            id="chat-1",
+            title="Puerto",
+            workspace_path=str(tmp_path / "prueba-22"),
+            workspace_name="prueba-22",
+        )
+    )
+    _save_chat_message(
+        repository,
+        session_id="chat-1",
+        role=ChatMessageRole.USER,
+        agent_id=AgentId.USER,
+        content=(
+            "este proyecto es del puerto. admin y empleado cargan datos del excel; "
+            "usuarios ven los datos."
+        ),
+    )
+    _save_chat_message(
+        repository,
+        session_id="chat-1",
+        role=ChatMessageRole.ASSISTANT,
+        agent_id=AgentId.GENERATOR,
+        content=(
+            "**Contrato Aprobado: prueba-22**\n\nApp operativa para el puerto con "
+            "Admin, Empleado y Usuario. Datos reales persistentes, sin mock/demo."
+        ),
+    )
+    _save_chat_message(
+        repository,
+        session_id="chat-1",
+        role=ChatMessageRole.ASSISTANT,
+        agent_id=AgentId.GENERATOR,
+        content="PROJECT_FACTORY_READY_FOR_BUILD",
+    )
+    monkeypatch.setenv(
+        "VISUAL_UX_POLISH_SKILL_PATH",
+        str(_visual_ux_skill_fixture(tmp_path)),
+    )
+    service = ProjectFactoryInitService(
+        state_root=tmp_path / ".state",
+        command_runner=command_runner,
+        chat_repository=repository,
+        settings=Settings(
+            projects_root=str(tmp_path),
+            project_factory_state_dir=str(tmp_path / ".state"),
+            chat_store_backend="memory",
+            audio_transcription_backend="disabled",
+            speech_synthesis_backend="disabled",
+            codex_command="fake-codex",
+        ),
+    )
+    job = service.start_or_resume(
+        draft_id="draft-1",
+        chat_session_id="chat-1",
+        project_name="prueba-22",
+        slug="prueba-22",
+        frontend_strategy="flutter",
+    )
+
+    completed = service.run_pipeline(job.id)
+
+    workspace = tmp_path / "prueba-22"
+    assert command_runner.ux_generator_calls == 1
+    assert command_runner.ux_reviewer_calls == 1
+    assert (
+        completed.phase(ProjectFactoryInitPhaseName.UX_REVIEWER).status
+        == ProjectFactoryInitPhaseStatus.COMPLETED
+    )
+    domain_brief = (workspace / ".codex/ux/domain-brief.md").read_text(
+        encoding="utf-8"
+    )
+    assert "Approved Project Factory Domain Brief" in domain_brief
+    assert "proyecto es del puerto" in domain_brief
+    assert "Contrato Aprobado: prueba-22" in domain_brief
+    prompt = (workspace / ".codex/factory/prompts/ux-generator.md").read_text(
+        encoding="utf-8"
+    )
+    assert "Read `.codex/ux/domain-brief.md`" in prompt
+    assert "proyecto es del puerto" in prompt
 
 
 def test_init_service_automatic_ux_uses_configured_codex_exec_args(
@@ -665,6 +760,37 @@ def _write_domain_brief(workspace: Path) -> Path:
         encoding="utf-8",
     )
     return brief_path
+
+
+def _save_chat_message(
+    repository: InMemoryChatRepository,
+    *,
+    session_id: str,
+    role: ChatMessageRole,
+    agent_id: AgentId,
+    content: str,
+) -> None:
+    repository.save_message(
+        ChatMessage(
+            id=f"message-{len(repository.list_messages(session_id)) + 1}",
+            session_id=session_id,
+            role=role,
+            author_type=(
+                ChatMessageAuthorType.HUMAN
+                if role == ChatMessageRole.USER
+                else ChatMessageAuthorType.ASSISTANT
+            ),
+            agent_id=agent_id,
+            agent_type=(
+                AgentType.HUMAN
+                if agent_id == AgentId.USER
+                else AgentType.GENERATOR
+            ),
+            agent_label=None if agent_id == AgentId.USER else "Project Factory",
+            content=content,
+            status=ChatMessageStatus.COMPLETED,
+        )
+    )
 
 
 class _FakeInitCommandRunner:

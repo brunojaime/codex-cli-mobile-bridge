@@ -378,7 +378,8 @@ class ProjectFactoryInitService:
                     ),
                     context_available=False,
                 )
-            if not _has_domain_factory_brief(target):
+            domain_brief = self._domain_brief_for_automatic_ux(job, target)
+            if not domain_brief:
                 return self.wait_for_domain_brief_phase(job.id)
 
             try:
@@ -402,9 +403,11 @@ class ProjectFactoryInitService:
 
             prompt_root = target / ".codex" / "factory" / "prompts"
             prompt_root.mkdir(parents=True, exist_ok=True)
+            _write_automatic_ux_domain_brief(target, domain_brief)
             generator_base, reviewer_base = _automatic_ux_prompts(
                 job,
                 target=target,
+                domain_brief=domain_brief,
                 visual_ux_prompt_section=visual_ux_skill_context.prompt_section,
             )
             (prompt_root / "ux-generator.md").write_text(
@@ -787,6 +790,23 @@ class ProjectFactoryInitService:
             self._jobs[job.id] = job
             self._persist_job(job)
             return job
+
+    def _domain_brief_for_automatic_ux(
+        self,
+        job: ProjectFactoryInitJob,
+        target: Path,
+    ) -> str:
+        domain_factory_brief = _read_domain_factory_brief(target)
+        if domain_factory_brief:
+            return domain_factory_brief
+        session_id = job.relationships.chat_session_id
+        if not session_id or self._chat_repository is None:
+            return ""
+        try:
+            messages = self._chat_repository.list_messages(session_id)
+        except Exception:
+            return ""
+        return _project_factory_chat_domain_brief(messages)
 
     def record_remote_resource(
         self,
@@ -5345,7 +5365,7 @@ def _has_waiting_phase(job: ProjectFactoryInitJob) -> bool:
     )
 
 
-def _has_domain_factory_brief(target: Path) -> bool:
+def _read_domain_factory_brief(target: Path) -> str:
     state_path = target / ".codex" / "factory" / "domain-factory-state.json"
     if state_path.is_file():
         try:
@@ -5356,11 +5376,63 @@ def _has_domain_factory_brief(target: Path) -> bool:
         if brief_path:
             candidate = target / brief_path
             if candidate.is_file() and candidate.read_text(encoding="utf-8").strip():
-                return True
+                return candidate.read_text(encoding="utf-8").strip()
     for candidate in (target / "specs").glob("*/intake/original-brief.md"):
         if candidate.is_file() and candidate.read_text(encoding="utf-8").strip():
-            return True
-    return False
+            return candidate.read_text(encoding="utf-8").strip()
+    return ""
+
+
+def _project_factory_chat_domain_brief(messages: list[ChatMessage]) -> str:
+    completed = [
+        message
+        for message in messages
+        if message.status == ChatMessageStatus.COMPLETED and message.content.strip()
+    ]
+    if not completed:
+        return ""
+    ready_seen = any(
+        "PROJECT_FACTORY_READY_FOR_BUILD" in message.content for message in completed
+    )
+    if not ready_seen:
+        return ""
+    relevant = [
+        message
+        for message in completed
+        if message.role in {ChatMessageRole.USER, ChatMessageRole.ASSISTANT}
+        and message.agent_id in {AgentId.USER, AgentId.GENERATOR}
+    ]
+    if not relevant:
+        return ""
+    lines = [
+        "# Approved Project Factory Domain Brief",
+        "",
+        "This brief was captured in the Project Factory chat before deterministic init resumed.",
+        "",
+    ]
+    for message in relevant[-8:]:
+        author = "User" if message.role == ChatMessageRole.USER else (
+            message.agent_label or "Project Factory"
+        )
+        lines.append(f"## {author}")
+        lines.append("")
+        lines.append(message.content.strip())
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
+def _write_automatic_ux_domain_brief(target: Path, domain_brief: str) -> Path:
+    brief_path = target / ".codex" / "ux" / "domain-brief.md"
+    brief_path.parent.mkdir(parents=True, exist_ok=True)
+    brief_path.write_text(domain_brief.strip() + "\n", encoding="utf-8")
+    return brief_path
+
+
+def _markdown_excerpt(text: str, *, max_chars: int) -> str:
+    normalized = text.strip()
+    if len(normalized) <= max_chars:
+        return normalized
+    return normalized[:max_chars].rstrip() + "\n\n[excerpt truncated]"
 
 
 def _verified_foundation_tasks_ready(job: ProjectFactoryInitJob) -> bool:
@@ -5504,6 +5576,7 @@ def _automatic_ux_prompts(
     job: ProjectFactoryInitJob,
     *,
     target: Path,
+    domain_brief: str,
     visual_ux_prompt_section: str,
 ) -> tuple[str, str]:
     preview_url = f"https://preview.nienfos.com/{job.slug}"
@@ -5516,6 +5589,14 @@ Source app: `{job.slug}`
 Frontend strategy: `{job.frontend_strategy}`
 Preview URL: `{preview_url}`
 Preview API: `{preview_api}`
+
+Required domain brief:
+- Read `.codex/ux/domain-brief.md` before making UX decisions.
+- Base the early UX baseline on that approved Project Factory/domain contract.
+- Do not invent another product category when the brief already defines one.
+
+Domain brief excerpt:
+{_markdown_excerpt(domain_brief, max_chars=6000)}
 
 Hard constraints:
 - Do not recreate the project, GitHub repository, Cloudflare resources, Android
