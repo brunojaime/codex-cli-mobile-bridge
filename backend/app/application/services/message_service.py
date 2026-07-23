@@ -90,6 +90,35 @@ _GITHUB_ACCESS_GUIDANCE = (
     "or `git ls-remote https://github.com/OWNER/REPO.git` before concluding "
     "that a repository is missing or inaccessible."
 )
+_PROJECT_FACTORY_READY_FOR_BUILD_MARKER = "PROJECT_FACTORY_READY_FOR_BUILD"
+_PROJECT_FACTORY_CONFIRMATION_BLOCKERS = (
+    "no comencemos",
+    "no empecemos",
+    "no arranquemos",
+    "no arranques",
+    "no empieces",
+    "todavia no",
+    "todavía no",
+    "espera",
+    "esperá",
+)
+_PROJECT_FACTORY_CONFIRMATION_PHRASES = (
+    "ok dale para adelante",
+    "dale para adelante",
+    "ok comencemos",
+    "comencemos",
+    "empecemos",
+    "arranquemos",
+    "arranca",
+    "arrancá",
+    "empeza",
+    "empezá",
+    "dale arrancá",
+    "dale arranca",
+    "go ahead",
+    "start build",
+    "start building",
+)
 _PROD_BRIDGE_CHAT_GOVERNANCE_NOTICE = """\
 Production Bridge governance:
 - This is the production Codex Mobile Bridge backend.
@@ -239,6 +268,14 @@ _IN_FLIGHT_MESSAGE_STATUSES = {
 }
 _DEFAULT_TRANSCRIPT_PAGE_SIZE = 40
 _MAX_TRANSCRIPT_PAGE_SIZE = 200
+
+
+def _normalize_project_factory_confirmation(raw_text: str | None) -> str:
+    return re.sub(
+        r"\s+",
+        " ",
+        re.sub(r"[^\w]+", " ", raw_text or "", flags=re.UNICODE).lower(),
+    ).strip()
 
 
 class MaintenanceModeError(RuntimeError):
@@ -1094,6 +1131,14 @@ class MessageService:
             conversation_kind == JobConversationKind.PRIMARY
             and author_type == ChatMessageAuthorType.HUMAN
         ):
+            consumed_job = self._maybe_consume_project_factory_ready_marker(
+                session=session,
+                message=message,
+                current_configuration=current_configuration,
+                trigger_source=trigger_source,
+            )
+            if consumed_job is not None:
+                return consumed_job
             consumed_job = self._maybe_consume_domain_factory_intake(
                 session=session,
                 message=message,
@@ -1222,6 +1267,158 @@ class MessageService:
         self._queue_session_title_refresh(session.id)
         return job
 
+    def _maybe_consume_project_factory_ready_marker(
+        self,
+        *,
+        session: ChatSession,
+        message: str,
+        current_configuration: AgentConfiguration,
+        trigger_source: AgentTriggerSource,
+    ) -> Job | None:
+        if not self._is_project_factory_intake_session(current_configuration):
+            return None
+        if not self._is_project_factory_build_ready_confirmation(
+            session=session,
+            message=message,
+        ):
+            return None
+
+        waiting_init_jobs = self._project_factory_init_jobs_waiting_for_session(
+            session.id
+        )
+        resumed_init_job_ids = tuple(str(init_job.id) for init_job in waiting_init_jobs)
+        run_id = str(uuid4())
+        entry_agent_id = self._entry_agent_for_configuration(current_configuration)
+        entry_agent_definition = current_configuration.agents[entry_agent_id]
+        if resumed_init_job_ids:
+            assistant_content = (
+                "Contrato aprobado. Reanudé el init determinístico asociado a "
+                "este draft/session; el chat de Project Factory no va a crear "
+                "archivos, repos, previews ni APKs por su cuenta."
+            )
+            latest_activity = "Project Factory ready marker consumed; deterministic init resumed."
+        else:
+            assistant_content = (
+                "Contrato aprobado, pero no encontré un init determinístico "
+                "asociado a este chat para reanudar. Usá la acción de aprobar/"
+                "iniciar Project Factory para crear o vincular el init job; no "
+                "voy a ejecutar el build desde el chat conversacional."
+            )
+            latest_activity = "Project Factory ready marker consumed without a linked init job."
+        user_message = ChatMessage(
+            id=str(uuid4()),
+            session_id=session.id,
+            role=ChatMessageRole.USER,
+            author_type=ChatMessageAuthorType.HUMAN,
+            agent_id=AgentId.USER,
+            agent_type=AgentType.HUMAN,
+            visibility=AgentVisibilityMode.VISIBLE,
+            trigger_source=trigger_source,
+            run_id=run_id,
+            content=message,
+            status=ChatMessageStatus.COMPLETED,
+        )
+        assistant_message = ChatMessage(
+            id=str(uuid4()),
+            session_id=session.id,
+            role=ChatMessageRole.ASSISTANT,
+            author_type=ChatMessageAuthorType.ASSISTANT,
+            agent_id=entry_agent_id,
+            agent_type=entry_agent_definition.agent_type,
+            agent_label=entry_agent_definition.label,
+            visibility=entry_agent_definition.visibility,
+            trigger_source=trigger_source,
+            run_id=run_id,
+            content=assistant_content,
+            status=ChatMessageStatus.COMPLETED,
+        )
+        job = Job(
+            id=str(uuid4()),
+            session_id=session.id,
+            message=message,
+            user_message_id=user_message.id,
+            assistant_message_id=assistant_message.id,
+            conversation_kind=JobConversationKind.PRIMARY,
+            agent_id=entry_agent_id,
+            agent_type=entry_agent_definition.agent_type,
+            trigger_source=trigger_source,
+            run_id=run_id,
+            execution_message=message,
+        )
+        job.sync(
+            status=JobStatus.COMPLETED,
+            response=assistant_content,
+            phase="Completed",
+            latest_activity=latest_activity,
+        )
+        updated_session = self.get_session(session.id) or session
+        updated_session.active_agent_run_id = None
+        updated_session.active_agent_turn_index = 0
+        updated_session.auto_turn_index = 0
+        updated_session.touch()
+        self._repository.save_turn(
+            updated_session,
+            messages=[user_message, assistant_message],
+            job=job,
+            agent_run=None,
+        )
+        self._start_project_factory_init_jobs(
+            waiting_init_jobs,
+            thread_name_prefix="project-factory-init-ready",
+        )
+        self._queue_session_title_refresh(session.id)
+        return job
+
+    def _is_project_factory_intake_session(
+        self,
+        configuration: AgentConfiguration,
+    ) -> bool:
+        normalized = configuration.normalized()
+        generator = normalized.agents.get(AgentId.GENERATOR)
+        if generator is None or not generator.enabled:
+            return False
+        label = generator.label.strip().lower()
+        prompt = generator.prompt
+        return (
+            label == "project factory"
+            or "New Project Factory Codex" in prompt
+            or _PROJECT_FACTORY_READY_FOR_BUILD_MARKER in prompt
+        )
+
+    def _is_project_factory_build_ready_confirmation(
+        self,
+        *,
+        session: ChatSession,
+        message: str,
+    ) -> bool:
+        if _PROJECT_FACTORY_READY_FOR_BUILD_MARKER in message:
+            return True
+        if not self._session_has_project_factory_ready_marker(session.id):
+            return False
+        normalized = _normalize_project_factory_confirmation(message)
+        if not normalized:
+            return False
+        if any(
+            blocker in normalized
+            for blocker in _PROJECT_FACTORY_CONFIRMATION_BLOCKERS
+        ):
+            return False
+        if normalized in {"ok", "dale"}:
+            return True
+        return any(
+            confirmation in normalized
+            for confirmation in _PROJECT_FACTORY_CONFIRMATION_PHRASES
+        )
+
+    def _session_has_project_factory_ready_marker(self, session_id: str) -> bool:
+        return any(
+            message.role == ChatMessageRole.ASSISTANT
+            and message.agent_id == AgentId.GENERATOR
+            and message.status == ChatMessageStatus.COMPLETED
+            and _PROJECT_FACTORY_READY_FOR_BUILD_MARKER in message.content
+            for message in self._repository.list_messages(session_id)
+        )
+
     def _maybe_consume_domain_factory_intake(
         self,
         *,
@@ -1318,14 +1515,41 @@ class MessageService:
         init_service = self._project_factory_init_service
         if init_service is None:
             return
+        self._resume_project_factory_init_for_session(
+            session_id=session_id,
+            thread_name_prefix="project-factory-init-domain-brief",
+        )
+
+    def _resume_project_factory_init_for_session(
+        self,
+        *,
+        session_id: str,
+        thread_name_prefix: str,
+    ) -> tuple[str, ...]:
+        waiting_init_jobs = self._project_factory_init_jobs_waiting_for_session(
+            session_id
+        )
+        self._start_project_factory_init_jobs(
+            waiting_init_jobs,
+            thread_name_prefix=thread_name_prefix,
+        )
+        return tuple(str(init_job.id) for init_job in waiting_init_jobs)
+
+    def _project_factory_init_jobs_waiting_for_session(
+        self,
+        session_id: str,
+    ) -> tuple[Any, ...]:
+        init_service = self._project_factory_init_service
+        if init_service is None:
+            return ()
         list_jobs = getattr(init_service, "list_jobs", None)
-        run_pipeline = getattr(init_service, "run_pipeline", None)
-        if list_jobs is None or run_pipeline is None:
-            return
+        if list_jobs is None:
+            return ()
         try:
             jobs = list_jobs(limit=200)
         except Exception:
-            return
+            return ()
+        waiting: list[Any] = []
         for init_job in jobs:
             relationships = getattr(init_job, "relationships", None)
             if getattr(relationships, "chat_session_id", None) != session_id:
@@ -1337,10 +1561,26 @@ class MessageService:
                 for phase in phases
             ):
                 continue
+            waiting.append(init_job)
+        return tuple(waiting)
+
+    def _start_project_factory_init_jobs(
+        self,
+        init_jobs: tuple[Any, ...],
+        *,
+        thread_name_prefix: str,
+    ) -> None:
+        init_service = self._project_factory_init_service
+        if init_service is None:
+            return
+        run_pipeline = getattr(init_service, "run_pipeline", None)
+        if run_pipeline is None:
+            return
+        for init_job in init_jobs:
             threading.Thread(
                 target=run_pipeline,
                 args=(init_job.id,),
-                name=f"project-factory-init-domain-brief-{init_job.id}",
+                name=f"{thread_name_prefix}-{init_job.id}",
                 daemon=True,
             ).start()
 

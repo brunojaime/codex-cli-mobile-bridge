@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import tempfile
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 import zipfile
 from xml.sax.saxutils import escape
 
@@ -482,6 +483,33 @@ class _BlockingExecuteProvider(_ControlledExecutionProvider):
         if not self.release_execute.wait(timeout=2):
             raise TimeoutError("Timed out waiting to release blocked execute.")
         return super().execute(*args, **kwargs)
+
+
+class _WaitingProjectFactoryInitService:
+    def __init__(self, *, session_id: str, init_job_id: str = "init-waiting-1") -> None:
+        self.resumed: list[str] = []
+        self.resume_event = threading.Event()
+        self._jobs = [
+            SimpleNamespace(
+                id=init_job_id,
+                relationships=SimpleNamespace(chat_session_id=session_id),
+                phases=[
+                    SimpleNamespace(
+                        status=SimpleNamespace(
+                            value="queued_waiting_for_domain_brief"
+                        )
+                    )
+                ],
+            )
+        ]
+
+    def list_jobs(self, *, limit: int) -> list[SimpleNamespace]:
+        assert limit == 200
+        return self._jobs
+
+    def run_pipeline(self, init_job_id: str) -> None:
+        self.resumed.append(init_job_id)
+        self.resume_event.set()
 
 
 class _FakeSpeechSynthesizer(SpeechSynthesizer):
@@ -1444,6 +1472,23 @@ def build_agent_configuration_domain(
             "agents": {agent["agent_id"]: agent for agent in payload["agents"]},
         }
     )
+
+
+def build_project_factory_intake_configuration() -> AgentConfiguration:
+    configuration = AgentConfiguration.default().normalized()
+    generator = configuration.agents[AgentId.GENERATOR]
+    generator.enabled = True
+    generator.label = "Project Factory"
+    generator.prompt = (
+        "You are the New Project Factory Codex inside Codex Mobile Bridge. "
+        "End only a fully reviewed contract with PROJECT_FACTORY_READY_FOR_BUILD."
+    )
+    generator.max_turns = 1
+    configuration.agents[AgentId.REVIEWER].enabled = False
+    configuration.agents[AgentId.REVIEWER].max_turns = 0
+    configuration.agents[AgentId.SUMMARY].enabled = False
+    configuration.agents[AgentId.SUMMARY].max_turns = 0
+    return configuration.normalized()
 
 
 def test_message_flow_returns_completed_response() -> None:
@@ -10457,6 +10502,134 @@ def test_submit_message_applies_codex_guidance_and_passes_codex_options() -> Non
         assert "Prefer these Codex skills" in request["message"]
         assert "`skill-creator`" in request["message"]
         assert "`github`" in request["message"]
+
+
+def test_project_factory_ready_marker_resumes_init_without_chat_execution() -> None:
+    with TemporaryDirectory() as temp_dir:
+        project_dir = Path(temp_dir) / "prueba-23"
+        project_dir.mkdir()
+        repository = InMemoryChatRepository(projects_root=temp_dir)
+        provider = _ControlledExecutionProvider()
+        service = MessageService(
+            repository=repository,
+            execution_provider=provider,
+            default_workspace_path=temp_dir,
+            audio_transcriber=DisabledAudioTranscriber(),
+        )
+        session = service.create_session(
+            title="prueba-23",
+            workspace_path=str(project_dir),
+            title_is_placeholder=False,
+        )
+        service.update_agent_configuration(
+            session_id=session.id,
+            configuration=build_project_factory_intake_configuration(),
+        )
+        init_service = _WaitingProjectFactoryInitService(session_id=session.id)
+        service.set_project_factory_init_service(init_service)
+
+        job = service.submit_message(
+            "PROJECT_FACTORY_READY_FOR_BUILD",
+            session_id=session.id,
+        )
+
+        assert job.status == JobStatus.COMPLETED
+        assert provider.requests == []
+        assert init_service.resume_event.wait(timeout=1)
+        assert init_service.resumed == ["init-waiting-1"]
+        messages = repository.list_messages(session.id)
+        assert messages[-1].status == ChatMessageStatus.COMPLETED
+        assert "init determinístico" in messages[-1].content
+        assert "no va a crear archivos" in messages[-1].content
+        refreshed = repository.get_session(session.id)
+        assert refreshed is not None
+        assert refreshed.active_agent_run_id is None
+
+
+def test_project_factory_short_confirmation_after_ready_marker_is_not_executed() -> (
+    None
+):
+    with TemporaryDirectory() as temp_dir:
+        project_dir = Path(temp_dir) / "prueba-24"
+        project_dir.mkdir()
+        repository = InMemoryChatRepository(projects_root=temp_dir)
+        provider = _ControlledExecutionProvider()
+        service = MessageService(
+            repository=repository,
+            execution_provider=provider,
+            default_workspace_path=temp_dir,
+            audio_transcriber=DisabledAudioTranscriber(),
+        )
+        session = service.create_session(
+            title="prueba-24",
+            workspace_path=str(project_dir),
+            title_is_placeholder=False,
+        )
+        service.update_agent_configuration(
+            session_id=session.id,
+            configuration=build_project_factory_intake_configuration(),
+        )
+        repository.save_message(
+            ChatMessage(
+                id="contract-ready",
+                session_id=session.id,
+                role=ChatMessageRole.ASSISTANT,
+                author_type=ChatMessageAuthorType.ASSISTANT,
+                agent_id=AgentId.GENERATOR,
+                agent_type=AgentType.GENERATOR,
+                agent_label="Project Factory",
+                content=(
+                    "Contrato aprobado para Operaciones Puerto.\n"
+                    "PROJECT_FACTORY_READY_FOR_BUILD"
+                ),
+                status=ChatMessageStatus.COMPLETED,
+            )
+        )
+        init_service = _WaitingProjectFactoryInitService(session_id=session.id)
+        service.set_project_factory_init_service(init_service)
+
+        job = service.submit_message("ok, dale para adelante", session_id=session.id)
+
+        assert job.status == JobStatus.COMPLETED
+        assert provider.requests == []
+        assert init_service.resume_event.wait(timeout=1)
+        assert init_service.resumed == ["init-waiting-1"]
+
+
+def test_project_factory_ready_marker_without_init_does_not_execute_chat_build() -> (
+    None
+):
+    with TemporaryDirectory() as temp_dir:
+        project_dir = Path(temp_dir) / "prueba-25"
+        project_dir.mkdir()
+        repository = InMemoryChatRepository(projects_root=temp_dir)
+        provider = _ControlledExecutionProvider()
+        service = MessageService(
+            repository=repository,
+            execution_provider=provider,
+            default_workspace_path=temp_dir,
+            audio_transcriber=DisabledAudioTranscriber(),
+        )
+        session = service.create_session(
+            title="prueba-25",
+            workspace_path=str(project_dir),
+            title_is_placeholder=False,
+        )
+        service.update_agent_configuration(
+            session_id=session.id,
+            configuration=build_project_factory_intake_configuration(),
+        )
+
+        job = service.submit_message(
+            "PROJECT_FACTORY_READY_FOR_BUILD",
+            session_id=session.id,
+        )
+
+        assert job.status == JobStatus.COMPLETED
+        assert provider.requests == []
+        messages = repository.list_messages(session.id)
+        assert "no encontré un init determinístico" in messages[-1].content
+        assert "no voy a ejecutar el build desde el chat" in messages[-1].content
 
 
 def test_prod_bridge_repo_message_adds_governance_and_read_only_sandbox() -> None:

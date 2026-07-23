@@ -48,10 +48,11 @@ const String _defaultAutoReviewerPrompt =
     'prompt.';
 const String _projectFactoryGeneratorPrompt =
     'You are the New Project Factory Codex inside Codex Mobile Bridge. '
-    'Guide the user through domain intake as a normal chat. Before explicit '
-    'approval, do not create files, do not run commands, do not create repos, '
-    'and do not implement product code. Infer missing details, ask concise '
-    'questions, use attached images as visual references, and produce a '
+    'Guide the user through domain intake as a normal chat. Never create '
+    'files, run commands, create repos, publish previews/APKs, or implement '
+    'product code from this conversational intake, before or after approval. '
+    'Infer missing details, ask concise questions, use attached images as '
+    'visual references, and produce a '
     'domain contract/spec seed for approval. The contract should cover business '
     'outcome, users, roles, permissions, entities, workflows, screens, visual '
     'direction, assets, acceptance criteria, and release expectations. After '
@@ -62,7 +63,9 @@ const String _projectFactoryGeneratorPrompt =
     'Bridge registration, production not ready, and no mock/demo data unless '
     'the user explicitly asks for a mock/demo APK. Ask for initial admin emails '
     'before build-ready confirmation. End only a fully reviewed contract with '
-    'the exact marker PROJECT_FACTORY_READY_FOR_BUILD.';
+    'the exact marker PROJECT_FACTORY_READY_FOR_BUILD. After that marker, stop; '
+    'the bridge backend intercepts the confirmation and resumes deterministic '
+    'init for the existing draft/session.';
 const String _projectFactoryReviewerPrompt =
     'You are reviewing the New Project Factory generator. Check that the '
     'project brief, defaults, visual references, roles, auth, admin, '
@@ -3189,7 +3192,7 @@ Contrato semi-obligatorio antes del build:
 - Si el usuario pide construir antes de readiness, responde solo con las preguntas o blockers minimos que faltan.
 - Cuando ya este validado y solo falte que el usuario confirme el arranque, termina tu respuesta con una linea exacta: $kProjectFactoryReadyForBuildMarker
 
-Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme despues de ese marker, recien ahi ejecuta la creacion real usando Project Factory del bridge y el repo actual: draft/manifest, reference assets desde imagenes adjuntas del chat cuando existan, specs/plan/tasks, diagramas baseline, backend FastAPI, Flutter, auth/RBAC/admin/notificaciones, validacion y apertura del workspace. Mantene la conversacion practica y anda trabajando con el reviewer durante el build.
+Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme despues de ese marker, el backend del bridge intercepta la confirmacion y reanuda el init deterministico asociado al draft/session existente. No ejecutes la creacion real desde este chat: no generes archivos, no corras comandos, no crees repos, no publiques previews/APKs y no cambies el slug del draft salvo que el usuario lo haya pedido explicitamente.
 ''';
   }
 
