@@ -341,6 +341,30 @@ def test_init_service_queues_retry_for_any_blocked_phase(tmp_path: Path) -> None
     assert service.to_response_payload(queued)["retryAvailable"] is False
 
 
+def test_init_service_queues_retry_for_failed_phase(tmp_path: Path) -> None:
+    service = ProjectFactoryInitService(state_root=tmp_path)
+    job = service.start_or_resume(draft_id="draft-1")
+    service.complete_phase(job.id, "init_preflight")
+    failed = service.fail_phase(
+        job.id,
+        "ux_generator",
+        message="Deterministic init pipeline failed: [Errno 7] Argument list too long",
+    )
+
+    payload = service.to_response_payload(failed)
+    assert payload["status"] == "failed"
+    assert payload["currentPhase"] == "ux_generator"
+    assert payload["retryAvailable"] is True
+
+    queued = service.queue_retry(failed.id)
+    retry_phase = queued.phase(ProjectFactoryInitPhaseName.UX_GENERATOR)
+
+    assert retry_phase.status == ProjectFactoryInitPhaseStatus.QUEUED
+    assert retry_phase.message == ""
+    assert service.to_response_payload(queued)["status"] == "resumable"
+    assert service.to_response_payload(queued)["retryAvailable"] is False
+
+
 def test_init_service_recovers_running_job_as_resumable(tmp_path: Path) -> None:
     service = ProjectFactoryInitService(state_root=tmp_path)
     job = service.start_or_resume(draft_id="draft-1")

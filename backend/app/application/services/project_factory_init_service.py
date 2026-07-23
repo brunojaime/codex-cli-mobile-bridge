@@ -571,16 +571,22 @@ class ProjectFactoryInitService:
             )
 
     def queue_retry(self, init_job_id: str) -> ProjectFactoryInitJob:
-        """Prepare a blocked deterministic init job for another pipeline pass."""
+        """Prepare a blocked or failed deterministic init job for another pass."""
 
-        return self._reset_blocked_phase_for_retry(init_job_id)
+        return self._reset_blocked_or_failed_phase_for_retry(init_job_id)
 
-    def _reset_blocked_phase_for_retry(self, init_job_id: str) -> ProjectFactoryInitJob:
+    def _reset_blocked_or_failed_phase_for_retry(
+        self,
+        init_job_id: str,
+    ) -> ProjectFactoryInitJob:
         with self._lock:
             job = self._require_job(init_job_id)
             for phase_name in INIT_PHASE_ORDER:
                 phase = job.phase(phase_name)
-                if phase.status != ProjectFactoryInitPhaseStatus.BLOCKED:
+                if phase.status not in {
+                    ProjectFactoryInitPhaseStatus.BLOCKED,
+                    ProjectFactoryInitPhaseStatus.FAILED,
+                }:
                     continue
                 retry_phase = replace(
                     phase,
@@ -2103,6 +2109,9 @@ class ProjectFactoryInitService:
             for phase in job.phases
             if phase.status == ProjectFactoryInitPhaseStatus.BLOCKED
             for blocker in phase.blockers
+        ) or any(
+            phase.status == ProjectFactoryInitPhaseStatus.FAILED
+            for phase in job.phases
         )
         workspace_path = job.relationships.generated_workspace_path
         context_pack = job.context_pack.to_payload() if job.context_pack else None
