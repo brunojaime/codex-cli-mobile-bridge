@@ -158,7 +158,7 @@ class SubprocessProjectFactoryInitCommandRunner:
                 env={**os.environ, **env} if env else None,
                 check=False,
                 capture_output=True,
-                input="",
+                stdin=subprocess.DEVNULL,
                 text=True,
                 timeout=timeout_seconds if timeout_seconds > 0 else None,
             )

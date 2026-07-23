@@ -41,7 +41,7 @@ from backend.app.application.services.project_factory_job_runner import (
 )
 
 
-def test_subprocess_runner_closes_stdin_for_noninteractive_exec(
+def test_subprocess_runner_uses_devnull_stdin_for_noninteractive_exec(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -61,7 +61,7 @@ def test_subprocess_runner_closes_stdin_for_noninteractive_exec(
     )
 
     assert result.exit_code == 0
-    assert captured["input"] == ""
+    assert captured["stdin"] == init_service_module.subprocess.DEVNULL
     assert captured["text"] is True
     assert captured["capture_output"] is True
 
