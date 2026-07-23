@@ -118,6 +118,7 @@ _CLOUDFLARE_DEPLOY_PHASE = ProjectFactoryInitPhaseName.CLOUDFLARE_PREVIEW_DEPLOY
 _PREVIEW_SMOKE_PHASE = ProjectFactoryInitPhaseName.PREVIEW_SMOKE
 _FRONTEND_BASELINE_PHASE = ProjectFactoryInitPhaseName.FLUTTER_OR_STRATEGY_BASELINE
 _AUTOMATIC_UX_COMMAND_TIMEOUT_SECONDS = 300.0
+_AUTOMATIC_UX_SKILL_CONTEXT_MAX_CHARS = 8000
 
 
 @dataclass(frozen=True, slots=True)
@@ -5635,6 +5636,10 @@ def _automatic_ux_prompts(
 ) -> tuple[str, str]:
     preview_url = f"https://preview.nienfos.com/{job.slug}"
     preview_api = f"{preview_url}/api"
+    bounded_skill_context = _markdown_excerpt(
+        visual_ux_prompt_section,
+        max_chars=_AUTOMATIC_UX_SKILL_CONTEXT_MAX_CHARS,
+    )
     base = f"""You are working inside a newly generated Project Factory baseline.
 
 Workspace: `{target}`
@@ -5661,34 +5666,54 @@ Hard constraints:
 - Keep changes scoped to visible UX, user-facing copy, layout, responsive fit,
   accessibility, and frontend polish.
 - Save concise evidence under `.codex/ux/`.
+
+Automatic UX execution budget:
+- This is a bounded early UX baseline for deterministic init. Finish in one
+  short Codex turn and do not wait for release, APK, preview, emulator, browser,
+  or long-running build output.
+- Do not run package managers, Flutter/Gradle builds, APK publishing, preview
+  deploys, persistent dev servers, broad binary reads, or commands that dump
+  screenshots/assets into stdout.
+- Inspect only the domain brief, nearby project metadata, and the smallest
+  frontend files needed to make safe visible UX improvements.
+- If deeper visual validation is needed, record it as follow-up for the final UX
+  polish lane instead of continuing until timeout.
+- Always write the requested `.codex/ux/` report before exiting.
 """
     generator_prompt = (
         base
-        + visual_ux_prompt_section
+        + "\n# Required visual-ux-polish Skill Context Excerpt\n\n"
+        + bounded_skill_context
         + """
 # Automatic New Project UX Generator
 
-This is the automatic post-baseline UX pass for New Project. Improve the
-generated UI so the first installable preview is useful and professional for
-the requested product category. Inspect the existing app, benchmark comparable
-professional products when helpful, and validate the primary responsive/mobile
-journeys when the app can run.
+This is the automatic early UX baseline pass for New Project. Improve the
+generated UI enough for the first installable preview to have a coherent visual
+direction for the requested product category.
+
+Do not perform full visual QA here. Do not benchmark live products, do not start
+the app, do not capture screenshots, and do not wait for the Android preview
+release. Make small scoped UI/copy/theme adjustments when they are obvious from
+the brief and source files; otherwise write concise direction and leave deeper
+polish for the final UX lane.
 
 If reviewer feedback is provided below in a later iteration, address only that
 UX feedback. Write `.codex/ux/ux-generator-report.md` with what changed,
-validation performed, and any remaining UX concerns.
+files inspected, any small edits made, and any remaining UX concerns.
 """
     )
     reviewer_prompt = (
         base
-        + visual_ux_prompt_section
+        + "\n# Required visual-ux-polish Skill Context Excerpt\n\n"
+        + bounded_skill_context
         + """
 # Automatic New Project UX Reviewer
 
 Review only the UX generator changes and evidence. Check hierarchy, layout,
 spacing, typography, contrast, responsive/mobile fit, empty/loading/error
 states, accessibility, and scope discipline. Do not ask for backend, auth,
-schema, release, or business-logic changes.
+schema, release, business-logic changes, builds, screenshots, previews, or APK
+validation in this early lane.
 
 This automatic UX lane can run up to 10 generator/reviewer passes. Stop early
 when the UI is good enough for the first installable preview. If more UX-only

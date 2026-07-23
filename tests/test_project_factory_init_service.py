@@ -718,7 +718,7 @@ def test_init_service_rejects_unknown_phase(tmp_path: Path) -> None:
         service.begin_phase(job.id, "not_a_phase")
 
 
-def test_init_service_passes_large_automatic_ux_prompt_by_file_not_argv(
+def test_init_service_bounds_large_automatic_ux_prompt_and_passes_it_by_file(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -768,7 +768,12 @@ def test_init_service_passes_large_automatic_ux_prompt_by_file_not_argv(
 
     workspace = tmp_path / "clinica-norte"
     prompt_path = workspace / ".codex/factory/prompts/ux-generator.md"
-    assert prompt_path.stat().st_size > 200_000
+    prompt_text = prompt_path.read_text(encoding="utf-8")
+    assert prompt_path.stat().st_size < 50_000
+    assert "[excerpt truncated]" in prompt_text
+    assert "Do not run package managers, Flutter/Gradle builds" in prompt_text
+    assert "do not capture screenshots" in prompt_text
+    assert "leave deeper\npolish for the final UX lane" in prompt_text
     ux_commands = [
         command
         for command in command_runner.commands
