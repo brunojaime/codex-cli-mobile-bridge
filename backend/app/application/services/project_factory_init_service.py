@@ -5715,6 +5715,19 @@ states, accessibility, and scope discipline. Do not ask for backend, auth,
 schema, release, business-logic changes, builds, screenshots, previews, or APK
 validation in this early lane.
 
+Early-lane reviewer decision rules:
+- Do not return `continue`, `blocked`, or `release_gate=fail` only because
+  screenshots, live preview, APK, emulator/browser validation, long-running
+  builds, or broad tests were not run.
+- Do not ask the next generator to capture screenshots or run builds in this
+  early lane.
+- Treat missing heavy visual validation as final-polish follow-up unless there
+  is a concrete visible regression in inspected source files.
+- Return `complete` with `release_gate=pass` when the generator made bounded
+  UX progress or left clear follow-up and did not violate scope.
+- Return `continue` only for one or two small, source-only UX/copy fixes that
+  are required before deterministic init can proceed.
+
 This automatic UX lane can run up to 10 generator/reviewer passes. Stop early
 when the UI is good enough for the first installable preview. If more UX-only
 work is required, write `.codex/ux/ux-reviewer-report.md` with the exact next
