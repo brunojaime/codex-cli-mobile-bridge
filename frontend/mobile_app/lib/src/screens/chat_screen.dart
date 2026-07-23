@@ -3145,8 +3145,7 @@ When you create the Project Factory draft, link each asset with POST /project-fa
     return '''
 Estamos en modo New Project Factory dentro de un chat normal.
 
-Primero respondeme al usuario, no generes archivos todavia. Tu primera respuesta debe explicar: "vamos a hacer un nuevo proyecto" y pedir lo minimo necesario para inferir o confirmar:
-- nombre del proyecto;
+Primero respondeme al usuario, no generes archivos todavia. Usa el nombre/titulo del draft actual como nombre del proyecto por defecto; no preguntes como llamarlo salvo que el usuario pida renombrarlo explicitamente. Tu primera respuesta debe explicar: "vamos a hacer un nuevo proyecto" y pedir lo minimo necesario para inferir o confirmar:
 - business type/rubro;
 - primary goal;
 - plataformas;
@@ -3177,7 +3176,7 @@ Defaults si el usuario no modifica nada:
 - flutter soporta APK preview, Workbench en APK y registro Bridge.
 - svelte es web-first sobre Cloudflare Worker/D1; no prometas APK ni Bridge installable si no hay wrapper explicito.
 
-Si el usuario no sabe el nombre, rubro o titulo, proponelo a partir de lo que cuente. Para colores y look and feel no inventes como definitivo: preguntale o propone 2-3 direcciones y espera confirmacion. Antes de crear nada, devolve un preview corto del proyecto que vas a armar y pedi confirmacion explicita tipo "ok, dale para adelante".
+Si el usuario no sabe el rubro o titulo funcional, proponelo a partir de lo que cuente sin cambiar el slug del draft. Para colores y look and feel no inventes como definitivo: preguntale o propone 2-3 direcciones y espera confirmacion. Antes de crear nada, devolve un preview corto del proyecto que vas a armar y pedi confirmacion explicita tipo "ok, dale para adelante".
 
 Contrato semi-obligatorio antes del build:
 - Trabaja como intake guiado con estados: collecting, ready_for_review, changes_requested, confirmed, build_started o blocked.

@@ -224,6 +224,9 @@ def test_project_factory_guided_intake_state_transitions_and_persistence(
     assert draft["guidedIntake"]["enabled"] is True
     assert draft["guidedIntake"]["status"] == "collecting"
     assert draft["guidedIntake"]["questions"][0]["id"] == "initial_admin_emails"
+    assert {
+        question["id"] for question in draft["guidedIntake"]["questions"]
+    }.isdisjoint({"name"})
     assert draft["guidedIntake"]["missingFields"][0]["field"] == (
         "initial_admin_emails"
     )
