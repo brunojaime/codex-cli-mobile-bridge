@@ -203,12 +203,17 @@ class SubprocessProjectFactoryInitCommandRunner:
                     stdout, stderr = process.communicate(timeout=5)
                 except Exception:
                     stdout, stderr = "", ""
+            timeout_message = "Command timed out."
+            stderr_text = str(stderr or exc.stderr or "").strip()
+            stderr_text = (
+                f"{stderr_text}\n{timeout_message}" if stderr_text else timeout_message
+            )
             return ProjectFactoryInitCommandResult(
                 argv=argv,
                 cwd=str(cwd) if cwd is not None else None,
                 exit_code=124,
                 stdout=str(stdout or exc.stdout or ""),
-                stderr=str(stderr or exc.stderr or "Command timed out."),
+                stderr=stderr_text,
                 started_at=started_at,
                 completed_at=_now_iso(),
                 env=env,
@@ -500,6 +505,11 @@ class ProjectFactoryInitService:
                     timeout_seconds=_AUTOMATIC_UX_COMMAND_TIMEOUT_SECONDS,
                 )
                 generator_evidence.append(self._evidence(generator_result))
+                _ensure_automatic_ux_report(
+                    target=target,
+                    role="generator",
+                    result=generator_result,
+                )
                 self._attach_automatic_ux_message(
                     job,
                     role="generator",
@@ -541,6 +551,11 @@ class ProjectFactoryInitService:
                     timeout_seconds=_AUTOMATIC_UX_COMMAND_TIMEOUT_SECONDS,
                 )
                 reviewer_evidence.append(self._evidence(reviewer_result))
+                _ensure_automatic_ux_report(
+                    target=target,
+                    role="reviewer",
+                    result=reviewer_result,
+                )
                 self._attach_automatic_ux_message(
                     job,
                     role="reviewer",
@@ -5723,6 +5738,35 @@ def _automatic_ux_chat_content(
         f"Status: {status}\n\n"
         f"{body.strip()}\n"
     )
+
+
+def _ensure_automatic_ux_report(
+    *,
+    target: Path,
+    role: str,
+    result: ProjectFactoryInitCommandResult,
+) -> Path:
+    report_path = target / ".codex" / "ux" / f"ux-{role}-report.md"
+    if report_path.is_file() and report_path.read_text(encoding="utf-8").strip():
+        return report_path
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    status = "completed" if result.exit_code == 0 else "failed"
+    body = "\n\n".join(
+        part.strip()
+        for part in (result.stdout, result.stderr)
+        if part and part.strip()
+    )
+    if not body:
+        body = "No textual output was captured."
+    report_path.write_text(
+        f"# Automatic UX {role.title()} Report\n\n"
+        f"Status: {status}\n\n"
+        f"Exit code: {result.exit_code}\n\n"
+        "## Captured Output\n\n"
+        f"{body.strip()}\n",
+        encoding="utf-8",
+    )
+    return report_path
 
 
 def _automatic_ux_prompt_file_instruction(prompt_path: Path, *, cwd: Path) -> str:

@@ -536,6 +536,11 @@ def test_init_service_automatic_ux_blocks_sandbox_text_even_with_zero_exit(
     assert generator.status == ProjectFactoryInitPhaseStatus.BLOCKED
     assert generator.blockers[0].code == "automatic_ux_generator_failed"
     assert "bwrap: loopback" in generator.blockers[0].message
+    fallback_report = (
+        tmp_path / "clinica-norte" / ".codex/ux/ux-generator-report.md"
+    )
+    assert fallback_report.is_file()
+    assert "bwrap: loopback" in fallback_report.read_text(encoding="utf-8")
     assert command_runner.ux_generator_calls == 1
     assert command_runner.ux_reviewer_calls == 0
     assert (
