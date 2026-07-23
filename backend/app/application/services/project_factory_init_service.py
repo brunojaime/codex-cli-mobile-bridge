@@ -457,7 +457,10 @@ class ProjectFactoryInitService:
                 generator_result = self._run(
                     _codex_argv(
                         codex_command,
-                        generator_prompt_path.read_text(encoding="utf-8"),
+                        _automatic_ux_prompt_file_instruction(
+                            generator_prompt_path,
+                            cwd=target,
+                        ),
                     ),
                     cwd=target,
                 )
@@ -485,7 +488,10 @@ class ProjectFactoryInitService:
                 reviewer_result = self._run(
                     _codex_argv(
                         codex_command,
-                        reviewer_prompt_path.read_text(encoding="utf-8"),
+                        _automatic_ux_prompt_file_instruction(
+                            reviewer_prompt_path,
+                            cwd=target,
+                        ),
                     ),
                     cwd=target,
                 )
@@ -5498,6 +5504,19 @@ def _automatic_ux_chat_content(
         f"# {label} pass {iteration}\n\n"
         f"Status: {status}\n\n"
         f"{body.strip()}\n"
+    )
+
+
+def _automatic_ux_prompt_file_instruction(prompt_path: Path, *, cwd: Path) -> str:
+    try:
+        display_path = prompt_path.relative_to(cwd)
+    except ValueError:
+        display_path = prompt_path
+    return (
+        "Read and follow the full automatic UX prompt from this workspace file: "
+        f"`{display_path}`.\n\n"
+        "Do not ask for the prompt contents. Open the file, execute its "
+        "instructions exactly, and write the requested `.codex/ux/` evidence."
     )
 
 

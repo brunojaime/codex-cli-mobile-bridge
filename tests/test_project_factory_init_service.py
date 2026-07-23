@@ -168,6 +168,15 @@ def test_init_service_run_pipeline_generates_workspace_ux_and_blocked_context(
     )
     assert command_runner.ux_generator_calls == 2
     assert command_runner.ux_reviewer_calls == 2
+    ux_commands = [
+        command
+        for command in command_runner.commands
+        if command and ".codex/factory/prompts/ux-" in command[-1]
+    ]
+    assert len(ux_commands) == 4
+    assert all(len(command[-1]) < 500 for command in ux_commands)
+    assert all("Read and follow the full automatic UX prompt" in command[-1] for command in ux_commands)
+    assert all("Automatic New Project UX Generator" not in command[-1] for command in ux_commands)
     assert (
         workspace / ".codex/ux/evidence-index.json"
     ).is_file()
@@ -375,6 +384,12 @@ class _FakeInitCommandRunner:
         self.commands.append(argv)
         cwd_path = Path(cwd or ".")
         prompt = argv[-1] if argv else ""
+        if ".codex/factory/prompts/" in prompt:
+            marker = ".codex/factory/prompts/"
+            relative = marker + prompt.split(marker, 1)[1].split("`", 1)[0]
+            prompt_path = cwd_path / relative
+            if prompt_path.exists():
+                prompt = prompt_path.read_text(encoding="utf-8")
         if "Automatic New Project UX Generator" in prompt:
             self.ux_generator_calls += 1
             ux_dir = cwd_path / ".codex/ux"
