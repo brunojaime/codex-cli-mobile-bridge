@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+import backend.app.application.services.project_factory_init_service as init_service_module
 from backend.app.application.services.project_factory_init_service import (
     INIT_PHASES,
     ProjectFactoryInitCommandResult,
@@ -25,6 +26,9 @@ from backend.app.domain.entities.project_factory_init import (
 from backend.app.infrastructure.config.settings import Settings
 from backend.app.infrastructure.persistence.in_memory_chat_repository import (
     InMemoryChatRepository,
+)
+from backend.app.application.services.project_factory_job_runner import (
+    _VisualUxSkillContext,
 )
 
 
@@ -357,6 +361,71 @@ def test_init_service_rejects_unknown_phase(tmp_path: Path) -> None:
 
     with pytest.raises(ProjectFactoryInitConflictError):
         service.begin_phase(job.id, "not_a_phase")
+
+
+def test_init_service_passes_large_automatic_ux_prompt_by_file_not_argv(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    huge_skill_context = "# Huge visual UX context\n" + ("large-context\n" * 25_000)
+    monkeypatch.setattr(
+        init_service_module,
+        "_load_visual_ux_skill_context",
+        lambda _path: _VisualUxSkillContext(
+            skill_path=tmp_path / "visual-ux-polish" / "SKILL.md",
+            prompt_section=huge_skill_context,
+        ),
+    )
+    command_runner = _FakeInitCommandRunner(ux_complete_after=1)
+    repository = InMemoryChatRepository(projects_root=str(tmp_path))
+    repository.save_session(
+        ChatSession(
+            id="chat-large-ux",
+            title="Clinica Norte",
+            workspace_path=str(tmp_path / "clinica-norte"),
+            workspace_name="clinica-norte",
+        )
+    )
+    service = ProjectFactoryInitService(
+        state_root=tmp_path / ".state",
+        command_runner=command_runner,
+        chat_repository=repository,
+        settings=Settings(
+            projects_root=str(tmp_path),
+            project_factory_state_dir=str(tmp_path / ".state"),
+            chat_store_backend="memory",
+            audio_transcription_backend="disabled",
+            speech_synthesis_backend="disabled",
+            codex_command="fake-codex",
+        ),
+    )
+    job = service.start_or_resume(
+        draft_id="draft-large-ux",
+        chat_session_id="chat-large-ux",
+        project_name="Clinica Norte",
+        slug="clinica-norte",
+        frontend_strategy="flutter",
+    )
+
+    completed = service.run_pipeline(job.id)
+
+    workspace = tmp_path / "clinica-norte"
+    prompt_path = workspace / ".codex/factory/prompts/ux-generator.md"
+    assert prompt_path.stat().st_size > 200_000
+    ux_commands = [
+        command
+        for command in command_runner.commands
+        if command and ".codex/factory/prompts/ux-" in command[-1]
+    ]
+    assert ux_commands
+    assert all(len(command[-1]) < 500 for command in ux_commands)
+    assert all("large-context" not in command[-1] for command in ux_commands)
+    assert command_runner.ux_generator_calls == 1
+    assert command_runner.ux_reviewer_calls == 1
+    assert (
+        completed.phase(ProjectFactoryInitPhaseName.UX_GENERATOR).status
+        == ProjectFactoryInitPhaseStatus.COMPLETED
+    )
 
 
 class _FakeInitCommandRunner:
