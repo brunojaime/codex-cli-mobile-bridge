@@ -256,6 +256,7 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         execution_provider=provider,
     )
     message_service.set_domain_factory_service(domain_factory_service)
+    message_service.set_project_factory_init_service(project_factory_init_service)
     return AppContainer(
         settings=resolved_settings,
         message_service=message_service,

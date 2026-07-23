@@ -411,6 +411,7 @@ class MessageService:
         self._drain_requested = False
         self._drain_requested_at: datetime | None = None
         self._domain_factory_service: Any | None = None
+        self._project_factory_init_service: Any | None = None
         self._follow_up_recovery_guard = threading.RLock()
         self._follow_up_reconcile_interval_seconds = (
             follow_up_reconcile_interval_seconds
@@ -430,6 +431,9 @@ class MessageService:
 
     def set_domain_factory_service(self, service: Any) -> None:
         self._domain_factory_service = service
+
+    def set_project_factory_init_service(self, service: Any) -> None:
+        self._project_factory_init_service = service
 
     def create_session(
         self,
@@ -1241,6 +1245,7 @@ class MessageService:
             brief=message,
             emit_chat_message=False,
         )
+        self._resume_project_factory_init_after_domain_brief(session_id=session.id)
         run_id = str(uuid4())
         entry_agent_id = self._entry_agent_for_configuration(current_configuration)
         entry_agent_definition = current_configuration.agents[entry_agent_id]
@@ -1304,6 +1309,40 @@ class MessageService:
         )
         self._queue_session_title_refresh(session.id)
         return job
+
+    def _resume_project_factory_init_after_domain_brief(
+        self,
+        *,
+        session_id: str,
+    ) -> None:
+        init_service = self._project_factory_init_service
+        if init_service is None:
+            return
+        list_jobs = getattr(init_service, "list_jobs", None)
+        run_pipeline = getattr(init_service, "run_pipeline", None)
+        if list_jobs is None or run_pipeline is None:
+            return
+        try:
+            jobs = list_jobs(limit=200)
+        except Exception:
+            return
+        for init_job in jobs:
+            relationships = getattr(init_job, "relationships", None)
+            if getattr(relationships, "chat_session_id", None) != session_id:
+                continue
+            phases = getattr(init_job, "phases", ())
+            if not any(
+                getattr(getattr(phase, "status", None), "value", None)
+                == "queued_waiting_for_domain_brief"
+                for phase in phases
+            ):
+                continue
+            threading.Thread(
+                target=run_pipeline,
+                args=(init_job.id,),
+                name=f"project-factory-init-domain-brief-{init_job.id}",
+                daemon=True,
+            ).start()
 
     def _prod_bridge_repo_governance_applies(self, session: ChatSession) -> bool:
         if self._bridge_environment != "prod":

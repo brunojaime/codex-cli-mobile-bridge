@@ -108,6 +108,23 @@ def test_project_factory_runner_fails_closed_when_visual_ux_skill_missing(
     assert events[-1]["status"] == "blocked"
 
 
+def test_project_factory_runner_does_not_run_domain_generator_before_early_ux(
+    tmp_path: Path,
+) -> None:
+    process_runner = _FakeProcessRunner(fail_call=2)
+    runner = _runner(tmp_path, process_runner)
+
+    with pytest.raises(ProjectFactoryJobRunnerError):
+        runner.run(
+            _context(tmp_path, generator_runs=1, reviewer_runs=1),
+            event_sink=lambda _event: None,
+        )
+
+    assert any("Lightweight UX Brief" in call[-1] for call in process_runner.calls)
+    assert any("Early UX Reviewer Pass 1" in call[-1] for call in process_runner.calls)
+    assert not any("Generator pass 1:" in call[-1] for call in process_runner.calls)
+
+
 def test_project_factory_runner_prompts_load_skill_and_consume_ux_brief(
     tmp_path: Path,
 ) -> None:

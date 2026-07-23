@@ -152,7 +152,9 @@ def test_init_service_run_pipeline_generates_workspace_ux_and_blocked_context(
         frontend_strategy="flutter",
     )
 
-    completed = service.run_pipeline(job.id)
+    waiting = service.run_pipeline(job.id)
+    _write_domain_brief(tmp_path / "clinica-norte")
+    completed = service.run_pipeline(waiting.id)
 
     workspace = tmp_path / "clinica-norte"
     assert completed.relationships.generated_workspace_path == str(workspace)
@@ -219,6 +221,107 @@ def test_init_service_run_pipeline_generates_workspace_ux_and_blocked_context(
     )
 
 
+def test_init_service_waits_for_domain_brief_before_automatic_ux(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    command_runner = _FakeInitCommandRunner()
+    monkeypatch.setenv(
+        "VISUAL_UX_POLISH_SKILL_PATH",
+        str(_visual_ux_skill_fixture(tmp_path)),
+    )
+    service = ProjectFactoryInitService(
+        state_root=tmp_path / ".state",
+        command_runner=command_runner,
+        settings=Settings(
+            projects_root=str(tmp_path),
+            project_factory_state_dir=str(tmp_path / ".state"),
+            chat_store_backend="memory",
+            audio_transcription_backend="disabled",
+            speech_synthesis_backend="disabled",
+            codex_command="fake-codex",
+        ),
+    )
+    job = service.start_or_resume(
+        draft_id="draft-1",
+        chat_session_id="chat-1",
+        project_name="Clinica Norte",
+        slug="clinica-norte",
+        frontend_strategy="flutter",
+    )
+
+    waiting = service.run_pipeline(job.id)
+
+    assert service.to_response_payload(waiting)["status"] == "waiting_for_domain_brief"
+    assert service.to_response_payload(waiting)["currentPhase"] == "ux_generator"
+    generator = waiting.phase(ProjectFactoryInitPhaseName.UX_GENERATOR)
+    reviewer = waiting.phase(ProjectFactoryInitPhaseName.UX_REVIEWER)
+    assert (
+        generator.status
+        == ProjectFactoryInitPhaseStatus.QUEUED_WAITING_FOR_DOMAIN_BRIEF
+    )
+    assert (
+        reviewer.status
+        == ProjectFactoryInitPhaseStatus.QUEUED_WAITING_FOR_DOMAIN_BRIEF
+    )
+    assert "queued_waiting_for_domain_brief" in generator.message
+    assert command_runner.ux_generator_calls == 0
+    assert command_runner.ux_reviewer_calls == 0
+    assert (
+        waiting.phase(ProjectFactoryInitPhaseName.LOCAL_VALIDATION).status
+        == ProjectFactoryInitPhaseStatus.QUEUED
+    )
+
+
+def test_init_service_runs_automatic_ux_after_domain_brief_before_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    command_runner = _FakeInitCommandRunner(ux_complete_after=1)
+    monkeypatch.setenv(
+        "VISUAL_UX_POLISH_SKILL_PATH",
+        str(_visual_ux_skill_fixture(tmp_path)),
+    )
+    service = ProjectFactoryInitService(
+        state_root=tmp_path / ".state",
+        command_runner=command_runner,
+        settings=Settings(
+            projects_root=str(tmp_path),
+            project_factory_state_dir=str(tmp_path / ".state"),
+            chat_store_backend="memory",
+            audio_transcription_backend="disabled",
+            speech_synthesis_backend="disabled",
+            codex_command="fake-codex",
+        ),
+    )
+    job = service.start_or_resume(
+        draft_id="draft-1",
+        chat_session_id="chat-1",
+        project_name="Clinica Norte",
+        slug="clinica-norte",
+        frontend_strategy="flutter",
+    )
+    waiting = service.run_pipeline(job.id)
+    _write_domain_brief(tmp_path / "clinica-norte")
+
+    completed = service.run_pipeline(waiting.id)
+
+    assert command_runner.ux_generator_calls == 1
+    assert command_runner.ux_reviewer_calls == 1
+    assert (
+        completed.phase(ProjectFactoryInitPhaseName.UX_REVIEWER).status
+        == ProjectFactoryInitPhaseStatus.COMPLETED
+    )
+    assert (
+        completed.phase(ProjectFactoryInitPhaseName.LOCAL_VALIDATION).status
+        == ProjectFactoryInitPhaseStatus.COMPLETED
+    )
+    assert (
+        completed.phase(ProjectFactoryInitPhaseName.UX_REVIEWER).completed_at
+        <= completed.phase(ProjectFactoryInitPhaseName.LOCAL_VALIDATION).completed_at
+    )
+
+
 def test_init_service_automatic_ux_blocks_when_reviewer_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -248,6 +351,7 @@ def test_init_service_automatic_ux_blocks_when_reviewer_fails(
         frontend_strategy="flutter",
     )
     job = service.run_frontend_baseline_phase(job.id)
+    _write_domain_brief(tmp_path / "clinica-norte")
 
     blocked = service.run_automatic_ux_phases(job.id)
 
@@ -431,7 +535,9 @@ def test_init_service_passes_large_automatic_ux_prompt_by_file_not_argv(
         frontend_strategy="flutter",
     )
 
-    completed = service.run_pipeline(job.id)
+    waiting = service.run_pipeline(job.id)
+    _write_domain_brief(tmp_path / "clinica-norte")
+    completed = service.run_pipeline(waiting.id)
 
     workspace = tmp_path / "clinica-norte"
     prompt_path = workspace / ".codex/factory/prompts/ux-generator.md"
@@ -450,6 +556,25 @@ def test_init_service_passes_large_automatic_ux_prompt_by_file_not_argv(
         completed.phase(ProjectFactoryInitPhaseName.UX_GENERATOR).status
         == ProjectFactoryInitPhaseStatus.COMPLETED
     )
+
+
+def _write_domain_brief(workspace: Path) -> Path:
+    brief_path = workspace / "specs/019-domain-factory/intake/original-brief.md"
+    brief_path.parent.mkdir(parents=True, exist_ok=True)
+    brief_path.write_text(
+        "# Original Domain Brief\n\nClinica Norte needs appointments and patient workflows.\n",
+        encoding="utf-8",
+    )
+    state_path = workspace / ".codex/factory/domain-factory-state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        '{\n'
+        '  "modeStatus": "implementation_ready",\n'
+        '  "briefPath": "specs/019-domain-factory/intake/original-brief.md"\n'
+        '}\n',
+        encoding="utf-8",
+    )
+    return brief_path
 
 
 class _FakeInitCommandRunner:

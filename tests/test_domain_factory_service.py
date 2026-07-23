@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import time
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
@@ -329,6 +331,40 @@ def test_domain_factory_chat_message_creates_contract_preview_without_codex_run(
     ]
     assert all(message.status.value == "completed" for message in messages)
     assert "Domain Factory contract preview is ready" in messages[-1].content
+
+
+def test_domain_factory_chat_message_resumes_waiting_project_factory_ux(
+    tmp_path: Path,
+) -> None:
+    workspace = _baseline_workspace(tmp_path)
+    repository = _repository(tmp_path)
+    execution_provider = _CountingExecutionProvider()
+    message_service = MessageService(
+        repository=repository,
+        execution_provider=execution_provider,
+        default_workspace_path=str(tmp_path / "projects"),
+        audio_transcriber=DisabledAudioTranscriber(),
+    )
+    domain_factory = DomainFactoryService(
+        projects_root=tmp_path / "projects",
+        chat_repository=repository,
+    )
+    init_service = _WaitingInitService(session_id="session-1")
+    message_service.set_domain_factory_service(domain_factory)
+    message_service.set_project_factory_init_service(init_service)
+    session = _session(workspace)
+    repository.save_session(session)
+    domain_factory.start(session_id=session.id)
+
+    message_service.submit_message(
+        "Restaurant customers order dishes by WhatsApp. Roles: admin, employee, customer.",
+        session_id=session.id,
+    )
+
+    deadline = time.monotonic() + 2
+    while not init_service.resumed and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert init_service.resumed == ["init-waiting-1"]
 
 
 def test_start_domain_factory_blocks_without_baseline_context(
@@ -818,6 +854,31 @@ class _CountingExecutionProvider(ExecutionProvider):
 
     def get_latest_activity(self, job_id: str) -> str | None:
         return "Completed"
+
+
+class _WaitingInitService:
+    def __init__(self, *, session_id: str) -> None:
+        self.resumed: list[str] = []
+        self._jobs = [
+            SimpleNamespace(
+                id="init-waiting-1",
+                relationships=SimpleNamespace(chat_session_id=session_id),
+                phases=[
+                    SimpleNamespace(
+                        status=SimpleNamespace(
+                            value="queued_waiting_for_domain_brief"
+                        )
+                    )
+                ],
+            )
+        ]
+
+    def list_jobs(self, *, limit: int) -> list[SimpleNamespace]:
+        assert limit == 200
+        return self._jobs
+
+    def run_pipeline(self, init_job_id: str) -> None:
+        self.resumed.append(init_job_id)
 
 
 def _session(workspace: Path) -> ChatSession:

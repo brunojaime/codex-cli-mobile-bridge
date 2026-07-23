@@ -17,6 +17,7 @@ class ProjectFactoryInitCompletionState(StrEnum):
 
 class ProjectFactoryInitPhaseStatus(StrEnum):
     QUEUED = "queued"
+    QUEUED_WAITING_FOR_DOMAIN_BRIEF = "queued_waiting_for_domain_brief"
     RUNNING = "running"
     COMPLETED = "completed"
     BLOCKED = "blocked"
@@ -401,7 +402,12 @@ def _phases_in_current_order(
             by_name.get(later_name) for later_name in INIT_PHASE_ORDER[index + 1 :]
         )
         later_started = any(
-            phase is not None and phase.status != ProjectFactoryInitPhaseStatus.QUEUED
+            phase is not None
+            and phase.status
+            not in {
+                ProjectFactoryInitPhaseStatus.QUEUED,
+                ProjectFactoryInitPhaseStatus.QUEUED_WAITING_FOR_DOMAIN_BRIEF,
+            }
             for phase in later_phases
         )
         if later_started:

@@ -316,6 +316,8 @@ class ProjectFactoryInitService:
             job = self.run_frontend_baseline_phase(job.id)
             if not _has_blocking_phase(job):
                 job = self.run_automatic_ux_phases(job.id)
+            if _has_waiting_phase(job):
+                return job
             if not _has_blocking_phase(job):
                 job = self.complete_phase(
                     job.id,
@@ -376,6 +378,8 @@ class ProjectFactoryInitService:
                     ),
                     context_available=False,
                 )
+            if not _has_domain_factory_brief(target):
+                return self.wait_for_domain_brief_phase(job.id)
 
             try:
                 visual_ux_skill_context = _load_visual_ux_skill_context(None)
@@ -574,6 +578,36 @@ class ProjectFactoryInitService:
         """Prepare a blocked or failed deterministic init job for another pass."""
 
         return self._reset_blocked_or_failed_phase_for_retry(init_job_id)
+
+    def wait_for_domain_brief_phase(self, init_job_id: str) -> ProjectFactoryInitJob:
+        """Mark automatic UX as visible but gated on the first domain brief."""
+
+        message = (
+            "queued_waiting_for_domain_brief: Automatic UX baseline will start "
+            "after the first Domain Factory brief is captured."
+        )
+        with self._lock:
+            job = self._require_job(init_job_id)
+            updated = job
+            for phase_name in (
+                ProjectFactoryInitPhaseName.UX_GENERATOR,
+                ProjectFactoryInitPhaseName.UX_REVIEWER,
+            ):
+                phase = updated.phase(phase_name)
+                if phase.status == ProjectFactoryInitPhaseStatus.COMPLETED:
+                    continue
+                updated_phase = replace(
+                    phase,
+                    status=ProjectFactoryInitPhaseStatus.QUEUED_WAITING_FOR_DOMAIN_BRIEF,
+                    message=message,
+                    started_at=None,
+                    completed_at=None,
+                    blockers=(),
+                )
+                updated = updated.with_phase(updated_phase)
+            self._jobs[updated.id] = updated
+            self._persist_job(updated)
+            return updated
 
     def _reset_blocked_or_failed_phase_for_retry(
         self,
@@ -3927,8 +3961,18 @@ class ProjectFactoryInitService:
             for phase in job.phases
         ):
             return "running"
+        if any(
+            phase.status == ProjectFactoryInitPhaseStatus.QUEUED_WAITING_FOR_DOMAIN_BRIEF
+            for phase in job.phases
+        ):
+            return "waiting_for_domain_brief"
         if all(
-            phase.status == ProjectFactoryInitPhaseStatus.QUEUED for phase in job.phases
+            phase.status
+            in {
+                ProjectFactoryInitPhaseStatus.QUEUED,
+                ProjectFactoryInitPhaseStatus.QUEUED_WAITING_FOR_DOMAIN_BRIEF,
+            }
+            for phase in job.phases
         ):
             return "queued"
         return job.completion_state.value
@@ -3942,10 +3986,14 @@ class ProjectFactoryInitService:
                 ProjectFactoryInitPhaseStatus.BLOCKED,
                 ProjectFactoryInitPhaseStatus.FAILED,
                 ProjectFactoryInitPhaseStatus.CANCELLED,
+                ProjectFactoryInitPhaseStatus.QUEUED_WAITING_FOR_DOMAIN_BRIEF,
             }:
                 return phase.name
         for phase in job.phases:
-            if phase.status == ProjectFactoryInitPhaseStatus.QUEUED:
+            if phase.status in {
+                ProjectFactoryInitPhaseStatus.QUEUED,
+                ProjectFactoryInitPhaseStatus.QUEUED_WAITING_FOR_DOMAIN_BRIEF,
+            }:
                 return phase.name
         return job.phases[-1].name
 
@@ -5128,10 +5176,14 @@ def _context_current_phase(job: ProjectFactoryInitJob) -> ProjectFactoryInitPhas
             ProjectFactoryInitPhaseStatus.BLOCKED,
             ProjectFactoryInitPhaseStatus.FAILED,
             ProjectFactoryInitPhaseStatus.CANCELLED,
+            ProjectFactoryInitPhaseStatus.QUEUED_WAITING_FOR_DOMAIN_BRIEF,
         }:
             return phase.name
     for phase in job.phases:
-        if phase.status == ProjectFactoryInitPhaseStatus.QUEUED:
+        if phase.status in {
+            ProjectFactoryInitPhaseStatus.QUEUED,
+            ProjectFactoryInitPhaseStatus.QUEUED_WAITING_FOR_DOMAIN_BRIEF,
+        }:
             return phase.name
     return job.phases[-1].name
 
@@ -5152,6 +5204,7 @@ def _context_ready_for_business_llm(job: ProjectFactoryInitJob) -> bool:
 def _context_pending_work(job: ProjectFactoryInitJob) -> list[dict[str, object]]:
     pending_statuses = {
         ProjectFactoryInitPhaseStatus.QUEUED,
+        ProjectFactoryInitPhaseStatus.QUEUED_WAITING_FOR_DOMAIN_BRIEF,
         ProjectFactoryInitPhaseStatus.RUNNING,
     }
     current_phase = _context_current_phase(job)
@@ -5272,6 +5325,31 @@ def _has_blocking_phase(job: ProjectFactoryInitJob) -> bool:
         }
         for phase in job.phases
     )
+
+
+def _has_waiting_phase(job: ProjectFactoryInitJob) -> bool:
+    return any(
+        phase.status == ProjectFactoryInitPhaseStatus.QUEUED_WAITING_FOR_DOMAIN_BRIEF
+        for phase in job.phases
+    )
+
+
+def _has_domain_factory_brief(target: Path) -> bool:
+    state_path = target / ".codex" / "factory" / "domain-factory-state.json"
+    if state_path.is_file():
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            state = {}
+        brief_path = str(state.get("briefPath") or "").strip()
+        if brief_path:
+            candidate = target / brief_path
+            if candidate.is_file() and candidate.read_text(encoding="utf-8").strip():
+                return True
+    for candidate in (target / "specs").glob("*/intake/original-brief.md"):
+        if candidate.is_file() and candidate.read_text(encoding="utf-8").strip():
+            return True
+    return False
 
 
 def _verified_foundation_tasks_ready(job: ProjectFactoryInitJob) -> bool:
