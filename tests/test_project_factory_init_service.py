@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -10,6 +11,7 @@ from backend.app.application.services.project_factory_init_service import (
     ProjectFactoryInitCommandResult,
     ProjectFactoryInitConflictError,
     ProjectFactoryInitService,
+    SubprocessProjectFactoryInitCommandRunner,
 )
 from backend.app.domain.entities.agent_configuration import AgentId, AgentType
 from backend.app.domain.entities.chat_message import (
@@ -37,6 +39,31 @@ from backend.app.infrastructure.persistence.in_memory_chat_repository import (
 from backend.app.application.services.project_factory_job_runner import (
     _VisualUxSkillContext,
 )
+
+
+def test_subprocess_runner_closes_stdin_for_noninteractive_exec(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(argv: list[str], **kwargs: object) -> SimpleNamespace:
+        captured["argv"] = argv
+        captured.update(kwargs)
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(init_service_module.subprocess, "run", fake_run)
+
+    result = SubprocessProjectFactoryInitCommandRunner().run(
+        ("codex", "exec", "Read `.codex/factory/prompts/ux-generator.md`."),
+        cwd=tmp_path,
+        timeout_seconds=30,
+    )
+
+    assert result.exit_code == 0
+    assert captured["input"] == ""
+    assert captured["text"] is True
+    assert captured["capture_output"] is True
 
 
 def test_init_service_creates_idempotent_draft_chat_job(tmp_path: Path) -> None:
