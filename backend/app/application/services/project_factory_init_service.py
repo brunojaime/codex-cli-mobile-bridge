@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 from secrets import token_urlsafe
 import shlex
 import shutil
@@ -516,6 +517,7 @@ class ProjectFactoryInitService:
                     role="generator",
                     iteration=iteration,
                     result=generator_result,
+                    report_path=generator_report_path,
                 )
                 if _automatic_ux_result_failed(
                     generator_result,
@@ -562,6 +564,7 @@ class ProjectFactoryInitService:
                     role="reviewer",
                     iteration=iteration,
                     result=reviewer_result,
+                    report_path=reviewer_report_path,
                 )
                 if _automatic_ux_result_failed(
                     reviewer_result,
@@ -3665,6 +3668,7 @@ class ProjectFactoryInitService:
         role: str,
         iteration: int,
         result: ProjectFactoryInitCommandResult,
+        report_path: Path,
     ) -> str | None:
         if self._chat_repository is None or not job.relationships.chat_session_id:
             return None
@@ -3679,6 +3683,8 @@ class ProjectFactoryInitService:
             label=label,
             iteration=iteration,
             result=result,
+            report_path=report_path,
+            workspace_path=job.relationships.generated_workspace_path,
         )
         try:
             if self._chat_repository.get_session(session_id) is None:
@@ -5773,19 +5779,73 @@ def _automatic_ux_chat_content(
     label: str,
     iteration: int,
     result: ProjectFactoryInitCommandResult,
+    report_path: Path,
+    workspace_path: str | None,
 ) -> str:
     status = "completed" if result.exit_code == 0 else "failed"
-    body_parts = [
-        part.strip()
-        for part in (result.stdout, result.stderr)
-        if part and part.strip()
-    ]
-    body = "\n\n".join(body_parts) or "No textual output was captured."
-    return (
-        f"# {label} pass {iteration}\n\n"
-        f"Status: {status}\n\n"
-        f"{body.strip()}\n"
+    evidence_path = _display_path_for_automatic_ux_report(
+        report_path,
+        workspace_path=workspace_path,
     )
+    report_summary = _automatic_ux_report_summary(report_path)
+    output_summary = _automatic_ux_output_summary(result)
+    lines = [
+        f"# {label} pass {iteration}",
+        "",
+        f"Status: {status}",
+        "",
+        f"Evidence: `{evidence_path}`",
+    ]
+    if report_summary:
+        lines.extend(("", f"Summary: {report_summary}"))
+    if output_summary and result.exit_code != 0:
+        lines.extend(("", f"Output excerpt: {output_summary}"))
+    lines.extend(("", "Full UX output is stored in the evidence file, not in chat."))
+    return "\n".join(lines) + "\n"
+
+
+def _display_path_for_automatic_ux_report(
+    report_path: Path,
+    *,
+    workspace_path: str | None,
+) -> str:
+    if workspace_path:
+        try:
+            return str(report_path.relative_to(Path(workspace_path)))
+        except ValueError:
+            pass
+    return str(report_path)
+
+
+def _automatic_ux_report_summary(report_path: Path) -> str:
+    if not report_path.is_file():
+        return ""
+    try:
+        text = report_path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    for line in text.splitlines():
+        clean = line.strip().strip("-* ")
+        if not clean or clean.startswith("#"):
+            continue
+        return _compact_automatic_ux_text(clean, max_chars=240)
+    return ""
+
+
+def _automatic_ux_output_summary(result: ProjectFactoryInitCommandResult) -> str:
+    text = "\n".join(
+        part.strip()
+        for part in (result.stderr, result.stdout)
+        if part and part.strip()
+    )
+    return _compact_automatic_ux_text(text, max_chars=360)
+
+
+def _compact_automatic_ux_text(text: str, *, max_chars: int) -> str:
+    compact = re.sub(r"\s+", " ", text).strip()
+    if len(compact) <= max_chars:
+        return compact
+    return compact[: max_chars - 15].rstrip() + " ... [truncated]"
 
 
 def _ensure_automatic_ux_report(

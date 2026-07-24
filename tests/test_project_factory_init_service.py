@@ -243,6 +243,12 @@ def test_init_service_run_pipeline_generates_workspace_ux_and_blocked_context(
     assert all(message.run_id == completed.id for message in ux_messages)
     assert "UX Generator pass 1" in ux_messages[0].content
     assert "UX Reviewer pass 2" in ux_messages[-1].content
+    assert all(len(message.content) < 800 for message in ux_messages)
+    assert all(".codex/ux/" in message.content for message in ux_messages)
+    assert all(
+        "Full UX output is stored in the evidence file" in message.content
+        for message in ux_messages
+    )
     assert (
         completed.phase(ProjectFactoryInitPhaseName.LOCAL_GIT_COMMIT).status
         == ProjectFactoryInitPhaseStatus.COMPLETED
@@ -263,6 +269,45 @@ def test_init_service_run_pipeline_generates_workspace_ux_and_blocked_context(
     assert phase_names.index(ProjectFactoryInitPhaseName.UX_REVIEWER) < phase_names.index(
         ProjectFactoryInitPhaseName.LOCAL_VALIDATION
     )
+
+
+def test_automatic_ux_chat_content_keeps_large_output_out_of_chat(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "clinica-norte"
+    report_path = workspace / ".codex/ux/ux-generator-report.md"
+    report_path.parent.mkdir(parents=True)
+    report_path.write_text(
+        "# UX generator report\n\n"
+        "Created a branded logo and tightened the app shell.\n"
+        + ("full report detail\n" * 10_000),
+        encoding="utf-8",
+    )
+    result = ProjectFactoryInitCommandResult(
+        argv=("codex", "exec", "short prompt"),
+        cwd=str(workspace),
+        exit_code=1,
+        stdout="stdout " + ("very long model output " * 10_000),
+        stderr="stderr " + ("large failure detail " * 10_000),
+    )
+
+    content = init_service_module._automatic_ux_chat_content(
+        label="UX Generator",
+        iteration=1,
+        result=result,
+        report_path=report_path,
+        workspace_path=str(workspace),
+    )
+
+    assert "UX Generator pass 1" in content
+    assert "Status: failed" in content
+    assert "Evidence: `.codex/ux/ux-generator-report.md`" in content
+    assert "Created a branded logo" in content
+    assert "Output excerpt:" in content
+    assert "Full UX output is stored in the evidence file, not in chat." in content
+    assert "full report detail" not in content
+    assert content.count("very long model output") < 3
+    assert len(content) < 1200
 
 
 def test_init_service_waits_for_domain_brief_before_automatic_ux(

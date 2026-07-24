@@ -2599,7 +2599,7 @@ class ChatMessageResponse(BaseModel):
             recovery_action=message.recovery_action,
             recovered_from_message_id=message.recovered_from_message_id,
             superseded_by_message_id=message.superseded_by_message_id,
-            content=message.content,
+            content=_chat_response_content(message),
             status=message.status,
             created_at=message.created_at,
             updated_at=message.updated_at,
@@ -2614,6 +2614,68 @@ class ChatMessageResponse(BaseModel):
             if expose_attachments
             else [],
         )
+
+
+def _chat_response_content(message: ChatMessage) -> str:
+    if not _is_legacy_automatic_ux_message(message):
+        return message.content
+    title = _first_markdown_heading(message.content) or f"{message.agent_label} pass"
+    status = _extract_legacy_ux_status(message.content)
+    evidence = _legacy_ux_evidence_path(message)
+    summary = _legacy_ux_summary(message.content)
+    lines = [
+        title,
+        "",
+        f"Status: {status}" if status else "Status: completed",
+        "",
+        f"Evidence: `{evidence}`",
+    ]
+    if summary:
+        lines.extend(("", f"Summary: {summary}"))
+    lines.extend(("", "Full UX output is stored in the evidence file, not in chat."))
+    return "\n".join(lines) + "\n"
+
+
+def _is_legacy_automatic_ux_message(message: ChatMessage) -> bool:
+    if len(message.content) <= 2000:
+        return False
+    if message.agent_id != AgentId.UX:
+        return False
+    if message.agent_label not in {"UX Generator", "UX Reviewer"}:
+        return False
+    return "Full UX output is stored in the evidence file" not in message.content
+
+
+def _first_markdown_heading(content: str) -> str | None:
+    for line in content.splitlines():
+        clean = line.strip()
+        if clean.startswith("# "):
+            return clean
+    return None
+
+
+def _extract_legacy_ux_status(content: str) -> str:
+    match = re.search(r"(?im)^Status:\s*([a-z_ -]+)\s*$", content)
+    return match.group(1).strip() if match else ""
+
+
+def _legacy_ux_evidence_path(message: ChatMessage) -> str:
+    role = "reviewer" if message.agent_label == "UX Reviewer" else "generator"
+    return f".codex/ux/ux-{role}-report.md"
+
+
+def _legacy_ux_summary(content: str) -> str:
+    for line in content.splitlines():
+        clean = line.strip().strip("-* ")
+        if not clean or clean.startswith("#") or clean.lower().startswith("status:"):
+            continue
+        if clean.startswith("```"):
+            continue
+        compact = re.sub(r"\s+", " ", clean).strip()
+        if len(compact) <= 240:
+            return compact
+        return compact[:225].rstrip() + " ... [truncated]"
+    return ""
 
 
 class ChatMessageAttachmentResponse(BaseModel):
