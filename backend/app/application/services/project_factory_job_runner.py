@@ -969,6 +969,11 @@ Required UX brief input:
   satisfied instead of proceeding with generic UX assumptions.
 - Apply the brief as product direction while preserving the manifest, release
   defaults, backend contracts, auth, RBAC, persistence, and business logic.
+- Product identity is part of UX. Use uploaded `logo` or `app_icon` assets when
+  they exist. If none exist, create a project-specific logo/source mark under
+  `assets/brand/logo.svg` and `apps/mobile/assets/brand/app_icon_source.svg`.
+  The installable Android app must not keep the Flutter default logo or a
+  generic `Generated Preview` display name.
 """
         (prompt_root / "research-planning.md").write_text(
             base
@@ -993,8 +998,8 @@ functionality. Create `.codex/ux/pre-project-ux-brief.md` only.
 Research the requested app type and comparable professional products. Produce
 clear UX direction for the factory generator: audience, first-use intent,
 information architecture, navigation model, primary screens, empty/loading/error
-states, visual tone, accessibility constraints, mobile/desktop expectations,
-benchmark notes, and UX acceptance criteria.
+states, logo/app icon direction, visual tone, accessibility constraints,
+mobile/desktop expectations, benchmark notes, and UX acceptance criteria.
 """,
             encoding="utf-8",
         )
@@ -1013,7 +1018,8 @@ wiring, or generated functionality. Write `.codex/ux/pre-project-ux-review.md`
 with concrete look-and-feel corrections for the second UX Generator pass.
 
 Focus on whether the brief gives clear enough visual direction for the later
-Domain Factory Generator/Domain Reviewer implementation pair.
+Domain Factory Generator/Domain Reviewer implementation pair, including
+logo/app icon treatment.
 """,
             encoding="utf-8",
         )
@@ -1035,7 +1041,8 @@ Domain Factory Generator/Domain Reviewer pair.
 
 Do not edit product code, backend code, auth, RBAC, persistence, release wiring,
 or generated functionality. This pass only improves the look-and-feel direction
-that the domain implementation must consume.
+that the domain implementation must consume, including the logo/app icon
+requirements.
 """,
             encoding="utf-8",
         )
@@ -1073,6 +1080,10 @@ schemas, release wiring, or business logic.
 Benchmark comparable professional products, inspect or capture screenshots when
 the app can run, perform focused UAT on the primary journeys, and save concise
 evidence under `.codex/ux/`. Validate mobile and desktop fit before completion.
+Confirm the app uses the real display name and a project-specific logo/app icon:
+preserve uploaded identity assets when present, otherwise create/refine
+`assets/brand/logo.svg` and `apps/mobile/assets/brand/app_icon_source.svg` and
+remove any Flutter default launcher logo/icon treatment.
 """,
             encoding="utf-8",
         )
@@ -1086,8 +1097,9 @@ evidence under `.codex/ux/`. Validate mobile and desktop fit before completion.
 The visual-ux-polish skill above is loaded and required.
 
 Review only the UX Generator changes and evidence. Check visual quality,
-interaction clarity, accessibility, responsive fit, screenshots/UAT evidence,
-and scope discipline. Do not request functional/backend/business-logic changes.
+interaction clarity, accessibility, responsive fit, logo/app icon identity,
+screenshots/UAT evidence, and scope discipline. Do not request
+functional/backend/business-logic changes.
 
 This automatic UX lane can run up to 10 generator/reviewer passes. You own the
 stop decision. Return complete as soon as the UX is good enough for this stage;
@@ -1096,6 +1108,10 @@ do not spend all 10 passes unless material UX issues remain.
 If more UX-only work is needed, write `.codex/ux/ux-reviewer-report.md` with the
 required follow-up. If the UX is professional and validated, write the same file
 with a stop decision and the evidence reviewed.
+
+Return `continue` if the app still shows `Generated Preview`, uses a sluggy
+hyphenated Android label when a readable name is available, keeps the Flutter
+default launcher logo, or ignores uploaded logo/app_icon assets.
 
 End your response, and the report when possible, with this machine-readable
 decision:

@@ -154,9 +154,24 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     android_manifest = (
         project / "apps/mobile/android/app/src/main/AndroidManifest.xml"
     ).read_text(encoding="utf-8")
+    assert 'android:label="Clinica Norte"' in android_manifest
+    assert "Generated Preview" not in android_manifest
+    assert 'android:icon="@drawable/app_icon"' in android_manifest
     assert 'android:networkSecurityConfig="@xml/network_security_config"' in (
         android_manifest
     )
+    app_icon = (
+        project / "apps/mobile/android/app/src/main/res/drawable/app_icon.xml"
+    ).read_text(encoding="utf-8")
+    assert "<vector" in app_icon
+    assert "@mipmap/ic_launcher" not in app_icon
+    brand_logo = (project / "assets/brand/logo.svg").read_text(encoding="utf-8")
+    mobile_icon_source = (
+        project / "apps/mobile/assets/brand/app_icon_source.svg"
+    ).read_text(encoding="utf-8")
+    assert "Clinica Norte logo" in brand_logo
+    assert "CN" in brand_logo
+    assert brand_logo == mobile_icon_source
     network_security = (
         project / "apps/mobile/android/app/src/main/res/xml/network_security_config.xml"
     ).read_text(encoding="utf-8")
@@ -194,6 +209,30 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     assert "sourceApp: clinica-norte" in bridge_config
     assert "workbench-sdd/v1" in bridge_config
     assert "Nienfoadmin1994" not in _read_all_text(project)
+
+
+def test_generator_uses_readable_android_label_for_slug_like_project_name(
+    tmp_path: Path,
+) -> None:
+    manifest_plan = ProjectFactoryManifestService(
+        projects_root=tmp_path,
+    ).plan_manifest(
+        ProjectFactoryManifestInput(
+            name="prueba-24",
+            business_type="operations",
+            primary_goal="Gestionar operaciones",
+        )
+    )
+
+    ProjectFactoryGeneratorService().generate(manifest_plan)
+
+    manifest = (
+        tmp_path
+        / "prueba-24/apps/mobile/android/app/src/main/AndroidManifest.xml"
+    ).read_text(encoding="utf-8")
+    assert 'android:label="Prueba 24"' in manifest
+    assert "prueba-24" not in manifest
+    assert "Generated Preview" not in manifest
 
 
 def test_generator_writes_fastapi_backend_v1_and_compileall_passes(

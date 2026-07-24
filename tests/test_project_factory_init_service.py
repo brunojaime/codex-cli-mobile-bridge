@@ -774,6 +774,10 @@ def test_init_service_bounds_large_automatic_ux_prompt_and_passes_it_by_file(
     assert "Do not run package managers, Flutter/Gradle builds" in prompt_text
     assert "do not capture screenshots" in prompt_text
     assert "leave deeper\npolish for the final UX lane" in prompt_text
+    assert "Treat product identity as part of UX" in prompt_text
+    assert "assets/brand/logo.svg" in prompt_text
+    assert "apps/mobile/assets/brand/app_icon_source.svg" in prompt_text
+    assert "Never leave the generated preview using the Flutter" in prompt_text
     reviewer_prompt_text = (
         workspace / ".codex/factory/prompts/ux-reviewer.md"
     ).read_text(encoding="utf-8")
@@ -783,6 +787,8 @@ def test_init_service_bounds_large_automatic_ux_prompt_and_passes_it_by_file(
     assert "Do not ask the next generator to capture screenshots" in (
         reviewer_prompt_text
     )
+    assert "logo/app icon identity" in reviewer_prompt_text
+    assert "Flutter default logo" in reviewer_prompt_text
     ux_commands = [
         command
         for command in command_runner.commands

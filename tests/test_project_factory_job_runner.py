@@ -163,6 +163,14 @@ def test_project_factory_runner_prompts_load_skill_and_consume_ux_brief(
     assert "references/visual-validation-protocol.md" in ux_reviewer
     assert "Early UX Reviewer Pass 1" in early_reviewer
     assert "Early UX Generator Pass 2" in early_generator_02
+    assert "Product identity is part of UX" in research
+    assert "logo/app icon direction" in (prompt_root / "ux-brief.md").read_text(
+        encoding="utf-8"
+    )
+    assert "assets/brand/logo.svg" in ux_generator
+    assert "apps/mobile/assets/brand/app_icon_source.svg" in ux_generator
+    assert "Flutter default launcher logo" in ux_generator
+    assert "Generated Preview" in ux_reviewer
 
 
 def test_project_factory_runner_ux_lane_stops_when_reviewer_completes(

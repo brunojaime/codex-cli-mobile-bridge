@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import html
 import json
 import re
 import subprocess
@@ -8915,6 +8917,7 @@ GitHub release/APK metadata, and Bridge installable-app metadata agree.
 
 def _mobile_files(name: str, slug: str) -> dict[str, str]:
     package_name = _dart_package_name(slug)
+    display_name = _mobile_display_name(name, slug)
     return {
         "apps/mobile/pubspec.yaml": _mobile_pubspec(package_name),
         "apps/mobile/README.md": _mobile_readme(name),
@@ -8932,10 +8935,18 @@ def _mobile_files(name: str, slug: str) -> dict[str, str]:
             "upload-keystore.jks\nkey.properties\n.kotlin/\n"
         ),
         "apps/mobile/android/app/src/main/AndroidManifest.xml": (
-            _mobile_android_manifest()
+            _mobile_android_manifest(display_name)
+        ),
+        "apps/mobile/android/app/src/main/res/drawable/app_icon.xml": (
+            _mobile_android_app_icon_vector(slug)
         ),
         "apps/mobile/android/app/src/main/res/xml/network_security_config.xml": (
             _mobile_android_network_security_config()
+        ),
+        "assets/brand/logo.svg": _fallback_brand_logo_svg(name, slug),
+        "apps/mobile/assets/brand/app_icon_source.svg": _fallback_brand_logo_svg(
+            name,
+            slug,
         ),
         "apps/mobile/test/config_test.dart": _mobile_config_test_dart(package_name),
         "apps/mobile/test/api_client_test.dart": _mobile_api_client_test_dart(
@@ -8955,6 +8966,70 @@ def _dart_package_name(slug: str) -> str:
     if package_name[0].isdigit():
         return f"app_{package_name}"
     return package_name
+
+
+def _mobile_display_name(name: str, slug: str) -> str:
+    candidate = name.strip() or slug.strip()
+    if not candidate:
+        return "Generated App"
+    words = [part for part in re.split(r"[-_\s]+", candidate) if part]
+    if not words:
+        return candidate
+    if len(words) == 1 and words[0] == candidate:
+        return candidate
+    return " ".join(word[:1].upper() + word[1:] for word in words)
+
+
+def _brand_initials(name: str, slug: str) -> str:
+    words = [part for part in re.split(r"[^A-Za-z0-9]+", name or slug) if part]
+    if not words:
+        return "PF"
+    if len(words) == 1:
+        return words[0][:2].upper()
+    return "".join(word[0].upper() for word in words[:2])
+
+
+def _brand_palette(slug: str) -> tuple[str, str]:
+    digest = hashlib.sha256(slug.encode("utf-8")).hexdigest()
+    hue = int(digest[:2], 16)
+    palettes = (
+        ("#0f766e", "#ccfbf1"),
+        ("#1d4ed8", "#dbeafe"),
+        ("#7c3aed", "#ede9fe"),
+        ("#be123c", "#ffe4e6"),
+        ("#047857", "#d1fae5"),
+        ("#b45309", "#fef3c7"),
+        ("#4338ca", "#e0e7ff"),
+        ("#0f172a", "#e2e8f0"),
+    )
+    return palettes[hue % len(palettes)]
+
+
+def _fallback_brand_logo_svg(name: str, slug: str) -> str:
+    primary, soft = _brand_palette(slug)
+    initials = html.escape(_brand_initials(name, slug))
+    title = html.escape(_mobile_display_name(name, slug))
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="{title} logo">
+  <rect width="512" height="512" rx="112" fill="{primary}"/>
+  <path d="M144 176c0-35.346 28.654-64 64-64h160v80H208v128h160v80H208c-35.346 0-64-28.654-64-64V176z" fill="{soft}" opacity="0.95"/>
+  <circle cx="352" cy="160" r="48" fill="{soft}" opacity="0.72"/>
+  <text x="256" y="302" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="108" font-weight="800" fill="#ffffff">{initials}</text>
+</svg>
+"""
+
+
+def _mobile_android_app_icon_vector(slug: str) -> str:
+    primary, soft = _brand_palette(slug)
+    return f"""<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:fillColor="{primary}" android:pathData="M0,0h108v108h-108z"/>
+    <path android:fillColor="{soft}" android:fillAlpha="0.96" android:pathData="M31,26h46c13,0 23,10 23,23v33h-16v-33c0,-4 -3,-7 -7,-7h-46c-4,0 -7,3 -7,7v10h39v16h-39v7c0,4 3,7 7,7h46c4,0 7,-3 7,-7v-2h16v2c0,13 -10,23 -23,23h-46c-13,0 -23,-10 -23,-23v-33c0,-13 10,-23 23,-23z"/>
+    <path android:fillColor="#FFFFFF" android:fillAlpha="0.86" android:pathData="M82,10L100,28L82,46L64,28z"/>
+</vector>
+"""
 
 
 def _mobile_pubspec(package_name: str) -> str:
@@ -9029,13 +9104,14 @@ slice when persistence across app restarts is required.
 """
 
 
-def _mobile_android_manifest() -> str:
-    return """<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+def _mobile_android_manifest(display_name: str) -> str:
+    label = html.escape(display_name, quote=True)
+    return f"""<manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
     <application
-        android:label="Generated Preview"
-        android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher"
+        android:label="{label}"
+        android:name="${{applicationName}}"
+        android:icon="@drawable/app_icon"
         android:networkSecurityConfig="@xml/network_security_config">
         <activity
             android:name=".MainActivity"

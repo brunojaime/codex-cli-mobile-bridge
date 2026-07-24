@@ -5666,6 +5666,13 @@ Hard constraints:
 - Keep changes scoped to visible UX, user-facing copy, layout, responsive fit,
   accessibility, and frontend polish.
 - Save concise evidence under `.codex/ux/`.
+- Treat product identity as part of UX: inspect `assets/brand/` and
+  `apps/mobile/assets/brand/`. If an uploaded logo or app icon source exists,
+  preserve and use it as the visual identity. If no logo was supplied, create a
+  simple project-specific logo/source mark under `assets/brand/logo.svg` and
+  `apps/mobile/assets/brand/app_icon_source.svg`, then make sure Android keeps a
+  non-Flutter launcher icon. Never leave the generated preview using the Flutter
+  default logo.
 
 Automatic UX execution budget:
 - This is a bounded early UX baseline for deterministic init. Finish in one
@@ -5699,7 +5706,8 @@ polish for the final UX lane.
 
 If reviewer feedback is provided below in a later iteration, address only that
 UX feedback. Write `.codex/ux/ux-generator-report.md` with what changed,
-files inspected, any small edits made, and any remaining UX concerns.
+files inspected, any small edits made, the logo/app icon decision, and any
+remaining UX concerns.
 """
     )
     reviewer_prompt = (
@@ -5711,9 +5719,9 @@ files inspected, any small edits made, and any remaining UX concerns.
 
 Review only the UX generator changes and evidence. Check hierarchy, layout,
 spacing, typography, contrast, responsive/mobile fit, empty/loading/error
-states, accessibility, and scope discipline. Do not ask for backend, auth,
-schema, release, business-logic changes, builds, screenshots, previews, or APK
-validation in this early lane.
+states, accessibility, logo/app icon identity, and scope discipline. Do not ask
+for backend, auth, schema, release, business-logic changes, builds, screenshots,
+previews, or APK validation in this early lane.
 
 Early-lane reviewer decision rules:
 - Do not return `continue`, `blocked`, or `release_gate=fail` only because
@@ -5727,6 +5735,8 @@ Early-lane reviewer decision rules:
   UX progress or left clear follow-up and did not violate scope.
 - Return `continue` only for one or two small, source-only UX/copy fixes that
   are required before deterministic init can proceed.
+- Return `continue` if the UI still depends on the Flutter default logo or if
+  the generator ignored a supplied `logo`/`app_icon` asset.
 
 This automatic UX lane can run up to 10 generator/reviewer passes. Stop early
 when the UI is good enough for the first installable preview. If more UX-only
