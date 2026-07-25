@@ -27,7 +27,7 @@ from backend.app.domain.entities.chat_session import ChatSession
 from backend.app.domain.repositories.chat_repository import ChatRepository
 
 
-_DOMAIN_FACTORY_GENERATOR_LABEL = "Domain Factory"
+_DOMAIN_FACTORY_GENERATOR_LABEL = "Domain Generator"
 _DOMAIN_FACTORY_REVIEWER_LABEL = "Domain Reviewer"
 _DOMAIN_FACTORY_UX_STATUS = {
     "status": "workflow_configured",

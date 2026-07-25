@@ -1948,6 +1948,83 @@ flowchart LR
     expect(find.text('call-mcp-tool'), findsNothing);
   });
 
+  testWidgets('renders pending UX and Domain agent messages as active work', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: Column(
+              children: <Widget>[
+                ChatBubble(
+                  message: ChatMessage(
+                    id: 'ux-generator-running',
+                    text: 'Status: running',
+                    isUser: false,
+                    authorType: ChatMessageAuthorType.assistant,
+                    status: ChatMessageStatus.pending,
+                    createdAt: DateTime.utc(2026, 1, 1),
+                    updatedAt: DateTime.utc(2026, 1, 1),
+                    agentId: AgentId.ux,
+                    agentLabel: 'UX Generator',
+                  ),
+                ),
+                ChatBubble(
+                  message: ChatMessage(
+                    id: 'ux-reviewer-running',
+                    text: 'Status: running',
+                    isUser: false,
+                    authorType: ChatMessageAuthorType.assistant,
+                    status: ChatMessageStatus.pending,
+                    createdAt: DateTime.utc(2026, 1, 1),
+                    updatedAt: DateTime.utc(2026, 1, 1),
+                    agentId: AgentId.ux,
+                    agentLabel: 'UX Reviewer',
+                  ),
+                ),
+                ChatBubble(
+                  message: ChatMessage(
+                    id: 'domain-generator-running',
+                    text: 'Status: running',
+                    isUser: false,
+                    authorType: ChatMessageAuthorType.assistant,
+                    status: ChatMessageStatus.pending,
+                    createdAt: DateTime.utc(2026, 1, 1),
+                    updatedAt: DateTime.utc(2026, 1, 1),
+                    agentId: AgentId.generator,
+                    agentLabel: 'Domain Generator',
+                  ),
+                ),
+                ChatBubble(
+                  message: ChatMessage(
+                    id: 'domain-reviewer-running',
+                    text: 'Status: running',
+                    isUser: false,
+                    authorType: ChatMessageAuthorType.assistant,
+                    status: ChatMessageStatus.pending,
+                    createdAt: DateTime.utc(2026, 1, 1),
+                    updatedAt: DateTime.utc(2026, 1, 1),
+                    agentId: AgentId.reviewer,
+                    agentLabel: 'Domain Reviewer',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('UX GENERATOR'), findsOneWidget);
+    expect(find.text('UX REVIEWER'), findsOneWidget);
+    expect(find.text('DOMAIN GENERATOR'), findsOneWidget);
+    expect(find.text('DOMAIN REVIEWER'), findsOneWidget);
+    expect(find.text('Running tools'), findsNWidgets(2));
+    expect(find.text('Reviewing'), findsNWidgets(2));
+    expect(find.text('Queued'), findsNothing);
+  });
+
   testWidgets('day separator formatter supports today and yesterday in Spanish',
       (
     tester,

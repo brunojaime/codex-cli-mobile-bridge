@@ -889,6 +889,12 @@ Color _agentHeaderColor(AgentId agentId, {String? label}) {
   if (normalizedLabel == 'ux reviewer') {
     return const Color(0xFFFFD28A);
   }
+  if (normalizedLabel == 'domain generator') {
+    return const Color(0xFF7CF2D4);
+  }
+  if (normalizedLabel == 'domain reviewer') {
+    return const Color(0xFFFFC857);
+  }
   return switch (agentId) {
     AgentId.summary => const Color(0xFFAED3FF),
     AgentId.reviewer => const Color(0xFFD98B1D),
@@ -1031,6 +1037,13 @@ String _fallbackPhase(ChatMessage message) {
     return 'Execution failed';
   }
   if (message.isPendingLike || jobStatus == 'pending') {
+    final label = (message.agentLabel ?? '').trim().toLowerCase();
+    if (label == 'ux generator' || label == 'domain generator') {
+      return 'Running tools';
+    }
+    if (label == 'ux reviewer' || label == 'domain reviewer') {
+      return 'Reviewing';
+    }
     return 'Queued';
   }
   return 'Completed';

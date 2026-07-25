@@ -493,6 +493,13 @@ class ProjectFactoryInitService:
                 generator_report_path = (
                     target / ".codex" / "ux" / "ux-generator-report.md"
                 )
+                self._attach_automatic_ux_pending_message(
+                    job,
+                    role="generator",
+                    iteration=iteration,
+                    prompt_path=generator_prompt_path,
+                    report_path=generator_report_path,
+                )
                 generator_result = self._run(
                     _codex_argv_with_output_report(
                         codex_command,
@@ -539,6 +546,13 @@ class ProjectFactoryInitService:
 
                 reviewer_report_path = (
                     target / ".codex" / "ux" / "ux-reviewer-report.md"
+                )
+                self._attach_automatic_ux_pending_message(
+                    job,
+                    role="reviewer",
+                    iteration=iteration,
+                    prompt_path=reviewer_prompt_path,
+                    report_path=reviewer_report_path,
                 )
                 reviewer_result = self._run(
                     _codex_argv_with_output_report(
@@ -3661,6 +3675,62 @@ class ProjectFactoryInitService:
         except Exception:
             return None
 
+    def _attach_automatic_ux_pending_message(
+        self,
+        job: ProjectFactoryInitJob,
+        *,
+        role: str,
+        iteration: int,
+        prompt_path: Path,
+        report_path: Path,
+    ) -> str | None:
+        if self._chat_repository is None or not job.relationships.chat_session_id:
+            return None
+        session_id = job.relationships.chat_session_id
+        label = "UX Generator" if role == "generator" else "UX Reviewer"
+        content = _automatic_ux_pending_chat_content(
+            label=label,
+            iteration=iteration,
+            prompt_path=prompt_path,
+            report_path=report_path,
+            workspace_path=job.relationships.generated_workspace_path,
+        )
+        try:
+            if self._chat_repository.get_session(session_id) is None:
+                return None
+            dedupe_key = f"project-factory-init-ux:{job.id}:{role}:{iteration}"
+            message = ChatMessage(
+                id=f"pf-init-ux-{role}-{job.id}-{iteration}",
+                session_id=session_id,
+                role=ChatMessageRole.ASSISTANT,
+                author_type=ChatMessageAuthorType.ASSISTANT,
+                content=content,
+                status=ChatMessageStatus.PENDING,
+                dedupe_key=dedupe_key,
+                agent_id=AgentId.UX,
+                agent_type=AgentType.UX,
+                agent_label=label,
+                visibility=AgentVisibilityMode.VISIBLE,
+                trigger_source=AgentTriggerSource.SYSTEM,
+                run_id=job.id,
+            )
+            reserved = self._chat_repository.reserve_message(message)
+            if (
+                reserved.content != content
+                or reserved.status != ChatMessageStatus.PENDING
+                or reserved.agent_label != label
+            ):
+                reserved.sync(
+                    content=content,
+                    status=ChatMessageStatus.PENDING,
+                    agent_label=label,
+                )
+                reserved.updated_at = datetime.now(UTC)
+                self._chat_repository.save_message(reserved)
+            return reserved.id
+        except Exception:
+            return None
+
     def _attach_automatic_ux_message(
         self,
         job: ProjectFactoryInitJob,
@@ -5772,6 +5842,39 @@ def _automatic_ux_reviewer_feedback(
         for item in (result.stdout, result.stderr, report)
         if item and item.strip()
     )
+
+
+def _automatic_ux_pending_chat_content(
+    *,
+    label: str,
+    iteration: int,
+    prompt_path: Path,
+    report_path: Path,
+    workspace_path: str | None,
+) -> str:
+    prompt_display = _display_path_for_automatic_ux_report(
+        prompt_path,
+        workspace_path=workspace_path,
+    )
+    evidence_display = _display_path_for_automatic_ux_report(
+        report_path,
+        workspace_path=workspace_path,
+    )
+    verb = "Generating" if label == "UX Generator" else "Reviewing"
+    return "\n".join(
+        [
+            f"# {label} pass {iteration}",
+            "",
+            "Status: running",
+            "",
+            f"{verb} the visible UX baseline from the approved domain brief.",
+            "",
+            f"Prompt: `{prompt_display}`",
+            f"Evidence: `{evidence_display}`",
+            "",
+            "Full UX output will be stored in the evidence file, not in chat.",
+        ]
+    ) + "\n"
 
 
 def _automatic_ux_chat_content(

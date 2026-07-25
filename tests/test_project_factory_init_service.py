@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable
 
 import pytest
 
@@ -268,6 +269,92 @@ def test_init_service_run_pipeline_generates_workspace_ux_and_blocked_context(
     phase_names = [phase.name for phase in completed.phases]
     assert phase_names.index(ProjectFactoryInitPhaseName.UX_REVIEWER) < phase_names.index(
         ProjectFactoryInitPhaseName.LOCAL_VALIDATION
+    )
+
+
+def test_automatic_ux_messages_are_visible_while_agent_runs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = InMemoryChatRepository(projects_root=str(tmp_path))
+    repository.save_session(
+        ChatSession(
+            id="chat-1",
+            title="Clinica Norte",
+            workspace_path=str(tmp_path / "clinica-norte"),
+            workspace_name="clinica-norte",
+        )
+    )
+    job_id: dict[str, str] = {}
+    observed: list[tuple[str, int]] = []
+
+    def observe_running_message(role: str, iteration: int, cwd: Path) -> None:
+        del cwd
+        label = "UX Generator" if role == "generator" else "UX Reviewer"
+        message = next(
+            (
+                item
+                for item in repository.list_messages("chat-1")
+                if item.dedupe_key
+                == f"project-factory-init-ux:{job_id['id']}:{role}:{iteration}"
+            ),
+            None,
+        )
+        assert message is not None
+        assert message.agent_label == label
+        assert message.status == ChatMessageStatus.PENDING
+        assert "Status: running" in message.content
+        assert ".codex/factory/prompts/ux-" in message.content
+        assert ".codex/ux/ux-" in message.content
+        observed.append((role, iteration))
+
+    command_runner = _FakeInitCommandRunner(
+        ux_complete_after=1,
+        on_ux_run=observe_running_message,
+    )
+    monkeypatch.setenv(
+        "VISUAL_UX_POLISH_SKILL_PATH",
+        str(_visual_ux_skill_fixture(tmp_path)),
+    )
+    service = ProjectFactoryInitService(
+        state_root=tmp_path / ".state",
+        command_runner=command_runner,
+        chat_repository=repository,
+        settings=Settings(
+            projects_root=str(tmp_path),
+            project_factory_state_dir=str(tmp_path / ".state"),
+            chat_store_backend="memory",
+            audio_transcription_backend="disabled",
+            speech_synthesis_backend="disabled",
+            codex_command="fake-codex",
+        ),
+    )
+    job = service.start_or_resume(
+        draft_id="draft-1",
+        chat_session_id="chat-1",
+        project_name="Clinica Norte",
+        slug="clinica-norte",
+        frontend_strategy="flutter",
+    )
+    job_id["id"] = job.id
+
+    waiting = service.run_pipeline(job.id)
+    _write_domain_brief(tmp_path / "clinica-norte")
+    completed = service.run_pipeline(waiting.id)
+
+    assert observed == [("generator", 1), ("reviewer", 1)]
+    ux_messages = [
+        message
+        for message in repository.list_messages("chat-1")
+        if message.agent_label in {"UX Generator", "UX Reviewer"}
+    ]
+    assert [message.status for message in ux_messages] == [
+        ChatMessageStatus.COMPLETED,
+        ChatMessageStatus.COMPLETED,
+    ]
+    assert (
+        completed.phase(ProjectFactoryInitPhaseName.UX_REVIEWER).status
+        == ProjectFactoryInitPhaseStatus.COMPLETED
     )
 
 
@@ -916,10 +1003,12 @@ class _FakeInitCommandRunner:
         ux_complete_after: int = 1,
         fail_ux_reviewer: bool = False,
         sandbox_blocked_ux: bool = False,
+        on_ux_run: Callable[[str, int, Path], None] | None = None,
     ) -> None:
         self.ux_complete_after = ux_complete_after
         self.fail_ux_reviewer = fail_ux_reviewer
         self.sandbox_blocked_ux = sandbox_blocked_ux
+        self.on_ux_run = on_ux_run
         self.ux_generator_calls = 0
         self.ux_reviewer_calls = 0
         self.commands: list[tuple[str, ...]] = []
@@ -944,6 +1033,8 @@ class _FakeInitCommandRunner:
                 prompt = prompt_path.read_text(encoding="utf-8")
         if "Automatic New Project UX Generator" in prompt:
             self.ux_generator_calls += 1
+            if self.on_ux_run is not None:
+                self.on_ux_run("generator", self.ux_generator_calls, cwd_path)
             if self.sandbox_blocked_ux:
                 return ProjectFactoryInitCommandResult(
                     argv=argv,
@@ -973,6 +1064,8 @@ class _FakeInitCommandRunner:
             )
         if "Automatic New Project UX Reviewer" in prompt:
             self.ux_reviewer_calls += 1
+            if self.on_ux_run is not None:
+                self.on_ux_run("reviewer", self.ux_reviewer_calls, cwd_path)
             if self.fail_ux_reviewer:
                 return ProjectFactoryInitCommandResult(
                     argv=argv,

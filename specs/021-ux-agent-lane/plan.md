@@ -2,12 +2,12 @@
 
 ## Current Implementation Status
 
-This spec is implemented as a label-based MVP slice. The shipped behavior uses
-the existing `generator` and `reviewer` agent ids with UX labels/prompts,
-workspace-guarded `/ux` and `/ux-full` slash commands, a Project Factory
-pre-planning UX brief, fail-closed `visual-ux-polish` loading, one automatic
-post-baseline UX generator step, one UX reviewer step, and a local UX evidence
-index.
+This spec is implemented as a label-based compatibility slice. The shipped
+behavior uses the existing `generator`, `reviewer`, and `ux` agent ids with
+stage-specific labels/prompts, workspace-guarded `/ux` and `/ux-full` slash
+commands, fail-closed `visual-ux-polish` loading, visible automatic UX chat
+messages, explicit Domain Generator/Domain Reviewer labels, up to 10 automatic
+UX iterations with reviewer-controlled stop, and a local UX evidence index.
 
 The first-class UX lane below remains the target architecture unless a phase is
 marked as shipped in MVP.
@@ -27,16 +27,20 @@ fields remain deferred.
 
 ## Phase 2: Lane Sequencing
 
-MVP status: partially shipped for Project Factory only. A lightweight UX brief
-runs before planning, downstream prompts explicitly require that brief, and one
-post-baseline UX generator/reviewer pass runs after the baseline. Backend
-reviewer JSON parsing, continuation routing, lifecycle states, and Domain
-Factory sequencing remain deferred.
+MVP status: shipped for the current label-based workflow. Project Factory init
+gates the early UX baseline until the first domain brief exists, then exposes
+visible UX Generator/Reviewer messages. The current runner harness proves the
+early UX order before domain implementation and the final UX polish cap. Domain
+Factory exposes the expected workflow order and uses clear Domain
+Generator/Domain Reviewer labels. First-class lifecycle ids and rich evidence
+projection remain deferred.
 
 - Add `generator_reviewer_ux` or equivalent workflow option.
-- Add a pre-Project-Factory lightweight `ux_generator` planning pass.
-- Sequence post-baseline work as
-  `baseline_generator -> baseline_reviewer -> ux_generator -> ux_reviewer`.
+- Add a gated early UX baseline after the first user domain brief:
+  `ux_generator -> ux_reviewer -> ux_generator`.
+- Sequence domain implementation as `domain_generator -> domain_reviewer`.
+- Sequence final polish as `ux_generator -> ux_reviewer` up to 10 passes with
+  reviewer-controlled early stop.
 - Stop automatic New Project work after the post-baseline UX reviewer returns
   complete or blocked.
 - Preserve existing solo, review, triad, supervisor, and Domain Factory flows

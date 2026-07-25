@@ -126,3 +126,12 @@ deferred.
       actually executes as UX Generator, UX Reviewer, UX Generator before
       downstream generator/reviewer implementation, then final UX polish runs
       with the existing 10-pass reviewer-controlled cap.
+- [x] T044 Expose automatic UX passes as visible chat agent messages while they
+      are running, then update those same messages with concise completion or
+      failure summaries and `.codex/ux/` evidence paths.
+- [x] T045 Label Domain Factory implementation chat agents as `Domain Generator`
+      and `Domain Reviewer`, keeping the paired functional generator/reviewer
+      workflow distinct from the overall Domain Factory phase.
+- [x] T046 Render pending UX and Domain agent messages in mobile as active work
+      (`Running tools` or `Reviewing`) with agent-specific colors instead of a
+      generic queued state.

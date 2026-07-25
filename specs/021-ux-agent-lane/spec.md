@@ -21,10 +21,12 @@ and Domain Factory work. The existing `ux` supervisor member may remain for
 generic advisory use, but the new lane is the default for serious product UX
 improvement because it can act, validate, and require another UX pass.
 
-## Implemented MVP Scope
+## Implemented Scope
 
-The current implementation is intentionally a label-based MVP, not the complete
-target architecture above.
+The implementation is still label-based for compatibility with existing chat
+agent ids, but the product workflow is first-class and visible. The existing
+`generator`/`reviewer` ids can be labeled as `UX Generator`, `UX Reviewer`,
+`Domain Generator`, and `Domain Reviewer` depending on the stage.
 
 Implemented now:
 
@@ -49,11 +51,17 @@ Implemented now:
 - Project Factory runner executes the early UX baseline as
   `UX Generator -> UX Reviewer -> UX Generator` before downstream planning and
   generator/reviewer implementation prompts consume the UX brief.
+- Project Factory init exposes the automatic UX baseline as visible chat
+  messages. Each UX pass first appears as a pending/running message and is then
+  updated with a short completion/failure summary and evidence path.
+- Domain Factory labels the paired functional implementation agents as
+  `Domain Generator` and `Domain Reviewer` so their chat turns are distinct
+  from the overall Domain Factory phase.
 
 Deferred:
 
 - first-class `ux_generator`/`ux_reviewer` ids, API schema fields, lifecycle
-  states, and mobile rendering;
+  states;
 - backend Project Factory reviewer JSON parsing/continue routing for multiple
   automatic UX iterations;
 - attached UX evidence in session projections or Workbench UI;
@@ -82,40 +90,52 @@ instead of a raw functional baseline:
 
 ## Final Flow Decision
 
-New Project has exactly two automatic UX interventions:
+New Project and Domain Factory are one visible product-building workflow. The
+deterministic phases remain the source of truth for infrastructure and release,
+but every model-driven product pass must appear as an agent chat turn with a
+short user-readable summary and an evidence path.
 
-1. Pre-Project-Factory lightweight UX pass.
-   - Runs only `ux_generator`.
-   - Does not edit code.
-   - Produces UX direction for Project Factory: application type, audience,
-     first-use intent, benchmarks, visual tone, navigation expectations,
-     first screens, empty states, accessibility constraints, and UX acceptance
-     criteria.
-2. Post-Project-Factory strong UX pass.
-   - Runs `ux_generator -> ux_reviewer`.
-   - Works on the generated app after the deterministic baseline exists.
-   - May edit UI, visual design, copy, responsive behavior, states,
-     accessibility, and UX evidence.
-   - Must not touch functionality.
-   - Target architecture: reviewer decides whether another UX generator pass is
-     required.
-   - Current MVP: backend Project Factory runs up to 10 UX generator/reviewer
-     passes and stops early when the UX reviewer returns `complete`. Manual
-     `/ux-full` uses the existing chat generator/reviewer loop and 15-turn
-     budget.
-   - When this pass completes, the automatic New Project task stops. No
-     additional automatic Domain Factory or release phase is started by this UX
-     lane.
+1. New Project intake creates the draft and asks only for missing setup data.
+   If project name or admin emails were already captured in the New Project
+   dialog, the chat must not ask for them again.
+2. Deterministic init creates/verifies the baseline scaffold and frontend
+   strategy. UX stays visible as `queued_waiting_for_domain_brief` until the
+   user has provided the first business/domain brief.
+3. The user sends the first domain brief and approves it with
+   `PROJECT_FACTORY_READY_FOR_BUILD`. That marker is consumed by the backend;
+   it must not create files, repositories, previews, APKs, or another project
+   through normal chat generation.
+4. Early UX baseline runs visibly in chat:
+   `UX Generator -> UX Reviewer -> UX Generator`. It sets the visual direction,
+   logo/icon plan, app name presentation, navigation, density, first screens,
+   empty states, accessibility goals, and UX acceptance criteria before domain
+   implementation starts.
+5. Domain implementation runs visibly in chat:
+   `Domain Generator -> Domain Reviewer`. This is the functional implementation
+   loop. There is no additional functional Generator stage beyond this
+   Domain Factory pair.
+6. Final UX polish runs visibly in chat:
+   `UX Generator <-> UX Reviewer` up to 10 iterations. The reviewer may stop
+   early when the visual result is good enough. This stage may change UI code,
+   copy, layout, responsiveness, interaction states, logos/icons, and UX
+   evidence, while preserving domain behavior and release/runtime contracts.
+7. Deterministic validation and release complete the flow: local validation,
+   git commit, GitHub repository/tag/release, Cloudflare preview provision and
+   deploy, preview smoke and initial admin invite, Android preview APK release,
+   Bridge installable registration, Workbench/feedback verification, updater
+   configuration, and LLM context pack.
+8. When release is ready, the preview invite email is sent through the
+   configured email provider using the configured sender. If no provider is
+   available, the status must say manual delivery is required.
 
-Domain Factory has the following automatic target sequence once the user has
-provided the business/domain brief:
+The Domain Factory automatic sequence after the first domain brief is:
 
 ```text
-Project Factory contract and domain brief
+Project Factory contract and user domain brief
 -> UX Generator
 -> UX Reviewer
 -> UX Generator
--> Domain Factory Generator
+-> Domain Generator
 -> Domain Reviewer
 -> UX Generator <-> UX Reviewer, up to 10 passes
 -> validation / preview / APK / Bridge
@@ -137,8 +157,12 @@ preserve backend behavior, auth, RBAC, persistence, release wiring, updater
 configuration, and real preview runtime paths. The reviewer may stop before the
 10-pass limit when the visual result is good enough.
 
-Long-running UX work outside this automatic sequence remains available through
-manual slash commands.
+Chat output must be concise. Full prompt text, long model output, screenshots,
+benchmark details, and reports are stored under `.codex/ux/` and referenced from
+the visible chat message instead of being pasted into chat.
+
+Long-running or manual UX work outside this automatic sequence remains
+available through `/ux` and `/ux-full`.
 
 ## Research Basis
 

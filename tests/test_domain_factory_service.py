@@ -83,7 +83,7 @@ def test_start_domain_factory_configures_current_session_and_writes_sdd(
     configuration = updated.agent_configuration.normalized()
     generator = configuration.agents[AgentId.GENERATOR]
     reviewer = configuration.agents[AgentId.REVIEWER]
-    assert generator.label == "Domain Factory"
+    assert generator.label == "Domain Generator"
     assert reviewer.label == "Domain Reviewer"
     assert generator.enabled is True
     assert reviewer.enabled is True
