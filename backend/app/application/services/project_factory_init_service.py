@@ -3717,6 +3717,10 @@ class ProjectFactoryInitService:
                 )
                 reserved.updated_at = datetime.now(UTC)
                 self._chat_repository.save_message(reserved)
+            generated_workspace = job.relationships.generated_workspace_path
+            if generated_workspace:
+                session.workspace_path = generated_workspace
+                session.workspace_name = Path(generated_workspace).name
             session.touch()
             self._chat_repository.save_session(session)
             return reserved.id

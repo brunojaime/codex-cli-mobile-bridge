@@ -168,8 +168,8 @@ def test_init_service_run_pipeline_generates_workspace_ux_and_blocked_context(
         ChatSession(
             id="chat-1",
             title="Clinica Norte",
-            workspace_path=str(tmp_path / "clinica-norte"),
-            workspace_name="clinica-norte",
+            workspace_path=str(tmp_path / "bridge-workspace"),
+            workspace_name="bridge-workspace",
         )
     )
     monkeypatch.setenv(
@@ -472,6 +472,10 @@ def test_init_service_waits_for_domain_brief_before_automatic_ux(
     assert "logo o archivos adjuntos" in guidance.content
     assert "No hace falta repetir el nombre del proyecto" in guidance.content
     assert "UX Generator" in guidance.content
+    refreshed_session = repository.get_session("chat-1")
+    assert refreshed_session is not None
+    assert refreshed_session.workspace_path == str(tmp_path / "clinica-norte")
+    assert refreshed_session.workspace_name == "clinica-norte"
 
     service.run_pipeline(job.id)
 
