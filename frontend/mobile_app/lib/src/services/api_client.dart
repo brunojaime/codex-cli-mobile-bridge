@@ -1838,6 +1838,7 @@ class ApiClient {
         'application/vnd.openxmlformats-officedocument.presentationml.presentation',
       'xlsx' =>
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'zip' => 'application/zip',
       'csv' => 'text/csv',
       'txt' => 'text/plain',
       'md' => 'text/markdown',

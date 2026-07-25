@@ -1217,6 +1217,15 @@ def build_xlsx_bytes(*rows: tuple[str, ...]) -> bytes:
         return archive_path.read_bytes()
 
 
+def build_zip_bytes(*entries: tuple[str, bytes]) -> bytes:
+    with TemporaryDirectory() as temp_dir:
+        archive_path = Path(temp_dir) / "sample.zip"
+        with zipfile.ZipFile(archive_path, "w") as archive:
+            for name, payload in entries:
+                archive.writestr(name, payload)
+        return archive_path.read_bytes()
+
+
 def build_pdf_bytes(*lines: str) -> bytes:
     def pdf_literal(value: str) -> str:
         return value.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
@@ -9445,6 +9454,57 @@ def test_attachment_batch_flow_accepts_standard_documents() -> None:
     assert "Page 1:\nMarket PDF overview" in job["response"]
 
 
+def test_attachment_batch_flow_accepts_zip_archives() -> None:
+    client = build_test_client()
+    zip_bytes = build_zip_bytes(
+        ("README.md", b"# Project\n"),
+        ("src/app.py", b"print('hello')\n"),
+        ("../unsafe.txt", b"do not extract blindly"),
+    )
+
+    create_response = client.post(
+        "/message/attachments",
+        data={"message": "Extrae este zip si hace falta"},
+        files=[
+            (
+                "attachments",
+                (
+                    "project-bundle.zip",
+                    zip_bytes,
+                    "application/zip",
+                ),
+            )
+        ],
+    )
+
+    assert create_response.status_code == 202
+    payload = create_response.json()
+
+    job = wait_for_job(client, payload["job_id"])
+
+    assert job["status"] == "completed"
+    assert job["message"] == (
+        "Extrae este zip si hace falta\n\n[Attached files]\n- zip: project-bundle.zip"
+    )
+    assert "Document name: project-bundle.zip" in job["response"]
+    assert "Document kind: zip" in job["response"]
+    assert "ZIP archive manifest:" in job["response"]
+    assert "1. README.md - 10 B uncompressed" in job["response"]
+    assert "2. src/app.py - 15 B uncompressed" in job["response"]
+    assert "3. ../unsafe.txt - 22 B uncompressed" in job["response"]
+    assert "(unsafe path)" in job["response"]
+    assert "Archive local path: " in job["response"]
+    archive_path = (
+        job["response"]
+        .split("Archive local path: ", maxsplit=1)[1]
+        .split(
+            "\n",
+            maxsplit=1,
+        )[0]
+    )
+    assert Path(archive_path).is_file()
+
+
 def test_attachment_batch_flow_accepts_standard_document_with_no_text() -> None:
     client = build_multi_attachment_client()
     pptx_bytes = build_pptx_bytes(
@@ -9478,9 +9538,10 @@ def test_attachment_batch_flow_accepts_standard_document_with_no_text() -> None:
     )
     assert "Document name: image-only-market-study.pptx" in job["response"]
     assert "Document kind: pptx" in job["response"]
-    assert "No extractable text was found in image-only-market-study.pptx" in job[
-        "response"
-    ]
+    assert (
+        "No extractable text was found in image-only-market-study.pptx"
+        in job["response"]
+    )
     assert "[images: " in job["response"]
 
 

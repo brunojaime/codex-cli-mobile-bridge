@@ -1540,6 +1540,8 @@ void main() {
             'content-type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
           ),
         );
+        expect(body, contains('filename="bundle.zip"'));
+        expect(body, contains('content-type: application/zip'));
         return http.Response(
           '{"job_id":"job-1","session_id":"session-1","status":"pending","elapsed_seconds":0}',
           202,
@@ -1564,6 +1566,11 @@ void main() {
           Uint8List.fromList(<int>[80, 75, 3, 4]),
           name: 'market-data.xlsx',
           path: 'market-data.xlsx',
+        ),
+        XFile.fromData(
+          Uint8List.fromList(<int>[80, 75, 3, 4]),
+          name: 'bundle.zip',
+          path: 'bundle.zip',
         ),
       ],
       message: 'podes ver este archivo?',
