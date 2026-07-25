@@ -1753,14 +1753,25 @@ class ApiClient {
     final resolvedMimeType = mimeType == null || mimeType.isEmpty
         ? _mimeTypeFromFilename(filename)
         : mimeType;
-    return http.MultipartFile.fromBytes(
-      field,
-      await file.readAsBytes(),
-      filename: filename,
-      contentType: resolvedMimeType == null || resolvedMimeType.isEmpty
-          ? null
-          : MediaType.parse(resolvedMimeType),
-    );
+    final contentType = resolvedMimeType == null || resolvedMimeType.isEmpty
+        ? null
+        : MediaType.parse(resolvedMimeType);
+    try {
+      return http.MultipartFile(
+        field,
+        file.openRead(),
+        await file.length(),
+        filename: filename,
+        contentType: contentType,
+      );
+    } catch (_) {
+      return http.MultipartFile.fromBytes(
+        field,
+        await file.readAsBytes(),
+        filename: filename,
+        contentType: contentType,
+      );
+    }
   }
 
   String? _filenameFromXFile(XFile file) {

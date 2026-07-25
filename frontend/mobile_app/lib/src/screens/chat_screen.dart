@@ -7242,7 +7242,7 @@ class _ComposerState extends State<_Composer> {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.any,
         allowMultiple: true,
-        withData: true,
+        withData: kIsWeb,
       );
       if (result == null || !mounted) {
         return;
@@ -7276,7 +7276,7 @@ class _ComposerState extends State<_Composer> {
             file: xFile,
             name: file.name,
             kind: kind,
-            sizeBytes: file.size > 0 ? file.size : await xFile.length(),
+            sizeBytes: await _resolvePickedFileSize(file: file, xFile: xFile),
           ),
         );
       }
@@ -7638,6 +7638,21 @@ class _ComposerState extends State<_Composer> {
       sizeBytes: selectedBytes.length,
       previewBytes: selectedBytes,
     );
+  }
+
+  Future<int?> _resolvePickedFileSize({
+    required PlatformFile file,
+    required XFile xFile,
+  }) async {
+    if (file.size > 0) {
+      return file.size;
+    }
+    try {
+      final length = await xFile.length();
+      return length > 0 ? length : null;
+    } catch (_) {
+      return null;
+    }
   }
 
   bool _canAcceptPastedImages() {
