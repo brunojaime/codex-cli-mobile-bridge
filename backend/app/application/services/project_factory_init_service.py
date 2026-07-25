@@ -685,6 +685,7 @@ class ProjectFactoryInitService:
                 updated = updated.with_phase(updated_phase)
             self._jobs[updated.id] = updated
             self._persist_job(updated)
+            self._attach_domain_brief_guidance_message(updated)
             return updated
 
     def _reset_blocked_or_failed_phase_for_retry(
@@ -3675,6 +3676,53 @@ class ProjectFactoryInitService:
         except Exception:
             return None
 
+    def _attach_domain_brief_guidance_message(
+        self,
+        job: ProjectFactoryInitJob,
+    ) -> str | None:
+        if self._chat_repository is None or not job.relationships.chat_session_id:
+            return None
+        session_id = job.relationships.chat_session_id
+        content = _domain_brief_guidance_chat_content(job)
+        try:
+            session = self._chat_repository.get_session(session_id)
+            if session is None:
+                return None
+            dedupe_key = f"project-factory-init-domain-brief-guide:{job.id}"
+            message = ChatMessage(
+                id=f"pf-init-domain-brief-guide-{job.id}",
+                session_id=session_id,
+                role=ChatMessageRole.ASSISTANT,
+                author_type=ChatMessageAuthorType.ASSISTANT,
+                content=content,
+                status=ChatMessageStatus.COMPLETED,
+                dedupe_key=dedupe_key,
+                agent_id=AgentId.GENERATOR,
+                agent_type=AgentType.GENERATOR,
+                agent_label="Project Factory",
+                visibility=AgentVisibilityMode.VISIBLE,
+                trigger_source=AgentTriggerSource.SYSTEM,
+                run_id=job.id,
+            )
+            reserved = self._chat_repository.reserve_message(message)
+            if (
+                reserved.content != content
+                or reserved.status != ChatMessageStatus.COMPLETED
+                or reserved.agent_label != "Project Factory"
+            ):
+                reserved.sync(
+                    content=content,
+                    status=ChatMessageStatus.COMPLETED,
+                    agent_label="Project Factory",
+                )
+                reserved.updated_at = datetime.now(UTC)
+                self._chat_repository.save_message(reserved)
+            session.touch()
+            self._chat_repository.save_session(session)
+            return reserved.id
+        except Exception:
+            return None
+
     def _attach_automatic_ux_pending_message(
         self,
         job: ProjectFactoryInitJob,
@@ -5875,6 +5923,26 @@ def _automatic_ux_pending_chat_content(
             "Full UX output will be stored in the evidence file, not in chat.",
         ]
     ) + "\n"
+
+
+def _domain_brief_guidance_chat_content(job: ProjectFactoryInitJob) -> str:
+    project_name = (job.project_name or job.slug).strip() or job.slug
+    return f"""Listo: `{project_name}` ya tiene la base inicial creada y ahora necesito el primer brief de dominio para continuar.
+
+Escribí en este chat de qué se trata la aplicación. Podés contarlo en texto libre; no hace falta que sea perfecto.
+
+Incluí, si aplica:
+- qué problema resuelve la app;
+- roles y permisos;
+- datos principales que se cargan, editan o consultan;
+- pantallas o flujos importantes;
+- reglas del negocio;
+- estilo visual, referencias, logo o archivos adjuntos que deba usar;
+- qué tiene que quedar funcionando para aceptar el preview.
+
+No hace falta repetir el nombre del proyecto, GitHub, Cloudflare, D1, Bridge, APK ni los admins ya configurados.
+
+Cuando tenga ese brief, voy a correr la baseline automática de UX primero (`UX Generator`, `UX Reviewer`, `UX Generator`) y después seguirá el flujo determinístico hasta preview/APK."""
 
 
 def _automatic_ux_chat_content(

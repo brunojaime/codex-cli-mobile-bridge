@@ -402,6 +402,15 @@ def test_init_service_waits_for_domain_brief_before_automatic_ux(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     command_runner = _FakeInitCommandRunner()
+    repository = InMemoryChatRepository(projects_root=str(tmp_path))
+    repository.save_session(
+        ChatSession(
+            id="chat-1",
+            title="Clinica Norte",
+            workspace_path=str(tmp_path / "clinica-norte"),
+            workspace_name="clinica-norte",
+        )
+    )
     monkeypatch.setenv(
         "VISUAL_UX_POLISH_SKILL_PATH",
         str(_visual_ux_skill_fixture(tmp_path)),
@@ -417,6 +426,7 @@ def test_init_service_waits_for_domain_brief_before_automatic_ux(
             speech_synthesis_backend="disabled",
             codex_command="fake-codex",
         ),
+        chat_repository=repository,
     )
     job = service.start_or_resume(
         draft_id="draft-1",
@@ -447,6 +457,31 @@ def test_init_service_waits_for_domain_brief_before_automatic_ux(
         waiting.phase(ProjectFactoryInitPhaseName.LOCAL_VALIDATION).status
         == ProjectFactoryInitPhaseStatus.QUEUED
     )
+    guidance_messages = [
+        message
+        for message in repository.list_messages("chat-1")
+        if message.dedupe_key
+        == f"project-factory-init-domain-brief-guide:{job.id}"
+    ]
+    assert len(guidance_messages) == 1
+    guidance = guidance_messages[0]
+    assert guidance.agent_label == "Project Factory"
+    assert guidance.status == ChatMessageStatus.COMPLETED
+    assert "necesito el primer brief de dominio" in guidance.content
+    assert "roles y permisos" in guidance.content
+    assert "logo o archivos adjuntos" in guidance.content
+    assert "No hace falta repetir el nombre del proyecto" in guidance.content
+    assert "UX Generator" in guidance.content
+
+    service.run_pipeline(job.id)
+
+    guidance_messages = [
+        message
+        for message in repository.list_messages("chat-1")
+        if message.dedupe_key
+        == f"project-factory-init-domain-brief-guide:{job.id}"
+    ]
+    assert len(guidance_messages) == 1
 
 
 def test_init_service_runs_automatic_ux_after_domain_brief_before_validation(
