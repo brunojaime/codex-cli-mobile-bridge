@@ -685,8 +685,12 @@ def test_project_factory_generate_creates_local_project_foundation(tmp_path: Pat
     assert [entry["phase"] for entry in job["step_logs"]] == [
         "scaffold",
         "scaffold",
-        "ux_brief",
-        "ux_brief",
+        "ux_baseline_generator",
+        "ux_baseline_generator",
+        "ux_baseline_reviewer",
+        "ux_baseline_reviewer",
+        "ux_baseline_generator",
+        "ux_baseline_generator",
         "research_planning",
         "research_planning",
         "ux_generator",
@@ -1018,8 +1022,15 @@ def _fake_codex(projects_root: Path) -> Path:
     script = projects_root / ".data" / "fake-codex"
     script.parent.mkdir(parents=True, exist_ok=True)
     script.write_text(
-        """#!/usr/bin/env bash
+        r"""#!/usr/bin/env bash
 prompt="${@: -1}"
+if [[ "$prompt" == *"file: \`"* ]]; then
+  prompt_file="${prompt#*file: \`}"
+  prompt_file="${prompt_file%%\`*}"
+  if [[ -f "$prompt_file" ]]; then
+    prompt="$(cat "$prompt_file")"
+  fi
+fi
 case "$prompt" in
   *"Lightweight UX Brief"*)
     mkdir -p .codex/ux

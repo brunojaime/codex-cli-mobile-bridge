@@ -55,15 +55,18 @@ def test_project_factory_runner_success_writes_prompts_and_runs_pairs(
     assert (project / ".codex/ux/pre-project-ux-review.md").is_file()
     assert (project / ".codex/ux/evidence-index.json").is_file()
     assert len(process_runner.calls) == 13
-    assert "Lightweight UX Brief" in process_runner.calls[0][-1]
-    assert "Early UX Reviewer Pass 1" in process_runner.calls[1][-1]
-    assert "Early UX Generator Pass 2" in process_runner.calls[2][-1]
-    assert "Generator pass 1:" in process_runner.calls[4][-1]
-    assert "Reviewer pass 1:" in process_runner.calls[5][-1]
-    assert "Generator pass 2:" in process_runner.calls[6][-1]
-    assert "Reviewer pass 2:" in process_runner.calls[7][-1]
-    assert "Senior UX Generator" in process_runner.calls[8][-1]
-    assert "Senior UX Reviewer" in process_runner.calls[9][-1]
+    assert "Lightweight UX Brief" in process_runner.prompts[0]
+    assert "Early UX Reviewer Pass 1" in process_runner.prompts[1]
+    assert "Early UX Generator Pass 2" in process_runner.prompts[2]
+    assert "Generator pass 1:" in process_runner.prompts[4]
+    assert "Reviewer pass 1:" in process_runner.prompts[5]
+    assert "Generator pass 2:" in process_runner.prompts[6]
+    assert "Reviewer pass 2:" in process_runner.prompts[7]
+    assert "Senior UX Generator" in process_runner.prompts[8]
+    assert "Senior UX Reviewer" in process_runner.prompts[9]
+    cli_call = process_runner.calls[8]
+    assert ".codex/factory/prompts/ux-generator.md" in cli_call[-1]
+    assert "Senior UX Generator" not in cli_call[-1]
     assert [event["phase"] for event in events if event["status"] == "completed"] == [
         "scaffold",
         "ux_baseline_generator",
@@ -120,9 +123,9 @@ def test_project_factory_runner_does_not_run_domain_generator_before_early_ux(
             event_sink=lambda _event: None,
         )
 
-    assert any("Lightweight UX Brief" in call[-1] for call in process_runner.calls)
-    assert any("Early UX Reviewer Pass 1" in call[-1] for call in process_runner.calls)
-    assert not any("Generator pass 1:" in call[-1] for call in process_runner.calls)
+    assert any("Lightweight UX Brief" in prompt for prompt in process_runner.prompts)
+    assert any("Early UX Reviewer Pass 1" in prompt for prompt in process_runner.prompts)
+    assert not any("Generator pass 1:" in prompt for prompt in process_runner.prompts)
 
 
 def test_project_factory_runner_prompts_load_skill_and_consume_ux_brief(
@@ -171,6 +174,34 @@ def test_project_factory_runner_prompts_load_skill_and_consume_ux_brief(
     assert "apps/mobile/assets/brand/app_icon_source.svg" in ux_generator
     assert "Flutter default launcher logo" in ux_generator
     assert "Generated Preview" in ux_reviewer
+
+
+def test_project_factory_runner_ux_generator_prompt_is_bounded_and_file_backed(
+    tmp_path: Path,
+) -> None:
+    process_runner = _FakeProcessRunner()
+    runner = _runner(tmp_path, process_runner)
+
+    result = runner.run(
+        _context(tmp_path, generator_runs=0, reviewer_runs=0),
+        event_sink=lambda _event: None,
+    )
+
+    project = Path(result.generation_result.target_path)
+    prompt = (
+        project / ".codex/factory/prompts/ux-generator.md"
+    ).read_text(encoding="utf-8")
+    ux_call = next(
+        call for call in process_runner.calls if ".codex/factory/prompts/ux-generator.md" in call[-1]
+    )
+
+    assert "This is one bounded UX pass" in prompt
+    assert "Touch at most 8 product files" in prompt
+    assert "Write or refresh `.codex/ux/ux-generator-report.md` first" in prompt
+    assert "Do not run long builds or broad test suites" in prompt
+    assert len(ux_call[-1]) < 320
+    assert "Senior UX Generator" not in ux_call[-1]
+    assert "Touch at most 8 product files" not in ux_call[-1]
 
 
 def test_project_factory_runner_ux_lane_stops_when_reviewer_completes(
@@ -693,12 +724,14 @@ class _FakeProcessRunner:
         timeout_call: int | None = None,
     ):
         self.calls: list[tuple[str, ...]] = []
+        self.prompts: list[str] = []
         self.fail_call = fail_call
         self.fail_returncode = fail_returncode
         self.timeout_call = timeout_call
 
     def run(self, *, argv, cwd, env, timeout_seconds):
         self.calls.append(tuple(argv))
+        self.prompts.append(_prompt_text_from_argv(tuple(argv), cwd))
         call_number = len(self.calls)
         if self.timeout_call == call_number:
             raise subprocess.TimeoutExpired(argv, timeout_seconds)
@@ -712,7 +745,7 @@ class _FakeProcessRunner:
         return ProjectFactoryProcessResult(returncode=0, stdout="ok", stderr="")
 
     def _write_ux_artifacts(self, *, argv: tuple[str, ...], cwd: Path) -> None:
-        prompt = str(argv[-1]) if argv else ""
+        prompt = _prompt_text_from_argv(argv, cwd)
         ux_root = cwd / ".codex" / "ux"
         if "Lightweight UX Brief" in prompt:
             ux_root.mkdir(parents=True, exist_ok=True)
@@ -748,12 +781,13 @@ class _IteratingUxProcessRunner(_FakeProcessRunner):
         self.ux_reviewer_calls = 0
 
     def run(self, *, argv, cwd, env, timeout_seconds):
-        prompt = str(argv[-1]) if argv else ""
+        prompt = _prompt_text_from_argv(tuple(argv), cwd)
         if "Senior UX Generator" in prompt:
             self.ux_generator_calls += 1
         if "Senior UX Reviewer" in prompt:
             self.ux_reviewer_calls += 1
         self.calls.append(tuple(argv))
+        self.prompts.append(prompt)
         if self.timeout_call == len(self.calls):
             raise subprocess.TimeoutExpired(argv, timeout_seconds)
         if self.fail_call == len(self.calls):
@@ -796,6 +830,7 @@ class _MissingScriptProcessRunner(_FakeProcessRunner):
 
     def run(self, *, argv, cwd, env, timeout_seconds):
         self.calls.append(tuple(argv))
+        self.prompts.append(_prompt_text_from_argv(tuple(argv), cwd))
         if self.missing_script in argv:
             return ProjectFactoryProcessResult(
                 returncode=127,
@@ -804,6 +839,20 @@ class _MissingScriptProcessRunner(_FakeProcessRunner):
             )
         self._write_ux_artifacts(argv=tuple(argv), cwd=cwd)
         return ProjectFactoryProcessResult(returncode=0, stdout="ok", stderr="")
+
+
+def _prompt_text_from_argv(argv: tuple[str, ...], cwd: Path) -> str:
+    if not argv:
+        return ""
+    prompt = str(argv[-1])
+    marker = "file: `"
+    if marker not in prompt:
+        return prompt
+    relative = prompt.split(marker, 1)[1].split("`", 1)[0]
+    prompt_path = cwd / relative
+    if not prompt_path.is_file():
+        return prompt
+    return prompt_path.read_text(encoding="utf-8")
 
 
 class _ReusableProjectGenerator:

@@ -667,7 +667,10 @@ class ProjectFactoryJobRunner:
                 _progress(completed_steps, total_steps),
             )
         )
-        prompt = prompt_path.read_text(encoding="utf-8")
+        prompt = _prompt_file_instruction(
+            prompt_path=prompt_path,
+            project_path=project_path,
+        )
         argv = _codex_argv(context.codex_command, prompt)
         try:
             result = self._process_runner.run(
@@ -1077,13 +1080,29 @@ behavior, empty/loading/error states, accessibility, and user-facing copy. Do
 not change product functionality, backend behavior, auth, RBAC, persistence,
 schemas, release wiring, or business logic.
 
-Benchmark comparable professional products, inspect or capture screenshots when
-the app can run, perform focused UAT on the primary journeys, and save concise
-evidence under `.codex/ux/`. Validate mobile and desktop fit before completion.
-Confirm the app uses the real display name and a project-specific logo/app icon:
-preserve uploaded identity assets when present, otherwise create/refine
-`assets/brand/logo.svg` and `apps/mobile/assets/brand/app_icon_source.svg` and
-remove any Flutter default launcher logo/icon treatment.
+This is one bounded UX pass, not the entire UX program. Finish within this pass
+even if more polish remains. The reviewer will decide whether another pass is
+needed, up to the automatic lane maximum.
+
+Pass budget:
+- Write or refresh `.codex/ux/ux-generator-report.md` first with status
+  `in_progress`, pass scope, and planned files. Update it to `complete`,
+  `continue`, or `blocked` before exiting.
+- Inspect only the domain brief, app entry points, brand assets, and the primary
+  screen files needed for this pass.
+- Touch at most 8 product files, excluding `.codex/ux/*` evidence.
+- Prioritize app identity first: real display name, project-specific logo/app
+  icon, no `Generated Preview`, no Flutter default launcher logo/icon treatment.
+- Then make one coherent visible UI improvement slice for the primary journey:
+  navigation, hierarchy, spacing, empty states, or state colors. Do not attempt
+  every screen.
+- Skip screenshot/UAT work when the app cannot be run quickly; record that as
+  follow-up instead of blocking.
+- Do not run long builds or broad test suites from this pass. Use cheap static
+  checks only when available.
+
+Evidence must be concise. Include: files changed, visual decisions, checks run,
+what remains for the next UX pass, and the machine-readable decision below.
 """,
             encoding="utf-8",
         )
@@ -1137,6 +1156,16 @@ def _codex_argv(
         "never",
     )
     return (*base, "exec", *args, prompt)
+
+
+def _prompt_file_instruction(*, prompt_path: Path, project_path: Path) -> str:
+    relative_prompt_path = prompt_path.relative_to(project_path)
+    return (
+        "Read and follow the full Project Factory prompt from this workspace "
+        f"file: `{relative_prompt_path}`.\n\n"
+        "Do not ask for the prompt contents. Open the file, execute its "
+        "instructions exactly, and write the requested evidence/artifacts."
+    )
 
 
 def _ux_iteration_prompt_path(prompt_root: Path, stem: str, iteration: int) -> Path:
