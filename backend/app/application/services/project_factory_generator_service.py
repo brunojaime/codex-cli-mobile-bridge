@@ -1764,6 +1764,38 @@ async function createPreviewUser(env, { email, password, displayName, roles }) {
   return user;
 }
 
+async function rotatePreviewBootstrapUser(env, user, password) {
+  const password_hash = await passwordHash(env, password);
+  const roles = new Set(JSON.parse(user.roles_json || '[]'));
+  roles.add('admin');
+  const roles_json = JSON.stringify([...roles]);
+  if (user.password_hash === password_hash && user.roles_json === roles_json) {
+    return { user, changed: false };
+  }
+  const updated_at = nowIso();
+  const result = await env.PREVIEW_DB
+    .prepare(
+      `UPDATE preview_users
+       SET password_hash = ?1, roles_json = ?2, updated_at = ?3
+       WHERE source_app = ?4 AND app_slug = ?5 AND email = ?6`,
+    )
+    .bind(password_hash, roles_json, updated_at, SOURCE_APP, SOURCE_APP, user.email)
+    .run();
+  const changes = Number(result?.meta?.changes || result?.changes || 0);
+  if (changes < 1) {
+    return { user, changed: false };
+  }
+  return {
+    user: {
+      ...user,
+      password_hash,
+      roles_json,
+      updated_at,
+    },
+    changed: true,
+  };
+}
+
 async function findPreviewUserByEmail(env, email) {
   return env.PREVIEW_DB
     .prepare(
@@ -1873,6 +1905,7 @@ async function handlePreviewBootstrap(request, env) {
     return apiError('admin_credentials_required', 'Admin email and password are required.', 400);
   }
   let user = await findPreviewUserByEmail(env, email);
+  let credentialStatus = 'verified';
   if (!user) {
     const userCount = await countPreviewUsers(env);
     const roles = userCount === 0 ? ['owner', 'admin'] : ['admin'];
@@ -1886,13 +1919,25 @@ async function handlePreviewBootstrap(request, env) {
       userId: user.user_id,
       roles,
     });
+    credentialStatus = 'created';
+  } else {
+    const rotation = await rotatePreviewBootstrapUser(env, user, password);
+    user = rotation.user;
+    credentialStatus = rotation.changed ? 'rotated' : 'verified';
+    if (rotation.changed) {
+      await recordAuditEvent(env, 'admin_bootstrap_credentials_rotated', email, {
+        userId: user.user_id,
+      });
+    }
   }
   const session = await createPreviewSession(env, user);
   await recordAuditEvent(env, 'admin_bootstrap_login', email, {
     userId: user.user_id,
+    credentialStatus,
   });
   return json({
     status: 'ready',
+    credentialStatus,
     sourceApp: SOURCE_APP,
     appSlug: SOURCE_APP,
     user: publicUser(user),
@@ -2688,6 +2733,21 @@ function fakeD1() {
                 }
                 return { meta: { changes: 0 } };
               }
+              if (normalized.startsWith('update preview_users')) {
+                const [passwordHash, rolesJson, updatedAt, sourceApp, appSlug, email] = args;
+                for (const [userId, row] of previewUsers.entries()) {
+                  if (row.source_app === sourceApp && row.app_slug === appSlug && row.email === email) {
+                    previewUsers.set(userId, {
+                      ...row,
+                      password_hash: passwordHash,
+                      roles_json: rolesJson,
+                      updated_at: updatedAt,
+                    });
+                    return { meta: { changes: 1 } };
+                  }
+                }
+                return { meta: { changes: 0 } };
+              }
               if (normalized.startsWith('insert into preview_users')) {
                 const [userId, sourceApp, appSlug, email, displayName, passwordHash, rolesJson, createdAt, updatedAt] = args;
                 previewUsers.set(userId, {
@@ -2849,6 +2909,34 @@ assert.equal(login.status, 200);
 const loginBody = await login.json();
 assert.equal(loginBody.user.appSlug, '__SOURCE_APP__');
 const apiAuth = { authorization: `Bearer ${loginBody.access_token}` };
+
+const rotatedBootstrap = await fetchJson('/__SOURCE_APP__/api/admin/bootstrap', {
+  method: 'POST',
+  body: {
+    bootstrapToken: 'local-bootstrap-token',
+    email: 'admin@example.com',
+    password: 'rotated-preview-password',
+  },
+});
+assert.equal(rotatedBootstrap.status, 200);
+const rotatedBootstrapBody = await rotatedBootstrap.json();
+assert.equal(rotatedBootstrapBody.credentialStatus, 'rotated');
+assert.equal(rotatedBootstrapBody.user.email, 'admin@example.com');
+
+const staleLogin = await fetchJson('/__SOURCE_APP__/api/auth/login', {
+  method: 'POST',
+  body: { email: 'admin@example.com', password: 'preview-password' },
+});
+assert.equal(staleLogin.status, 401);
+assert.equal((await staleLogin.json()).error.code, 'invalid_credentials');
+
+const rotatedLogin = await fetchJson('/__SOURCE_APP__/api/auth/login', {
+  method: 'POST',
+  body: { email: 'admin@example.com', password: 'rotated-preview-password' },
+});
+assert.equal(rotatedLogin.status, 200);
+const rotatedLoginBody = await rotatedLogin.json();
+assert.equal(rotatedLoginBody.user.appSlug, '__SOURCE_APP__');
 
 const acceptedInvite = await fetchJson('/__SOURCE_APP__/api/invites/accept', {
   method: 'POST',
