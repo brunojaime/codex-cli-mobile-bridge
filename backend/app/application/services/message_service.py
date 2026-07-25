@@ -1311,7 +1311,9 @@ class MessageService:
                 "este draft/session; el chat de Project Factory no va a crear "
                 "archivos, repos, previews ni APKs por su cuenta."
             )
-            latest_activity = "Project Factory ready marker consumed; deterministic init resumed."
+            latest_activity = (
+                "Project Factory ready marker consumed; deterministic init resumed."
+            )
         else:
             assistant_content = (
                 "Contrato aprobado, pero no encontré un init determinístico "
@@ -1319,7 +1321,9 @@ class MessageService:
                 "iniciar Project Factory para crear o vincular el init job; no "
                 "voy a ejecutar el build desde el chat conversacional."
             )
-            latest_activity = "Project Factory ready marker consumed without a linked init job."
+            latest_activity = (
+                "Project Factory ready marker consumed without a linked init job."
+            )
         user_message = ChatMessage(
             id=str(uuid4()),
             session_id=session.id,
@@ -1414,8 +1418,7 @@ class MessageService:
         if not normalized:
             return False
         if any(
-            blocker in normalized
-            for blocker in _PROJECT_FACTORY_CONFIRMATION_BLOCKERS
+            blocker in normalized for blocker in _PROJECT_FACTORY_CONFIRMATION_BLOCKERS
         ):
             return False
         if normalized in {"ok", "dale"}:

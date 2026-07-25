@@ -495,9 +495,7 @@ class _WaitingProjectFactoryInitService:
                 relationships=SimpleNamespace(chat_session_id=session_id),
                 phases=[
                     SimpleNamespace(
-                        status=SimpleNamespace(
-                            value="queued_waiting_for_domain_brief"
-                        )
+                        status=SimpleNamespace(value="queued_waiting_for_domain_brief")
                     )
                 ],
             )
