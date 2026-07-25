@@ -131,10 +131,10 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     assert "acceptPreviewInvite" in api_client
     assert "'/invites/accept'" in api_client
     assert "Invite token or link" not in screens
-    assert "Aceptar invitación al Preview" in screens
-    assert "Crear contraseña" in screens
-    assert "Repetir contraseña" in screens
-    assert "Aceptar invitación" in screens
+    assert "Aceptar invitacion al Preview" in screens
+    assert "Crear contrasena" in screens
+    assert "Repetir contrasena" in screens
+    assert "Aceptar invitacion" in screens
     assert "Create password" not in screens
     assert "Repeat password" not in screens
     assert "Activate account" not in screens

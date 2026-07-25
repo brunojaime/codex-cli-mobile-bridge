@@ -5821,9 +5821,9 @@ if [[ "$FRONTEND_STRATEGY" == "flutter" ]]; then
   [[ -f "$ROOT_DIR/apps/mobile/lib/src/screens.dart" ]] || fail "Flutter screens.dart missing"
   ! grep -q "label: 'Workbench'" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "generated product app must not expose a Workbench navigation tab"
   ! grep -q "Invite token or link" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "URL invite flow must not ask users to paste invite tokens"
-  grep -q "Crear contraseña" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "invite activation password label missing"
-  grep -q "Repetir contraseña" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "invite activation password confirmation label missing"
-  grep -q "Aceptar invitación" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "invite activation action missing"
+  grep -q "Crear contrasena" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "invite activation password label missing"
+  grep -q "Repetir contrasena" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "invite activation password confirmation label missing"
+  grep -q "Aceptar invitacion" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "invite activation action missing"
   english_create_label="Create"" password"
   english_repeat_label="Repeat"" password"
   english_activate_action="Activate"" account"
@@ -10412,10 +10412,10 @@ class _AuthScreenState extends State<AuthScreen> {{
                   decoration: InputDecoration(labelText: 'Email', helperText: _emailBound ? 'Fixed by invite' : null),
                 ),
                 const SizedBox(height: 12),
-                TextField(controller: _password, decoration: InputDecoration(labelText: _isInviteActivation ? 'Crear contraseña' : 'Contraseña'), obscureText: true),
+                TextField(controller: _password, decoration: InputDecoration(labelText: _isInviteActivation ? 'Crear contrasena' : 'Contrasena'), obscureText: true),
                 if (_isInviteActivation) ...[
                   const SizedBox(height: 12),
-                  TextField(controller: _passwordConfirmation, decoration: const InputDecoration(labelText: 'Repetir contraseña'), obscureText: true),
+                  TextField(controller: _passwordConfirmation, decoration: const InputDecoration(labelText: 'Repetir contrasena'), obscureText: true),
                 ],
                 const SizedBox(height: 16),
                 if (widget.controller.isMockRuntime) ...[
@@ -10446,7 +10446,7 @@ class _AuthScreenState extends State<AuthScreen> {{
                 if (!widget.controller.isPreviewRuntime)
                   TextButton(
                     onPressed: () => setState(() => _register = !_register),
-                    child: Text(_register ? 'Usar inicio de sesión' : 'Crear cuenta'),
+                    child: Text(_register ? 'Usar inicio de sesion' : 'Crear cuenta'),
                   ),
               ],
             ),
@@ -10462,19 +10462,19 @@ class _AuthScreenState extends State<AuthScreen> {{
       _inviteState != 'login';
 
   String get _title {{
-    if (_isInviteActivation) return 'Aceptar invitación al Preview';
-    return widget.controller.isPreviewRuntime ? 'Ingreso Preview' : (_register ? 'Crear cuenta' : 'Iniciar sesión');
+    if (_isInviteActivation) return 'Aceptar invitacion al Preview';
+    return widget.controller.isPreviewRuntime ? 'Ingreso Preview' : (_register ? 'Crear cuenta' : 'Iniciar sesion');
   }}
 
   String get _primaryAction {{
-    if (_isInviteActivation) return 'Aceptar invitación';
-    return _register && !widget.controller.isPreviewRuntime ? 'Crear cuenta' : 'Iniciar sesión';
+    if (_isInviteActivation) return 'Aceptar invitacion';
+    return _register && !widget.controller.isPreviewRuntime ? 'Crear cuenta' : 'Iniciar sesion';
   }}
 
   Future<void> _submit() async {{
     if (_isInviteActivation) {{
       if (_password.text != _passwordConfirmation.text) {{
-        setState(() => widget.controller.error = 'Las contraseñas deben coincidir.');
+        setState(() => widget.controller.error = 'Las contrasenas deben coincidir.');
         return;
       }}
       await widget.controller.acceptPreviewInvite(
@@ -10828,10 +10828,10 @@ void main() {{
       ),
     ));
 
-    expect(find.text('Aceptar invitación al Preview'), findsOneWidget);
-    expect(find.text('Crear contraseña'), findsOneWidget);
-    expect(find.text('Repetir contraseña'), findsOneWidget);
-    expect(find.text('Aceptar invitación'), findsOneWidget);
+    expect(find.text('Aceptar invitacion al Preview'), findsOneWidget);
+    expect(find.text('Crear contrasena'), findsOneWidget);
+    expect(find.text('Repetir contrasena'), findsOneWidget);
+    expect(find.text('Aceptar invitacion'), findsOneWidget);
     expect(find.text('Create' ' password'), findsNothing);
     expect(find.text('Repeat' ' password'), findsNothing);
     expect(find.text('Activate' ' account'), findsNothing);
@@ -10839,7 +10839,7 @@ void main() {{
 
     await tester.enterText(find.byType(TextField).at(1), 'secret-password');
     await tester.enterText(find.byType(TextField).at(2), 'secret-password');
-    await tester.tap(find.text('Aceptar invitación'));
+    await tester.tap(find.text('Aceptar invitacion'));
     await tester.pumpAndSettle();
 
     expect(controller.isAuthenticated, isTrue);
@@ -10857,13 +10857,13 @@ void main() {{
     ));
 
     expect(find.text('Ingreso Preview'), findsOneWidget);
-    expect(find.text('Iniciar sesión'), findsOneWidget);
-    expect(find.text('Crear contraseña'), findsNothing);
-    expect(find.text('Repetir contraseña'), findsNothing);
+    expect(find.text('Iniciar sesion'), findsOneWidget);
+    expect(find.text('Crear contrasena'), findsNothing);
+    expect(find.text('Repetir contrasena'), findsNothing);
     expect(find.text('Invite token or link'), findsNothing);
     await tester.enterText(find.byType(TextField).at(0), 'admin@example.com');
     await tester.enterText(find.byType(TextField).at(1), 'secret-password');
-    await tester.tap(find.text('Iniciar sesión'));
+    await tester.tap(find.text('Iniciar sesion'));
     await tester.pumpAndSettle();
 
     expect(controller.isAuthenticated, isTrue);
