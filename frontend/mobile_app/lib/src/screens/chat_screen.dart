@@ -7178,7 +7178,7 @@ class _ComposerState extends State<_Composer> {
                   leading: const Icon(Icons.insert_drive_file_outlined),
                   title: const Text('Browse files'),
                   subtitle: const Text(
-                    'Attach documents, code, text files, or images',
+                    'Attach documents, archives, code, text files, or images',
                   ),
                   onTap: () =>
                       Navigator.of(context).pop(_AttachmentSourceAction.file),

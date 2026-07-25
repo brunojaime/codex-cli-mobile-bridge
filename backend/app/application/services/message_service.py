@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 import json
 import mimetypes
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import shutil
 import tempfile
@@ -74,7 +74,7 @@ from backend.app.infrastructure.transcription.base import (
 )
 
 
-DocumentKind = Literal["audio", "docx", "image", "pdf", "pptx", "text", "xlsx"]
+DocumentKind = Literal["audio", "docx", "image", "pdf", "pptx", "text", "xlsx", "zip"]
 _TURN_SUMMARY_TRIGGER_MESSAGE_COUNT = 3
 _TURN_SUMMARY_COMPLETION_TIMEOUT_SECONDS = 15.0
 _TITLE_REFRESH_USER_TURN_INTERVAL = 2
@@ -161,6 +161,19 @@ _TEXT_SUFFIXES = {
     ".yaml",
     ".yml",
 }
+_ZIP_CONTENT_TYPES = {
+    "application/zip",
+    "application/x-zip",
+    "application/x-zip-compressed",
+    "multipart/x-zip",
+}
+_ZIP_MANIFEST_ENTRY_LIMIT = 200
+_ZIP_MANIFEST_TOTAL_UNCOMPRESSED_LIMIT = 500 * 1024 * 1024
+_ZIP_ARCHIVE_GUIDANCE = (
+    "The ZIP file is available at the local path above. If the user asks you to "
+    "extract it, create an explicit destination directory inside the current "
+    "workspace and validate archive entry paths before writing files."
+)
 
 _RESERVED_MESSAGE_SUPERSEDED_REASON = (
     "Superseded by a newer user turn before the follow-up job was created."
@@ -540,9 +553,7 @@ class MessageService:
                 project_factory_job_ids,
                 domain_factory_job_ids,
                 unknown_blockers,
-            ) = (
-                self._drain_blocking_work()
-            )
+            ) = self._drain_blocking_work()
         return BackendDrainStatus(
             requested=requested,
             requested_at=requested_at,
@@ -569,7 +580,17 @@ class MessageService:
 
     def _drain_blocking_work(
         self,
-    ) -> tuple[list[Job], list[str], list[str], list[str], list[str], list[str], list[str], list[str], list[str]]:
+    ) -> tuple[
+        list[Job],
+        list[str],
+        list[str],
+        list[str],
+        list[str],
+        list[str],
+        list[str],
+        list[str],
+        list[str],
+    ]:
         self._reconcile_jobs_for_drain()
         sessions = self._repository.list_sessions()
         for session in sessions:
@@ -599,9 +620,8 @@ class MessageService:
             for message in self._repository.list_messages(session.id):
                 if message.status in _IN_FLIGHT_MESSAGE_STATUSES:
                     in_flight_message_ids.append(message.id)
-                if (
-                    is_agent_follow_up(message.agent_id)
-                    and is_follow_up_waiting_status(message.status)
+                if is_agent_follow_up(message.agent_id) and is_follow_up_waiting_status(
+                    message.status
                 ):
                     pending_follow_up_message_ids.append(message.id)
 
@@ -1413,6 +1433,15 @@ class MessageService:
             document_path=resolved_path,
             document_kind=document_kind,
         ).strip()
+        if document_kind == "zip":
+            archive_path = self._persist_retryable_attachment_path(
+                resolved_path,
+                fallback_suffix=".zip",
+            )
+            extracted_text = self._append_zip_archive_guidance(
+                extracted_text,
+                archive_path=archive_path,
+            )
         if not extracted_text:
             extracted_text = self._build_empty_document_extraction_note(
                 document_kind=document_kind,
@@ -1560,6 +1589,15 @@ class MessageService:
                 document_path=resolved_path,
                 document_kind=document_kind,
             ).strip()
+            if document_kind == "zip":
+                archive_path = self._persist_retryable_attachment_path(
+                    resolved_path,
+                    fallback_suffix=".zip",
+                )
+                extracted_text = self._append_zip_archive_guidance(
+                    extracted_text,
+                    archive_path=archive_path,
+                )
             if not extracted_text:
                 extracted_text = self._build_empty_document_extraction_note(
                     document_kind=document_kind,
@@ -1929,12 +1967,33 @@ class MessageService:
 
         persisted_paths: list[str] = []
         for image_path in image_paths:
-            source = Path(image_path)
-            extension = source.suffix or ".bin"
-            destination = self._retry_asset_root / f"{uuid4()}{extension}"
-            shutil.copy2(source, destination)
-            persisted_paths.append(str(destination))
+            persisted_paths.append(
+                self._persist_retryable_attachment_path(
+                    Path(image_path),
+                    fallback_suffix=".bin",
+                )
+            )
         return persisted_paths
+
+    def _persist_retryable_attachment_path(
+        self,
+        source: Path,
+        *,
+        fallback_suffix: str,
+    ) -> str:
+        extension = source.suffix or fallback_suffix
+        destination = self._retry_asset_root / f"{uuid4()}{extension}"
+        shutil.copy2(source, destination)
+        return str(destination)
+
+    @staticmethod
+    def _append_zip_archive_guidance(text: str, *, archive_path: str) -> str:
+        parts = [
+            text.strip(),
+            f"Archive local path: {archive_path}",
+            _ZIP_ARCHIVE_GUIDANCE,
+        ]
+        return "\n\n".join(part for part in parts if part)
 
     def _resolve_session(
         self,
@@ -4429,6 +4488,8 @@ class MessageService:
             return "xlsx"
         if suffix == ".pdf" or normalized_content_type == "application/pdf":
             return "pdf"
+        if suffix == ".zip" or normalized_content_type in _ZIP_CONTENT_TYPES:
+            return "zip"
         if self._looks_like_text_document(
             suffix=suffix, content_type=normalized_content_type
         ):
@@ -4436,7 +4497,7 @@ class MessageService:
 
         raise UnsupportedDocumentError(
             "Unsupported document type. Supported uploads are audio, images, PDFs, "
-            "text/code files, and .docx/.pptx/.xlsx documents."
+            "text/code files, ZIP archives, and .docx/.pptx/.xlsx documents."
         )
 
     def _looks_like_text_document(
@@ -4607,6 +4668,8 @@ class MessageService:
             return self._extract_xlsx_text(document_path)
         if document_kind == "pdf":
             return self._extract_pdf_text(document_path)
+        if document_kind == "zip":
+            return self._extract_zip_manifest(document_path)
         if document_kind == "text":
             return document_path.read_text(encoding="utf-8", errors="replace")
         raise DocumentProcessingError(
@@ -4723,9 +4786,10 @@ class MessageService:
         if not image_payloads:
             return []
 
-        safe_stem = re.sub(r"[^A-Za-z0-9_.-]+", "-", Path(document_name).stem).strip(
-            ".-"
-        ) or "pptx"
+        safe_stem = (
+            re.sub(r"[^A-Za-z0-9_.-]+", "-", Path(document_name).stem).strip(".-")
+            or "pptx"
+        )
         image_paths: list[str] = []
         for index, (media_name, payload) in enumerate(image_payloads, start=1):
             suffix = Path(media_name).suffix.lower()
@@ -4849,6 +4913,87 @@ class MessageService:
     def _xlsx_sheet_sort_key(sheet_name: str) -> tuple[int, str]:
         match = re.search(r"sheet(\d+)\.xml$", sheet_name)
         return (int(match.group(1)) if match else 0, sheet_name)
+
+    def _extract_zip_manifest(self, document_path: Path) -> str:
+        try:
+            with zipfile.ZipFile(document_path) as archive:
+                entries = archive.infolist()
+        except FileNotFoundError as exc:
+            raise DocumentProcessingError(
+                "The uploaded ZIP file could not be read."
+            ) from exc
+        except zipfile.BadZipFile as exc:
+            raise DocumentProcessingError(
+                "The uploaded ZIP file is not a valid ZIP archive."
+            ) from exc
+
+        file_entries = [entry for entry in entries if not entry.is_dir()]
+        directory_count = len(entries) - len(file_entries)
+        total_uncompressed = sum(entry.file_size for entry in file_entries)
+        total_compressed = sum(entry.compress_size for entry in file_entries)
+        lines = [
+            "ZIP archive manifest:",
+            f"Files: {len(file_entries)}",
+            f"Directories: {directory_count}",
+            f"Total compressed size: {self._format_byte_count(total_compressed)}",
+            f"Total uncompressed size: {self._format_byte_count(total_uncompressed)}",
+        ]
+        if total_uncompressed > _ZIP_MANIFEST_TOTAL_UNCOMPRESSED_LIMIT:
+            lines.append(
+                "Warning: total uncompressed size is large; extract only requested "
+                "paths and verify available disk space first."
+            )
+
+        if not file_entries:
+            lines.append("No files were found in the ZIP archive.")
+            return "\n".join(lines)
+
+        lines.append("")
+        lines.append("Entries:")
+        for index, entry in enumerate(
+            file_entries[:_ZIP_MANIFEST_ENTRY_LIMIT], start=1
+        ):
+            flags: list[str] = []
+            if entry.flag_bits & 0x1:
+                flags.append("encrypted")
+            if not self._is_safe_zip_member_name(entry.filename):
+                flags.append("unsafe path")
+            flag_suffix = f" ({', '.join(flags)})" if flags else ""
+            lines.append(
+                f"{index}. {entry.filename} - "
+                f"{self._format_byte_count(entry.file_size)} uncompressed, "
+                f"{self._format_byte_count(entry.compress_size)} compressed"
+                f"{flag_suffix}"
+            )
+        remaining_count = len(file_entries) - _ZIP_MANIFEST_ENTRY_LIMIT
+        if remaining_count > 0:
+            lines.append(f"... {remaining_count} more file(s) omitted from manifest.")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _is_safe_zip_member_name(name: str) -> bool:
+        normalized = name.replace("\\", "/").strip()
+        if not normalized:
+            return False
+        path = PurePosixPath(normalized)
+        if path.is_absolute():
+            return False
+        if any(part in {"", ".", ".."} for part in path.parts):
+            return False
+        if re.match(r"^[A-Za-z]:", normalized):
+            return False
+        return True
+
+    @staticmethod
+    def _format_byte_count(byte_count: int) -> str:
+        if byte_count < 1024:
+            return f"{byte_count} B"
+        value = float(byte_count)
+        for unit in ("KiB", "MiB", "GiB", "TiB"):
+            value /= 1024
+            if value < 1024:
+                return f"{value:.1f} {unit}"
+        return f"{value:.1f} PiB"
 
     def _extract_pdf_text(self, document_path: Path) -> str:
         try:
