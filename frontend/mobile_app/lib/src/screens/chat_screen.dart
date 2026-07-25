@@ -61,11 +61,12 @@ const String _projectFactoryGeneratorPrompt =
     'release path is real preview data: Cloudflare Preview API, persistent D1, '
     'https://preview.nienfos.com/<slug> and /api, android-preview-v* APK, '
     'Bridge registration, production not ready, and no mock/demo data unless '
-    'the user explicitly asks for a mock/demo APK. Ask for initial admin emails '
-    'before build-ready confirmation. End only a fully reviewed contract with '
-    'the exact marker PROJECT_FACTORY_READY_FOR_BUILD. After that marker, stop; '
-    'the bridge backend intercepts the confirmation and resumes deterministic '
-    'init for the existing draft/session.';
+    'the user explicitly asks for a mock/demo APK. Follow the initial admin '
+    'email instruction appended to this prompt before build-ready confirmation. '
+    'End only a fully reviewed contract with the exact marker '
+    'PROJECT_FACTORY_READY_FOR_BUILD. After that marker, stop; the bridge '
+    'backend intercepts the confirmation and resumes deterministic init for '
+    'the existing draft/session.';
 const String _projectFactoryReviewerPrompt =
     'You are reviewing the New Project Factory generator. Check that the '
     'project brief, defaults, visual references, roles, auth, admin, '
@@ -179,7 +180,10 @@ const List<String> _supportedImageAttachmentExtensions = <String>[
 AgentConfiguration buildProjectFactoryIntakeConfiguration(
   AgentConfiguration current, {
   int generatorRuns = 1,
+  List<String> initialAdminEmails = const <String>[],
 }) {
+  final generatorPrompt = '$_projectFactoryGeneratorPrompt\n\n'
+      '${_projectFactoryInitialAdminInstruction(initialAdminEmails)}';
   return current.copyWith(
     preset: AgentPreset.solo,
     displayMode: AgentDisplayMode.showAll,
@@ -190,7 +194,7 @@ AgentConfiguration buildProjectFactoryIntakeConfiguration(
           return agent.copyWith(
             enabled: true,
             label: 'Project Factory',
-            prompt: _projectFactoryGeneratorPrompt,
+            prompt: generatorPrompt,
             visibility: AgentVisibilityMode.visible,
             maxTurns: generatorRuns,
           );
@@ -214,6 +218,24 @@ AgentConfiguration buildProjectFactoryIntakeConfiguration(
       }
     }).toList(growable: false),
   );
+}
+
+String _projectFactoryInitialAdminInstruction(List<String> emails) {
+  final normalized = emails
+      .map((email) => email.trim().toLowerCase())
+      .where((email) => email.isNotEmpty)
+      .toSet()
+      .toList(growable: false);
+  if (normalized.isEmpty) {
+    return 'Initial admin emails are missing. Ask for the first preview admin '
+        'invite email before build-ready confirmation, and explain that email '
+        'delivery may use manual-link fallback if no SMTP provider is active.';
+  }
+  return 'Initial admin emails were already captured at draft creation: '
+      '${normalized.join(', ')}. Do not ask for admin emails again unless the '
+      'user asks to change them; include these emails in the contract preview '
+      'and keep manual-link fallback as the delivery fallback if SMTP is not '
+      'active.';
 }
 
 AgentConfiguration buildProjectFactoryBuildConfiguration(
@@ -2363,6 +2385,7 @@ When you create the Project Factory draft, link each asset with POST /project-fa
       options,
       draft: draft,
       projectTitle: projectBasics.title,
+      initialAdminEmails: projectBasics.adminEmails,
     );
   }
 
@@ -2434,6 +2457,7 @@ When you create the Project Factory draft, link each asset with POST /project-fa
     ProjectFactoryOptions options, {
     required ProjectFactoryDraft draft,
     required String projectTitle,
+    required List<String> initialAdminEmails,
   }) async {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Starting a New project chat...')),
@@ -2455,7 +2479,10 @@ When you create the Project Factory draft, link each asset with POST /project-fa
     }
 
     final didConfigure = await _chatController.updateAgentConfiguration(
-      buildProjectFactoryIntakeConfiguration(session.agentConfiguration),
+      buildProjectFactoryIntakeConfiguration(
+        session.agentConfiguration,
+        initialAdminEmails: initialAdminEmails,
+      ),
     );
     if (!mounted) {
       return;

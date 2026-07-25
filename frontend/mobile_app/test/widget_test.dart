@@ -2475,8 +2475,26 @@ flowchart LR
     expect(configuration.byId(AgentId.reviewer)?.maxTurns, 0);
     expect(isProjectFactoryIntakeConfiguration(configuration), isTrue);
     final prompt = configuration.byId(AgentId.generator)?.prompt ?? '';
-    expect(prompt, contains('initial admin emails'));
+    expect(prompt, contains('Initial admin emails are missing'));
     expect(prompt, contains('manual-link fallback'));
+  });
+
+  test('project factory intake does not re-ask captured admin emails', () {
+    final configuration = buildProjectFactoryIntakeConfiguration(
+      kDefaultAgentConfiguration,
+      initialAdminEmails: const <String>[
+        'ADMIN@example.com',
+        'admin@example.com',
+        'owner@example.com',
+      ],
+    );
+
+    final prompt = configuration.byId(AgentId.generator)?.prompt ?? '';
+    expect(prompt, contains('already captured at draft creation'));
+    expect(prompt, contains('admin@example.com'));
+    expect(prompt, contains('owner@example.com'));
+    expect(prompt, contains('Do not ask for admin emails again'));
+    expect(prompt, isNot(contains('Initial admin emails are missing')));
   });
 
   test('project factory build configuration enables reviewer pairs', () {
