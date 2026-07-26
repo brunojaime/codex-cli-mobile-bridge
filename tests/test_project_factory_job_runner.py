@@ -123,6 +123,10 @@ def test_project_factory_runner_prompts_load_skill_and_consume_ux_brief(
     assert "Required visual-ux-polish Skill Context" in ux_generator
     assert "references/visual-quality-checklist.md" in ux_generator
     assert "references/visual-validation-protocol.md" in ux_reviewer
+    assert "scaffold navigation" in generator
+    assert "product information architecture" in ux_generator
+    assert "app icon source" in ux_generator
+    assert "inherits scaffold/default navigation" in ux_reviewer
 
 
 def test_visual_ux_skill_default_loader_uses_configured_runtime_path(

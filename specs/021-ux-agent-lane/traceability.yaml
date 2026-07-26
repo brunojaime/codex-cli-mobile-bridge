@@ -54,6 +54,17 @@ requirements:
       - Domain Factory UX sequencing.
       - Automatic backend UX reviewer JSON parsing and continuation routing.
       - UX lifecycle states in run/session projections.
+  clean_product_baseline:
+    status: shipped_mvp
+    tasks:
+      - T041
+      - T042
+    acceptance:
+      - Generated Flutter baseline keeps infrastructure contracts without fixed visible product navigation.
+      - UX agents decide information architecture, navigation, colors, logo/app icon treatment, and primary screens from the domain brief and assets.
+    shipped_mvp:
+      - Generated Flutter screens do not include fixed product navigation destinations or scaffold-owned product surfaces.
+      - Project Factory prompts tell UX agents not to inherit scaffold navigation, default colors, generic authenticated shells, or missing logo/icon decisions.
   manual_slash_commands:
     status: shipped_mvp
     tasks:

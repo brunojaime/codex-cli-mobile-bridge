@@ -836,6 +836,9 @@ Required UX brief input:
   satisfied instead of proceeding with generic UX assumptions.
 - Apply the brief as product direction while preserving the manifest, release
   defaults, backend contracts, auth, RBAC, persistence, and business logic.
+- Treat the generated Flutter/Svelte baseline as infrastructure only. Do not
+  inherit scaffold navigation, placeholder destinations, generic admin surfaces,
+  default colors, logo, or app icon as product decisions.
 """
         (prompt_root / "research-planning.md").write_text(
             base
@@ -860,6 +863,13 @@ clear UX direction for the factory generator: audience, first-use intent,
 information architecture, navigation model, primary screens, empty/loading/error
 states, visual tone, accessibility constraints, mobile/desktop expectations,
 benchmark notes, and UX acceptance criteria.
+
+Choose the information architecture, navigation model, visual hierarchy, color
+direction, iconography, logo treatment, and app icon expectation from the domain
+and references. If user assets include a logo or app icon, require preserving
+and using them. If they do not, define a minimal domain-appropriate identity and
+app icon direction. Avoid prescribing a generic menu pattern; the UX brief must
+justify the pattern it selects for this specific app type.
 """,
             encoding="utf-8",
         )
@@ -897,6 +907,12 @@ schemas, release wiring, or business logic.
 Benchmark comparable professional products, inspect or capture screenshots when
 the app can run, perform focused UAT on the primary journeys, and save concise
 evidence under `.codex/ux/`. Validate mobile and desktop fit before completion.
+
+Define and implement the product information architecture, navigation, primary
+screens, color direction, iconography, logo treatment, and app icon source from
+the domain brief and assets. Do not leave the initialized app as a generic
+authenticated shell, and do not treat scaffold navigation or default colors as
+accepted product UX.
 """,
             encoding="utf-8",
         )
@@ -912,6 +928,9 @@ The visual-ux-polish skill above is loaded and required.
 Review only the UX Generator changes and evidence. Check visual quality,
 interaction clarity, accessibility, responsive fit, screenshots/UAT evidence,
 and scope discipline. Do not request functional/backend/business-logic changes.
+Reject completion if the product still inherits scaffold/default navigation,
+default color choices, a missing logo/icon decision, or generic authenticated
+shell screens instead of domain-specific IA and visuals.
 
 If more UX-only work is needed, write `.codex/ux/ux-reviewer-report.md` with the
 required follow-up. If the UX is professional and validated, write the same file

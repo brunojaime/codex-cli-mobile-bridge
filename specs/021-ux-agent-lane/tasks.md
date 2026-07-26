@@ -21,6 +21,12 @@ deferred.
       current project.
 - [x] T039 Add `/ux-full` slash command for manual UX generator/reviewer loop
       with default max 15 iterations.
+- [x] T041 Make the deterministic Flutter product baseline infrastructure-only:
+      auth/runtime/release contracts remain, but fixed visible product
+      navigation/screens are not imposed.
+- [x] T042 Strengthen UX prompts so UX Generator/Reviewer own app information
+      architecture, navigation, colors, logo/app icon direction, and
+      domain-category best-practice rationale.
 
 ## Partially Completed
 

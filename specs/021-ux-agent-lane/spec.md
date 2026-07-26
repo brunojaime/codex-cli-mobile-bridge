@@ -70,6 +70,42 @@ instead of a raw functional baseline:
 - UX agents can improve the interface without changing domain behavior or
   backend contracts.
 
+## Clean Product Baseline Contract
+
+The deterministic Flutter/Svelte baseline is infrastructure, not product
+information architecture. It must provide auth, preview runtime wiring, real
+backend configuration, updater/feedback/workbench contracts, release scripts,
+and validation hooks, but it must not impose visible product screens or
+navigation destinations.
+
+Generated Flutter apps must not ship with fixed product tabs or scaffold-owned
+business screens unless the approved domain brief and UX lane explicitly select
+equivalent domain-specific surfaces. Admin, notification, RBAC, persistence,
+and invite APIs may remain available as implementation contracts for Domain
+Factory, but the initial visible app shell must stay neutral until UX/Domain
+work defines the actual product experience.
+
+The UX Generator and UX Reviewer own these product decisions:
+
+- information architecture and navigation model;
+- primary screens and first-use flow;
+- visual hierarchy, density, typography, colors, and interaction states;
+- logo treatment and app icon source;
+- empty, loading, error, invite, and authenticated states;
+- accessibility and responsive fit.
+
+If the user supplied a logo, app icon, or exact visual asset, the UX lane must
+preserve and apply it. If no identity asset was supplied, the UX lane must
+create a minimal domain-appropriate identity and app icon direction. If colors
+or style are not specified, the UX lane chooses a professional direction that is
+representative of the application category and records the rationale in
+`.codex/ux/` evidence.
+
+UX agents should reason from comparable professional products and current
+platform best practices when the domain does not provide enough visual
+direction. Benchmark notes and long evidence belong in `.codex/ux/`, while chat
+messages should stay concise and conversational.
+
 ## Final Flow Decision
 
 New Project has exactly two automatic UX interventions:
