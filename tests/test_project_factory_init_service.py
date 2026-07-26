@@ -399,6 +399,48 @@ def test_automatic_ux_chat_content_uses_agent_reply_not_technical_report(
     assert len(content) < 1200
 
 
+def test_automatic_ux_timeout_chat_content_uses_actionable_detail(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "clinica-norte"
+    report_path = workspace / ".codex/ux/ux-generator-report.md"
+    report_path.parent.mkdir(parents=True)
+    report_path.write_text(
+        "# Automatic UX Generator Report\n\n"
+        "Status: failed\n\n"
+        "Output excerpt: lots of text and many diffs and more text\n",
+        encoding="utf-8",
+    )
+    result = ProjectFactoryInitCommandResult(
+        argv=("codex", "exec", "short prompt"),
+        cwd=str(workspace),
+        exit_code=124,
+        stdout="lots of text and many diffs",
+        stderr="Command timed out.",
+    )
+
+    content = init_service_module._automatic_ux_chat_content(
+        label="UX Generator",
+        iteration=1,
+        result=result,
+        report_path=report_path,
+        workspace_path=str(workspace),
+    )
+    blocker = init_service_module._automatic_ux_command_blocker(
+        phase=ProjectFactoryInitPhaseName.UX_GENERATOR,
+        code="automatic_ux_generator_failed",
+        message="Automatic UX generator failed.",
+        result=result,
+    )
+
+    assert "timeout" in content
+    assert "trabajo parcial queda en la evidencia" in content
+    assert "Deje el detalle en `.codex/ux/ux-generator-report.md`" in content
+    assert "Detalle: and" not in content
+    assert "Automatic UX agent timed out" in blocker.message
+    assert "many diffs" not in blocker.message
+
+
 def test_init_service_waits_for_domain_brief_before_automatic_ux(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -945,8 +987,12 @@ def test_init_service_bounds_large_automatic_ux_prompt_and_passes_it_by_file(
     assert prompt_path.stat().st_size < 50_000
     assert "[excerpt truncated]" in prompt_text
     assert "Do not run package managers, Flutter/Gradle builds" in prompt_text
+    assert "do not run Flutter analyze/test/build" in prompt_text
     assert "do not capture screenshots" in prompt_text
-    assert "leave deeper\npolish for the final UX lane" in prompt_text
+    assert "edit at most\nthree product/brand files" in prompt_text
+    assert "avoid printing diffs or long logs" in prompt_text
+    assert "leave deeper polish for the final UX lane" in prompt_text
+    assert "final assistant message must contain only" in prompt_text
     assert "Treat product identity as part of UX" in prompt_text
     assert "assets/brand/logo.svg" in prompt_text
     assert "apps/mobile/assets/brand/app_icon_source.svg" in prompt_text

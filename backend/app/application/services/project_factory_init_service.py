@@ -118,8 +118,8 @@ _CLOUDFLARE_PROVISION_PHASE = ProjectFactoryInitPhaseName.CLOUDFLARE_PREVIEW_PRO
 _CLOUDFLARE_DEPLOY_PHASE = ProjectFactoryInitPhaseName.CLOUDFLARE_PREVIEW_DEPLOY
 _PREVIEW_SMOKE_PHASE = ProjectFactoryInitPhaseName.PREVIEW_SMOKE
 _FRONTEND_BASELINE_PHASE = ProjectFactoryInitPhaseName.FLUTTER_OR_STRATEGY_BASELINE
-_AUTOMATIC_UX_COMMAND_TIMEOUT_SECONDS = 300.0
-_AUTOMATIC_UX_SKILL_CONTEXT_MAX_CHARS = 8000
+_AUTOMATIC_UX_COMMAND_TIMEOUT_SECONDS = 600.0
+_AUTOMATIC_UX_SKILL_CONTEXT_MAX_CHARS = 6000
 _AUTOMATIC_UX_CHAT_RESPONSE_START = "BEGIN_AUTOMATIC_UX_CHAT_RESPONSE"
 _AUTOMATIC_UX_CHAT_RESPONSE_END = "END_AUTOMATIC_UX_CHAT_RESPONSE"
 
@@ -5838,15 +5838,21 @@ generated UI enough for the first installable preview to have a coherent visual
 direction for the requested product category.
 
 Do not perform full visual QA here. Do not benchmark live products, do not start
-the app, do not capture screenshots, and do not wait for the Android preview
-release. Make small scoped UI/copy/theme adjustments when they are obvious from
-the brief and source files; otherwise write concise direction and leave deeper
-polish for the final UX lane.
+the app, do not capture screenshots, do not run Flutter analyze/test/build, and
+do not wait for the Android preview release. Make small scoped UI/copy/theme
+adjustments when they are obvious from the brief and source files; otherwise
+write concise direction and leave deeper polish for the final UX lane.
+
+Timebox this pass aggressively. Inspect only the minimum files, edit at most
+three product/brand files, avoid printing diffs or long logs, and finish with a
+short final reply. If additional UX work is valuable, write it as follow-up for
+the reviewer/final polish lane instead of continuing.
 
 If reviewer feedback is provided below in a later iteration, address only that
 UX feedback. Write `.codex/ux/ux-generator-report.md` with what changed,
 files inspected, any small edits made, the logo/app icon decision, and any
-remaining UX concerns.
+remaining UX concerns. Your final assistant message must contain only the
+machine-readable chat response marker block requested above.
 """
     )
     reviewer_prompt = (
@@ -5978,7 +5984,11 @@ def _automatic_ux_chat_content(
         )
 
     output_summary = _automatic_ux_output_summary(result)
-    failure_detail = chat_response or output_summary or "No se capturo salida del agente UX."
+    failure_detail = _automatic_ux_failure_detail(
+        result,
+        chat_response=chat_response,
+        output_summary=output_summary,
+    )
     return _automatic_ux_chat_with_evidence_note(
         f"No pude completar la pasada {iteration} de {label}.\n\nDetalle: {failure_detail}",
         evidence_path=evidence_path,
@@ -6115,6 +6125,21 @@ def _automatic_ux_output_summary(result: ProjectFactoryInitCommandResult) -> str
         if part and part.strip()
     )
     return _compact_automatic_ux_text(text, max_chars=360)
+
+
+def _automatic_ux_failure_detail(
+    result: ProjectFactoryInitCommandResult,
+    *,
+    chat_response: str,
+    output_summary: str,
+) -> str:
+    output = "\n".join(part for part in (result.stdout, result.stderr) if part).lower()
+    if result.exit_code == 124 or "command timed out" in output:
+        return (
+            "El agente UX llego al timeout antes de cerrar su respuesta. "
+            "El trabajo parcial queda en la evidencia y se puede reintentar."
+        )
+    return chat_response or output_summary or "No se capturo salida del agente UX."
 
 
 def _automatic_ux_chat_with_evidence_note(content: str, *, evidence_path: str) -> str:
@@ -6257,10 +6282,13 @@ def _automatic_ux_command_blocker(
     message: str,
     result: ProjectFactoryInitCommandResult,
 ) -> ProjectFactoryInitBlocker:
-    detail = _summarize_output(
-        "\n".join(part for part in (result.stdout, result.stderr) if part),
-        (),
-    )
+    raw_output = "\n".join(part for part in (result.stdout, result.stderr) if part)
+    if result.exit_code == 124 or "command timed out" in raw_output.lower():
+        detail = (
+            "Automatic UX agent timed out before completing the response contract."
+        )
+    else:
+        detail = _summarize_output(raw_output, ())
     return _automatic_ux_blocker(
         phase=phase,
         code=code,
