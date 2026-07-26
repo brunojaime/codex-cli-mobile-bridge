@@ -120,6 +120,8 @@ _PREVIEW_SMOKE_PHASE = ProjectFactoryInitPhaseName.PREVIEW_SMOKE
 _FRONTEND_BASELINE_PHASE = ProjectFactoryInitPhaseName.FLUTTER_OR_STRATEGY_BASELINE
 _AUTOMATIC_UX_COMMAND_TIMEOUT_SECONDS = 300.0
 _AUTOMATIC_UX_SKILL_CONTEXT_MAX_CHARS = 8000
+_AUTOMATIC_UX_CHAT_RESPONSE_START = "BEGIN_AUTOMATIC_UX_CHAT_RESPONSE"
+_AUTOMATIC_UX_CHAT_RESPONSE_END = "END_AUTOMATIC_UX_CHAT_RESPONSE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -5814,6 +5816,15 @@ Automatic UX execution budget:
 - If deeper visual validation is needed, record it as follow-up for the final UX
   polish lane instead of continuing until timeout.
 - Always write the requested `.codex/ux/` report before exiting.
+
+Chat response contract:
+- After writing the evidence file, end stdout with exactly these markers:
+  `{_AUTOMATIC_UX_CHAT_RESPONSE_START}` and `{_AUTOMATIC_UX_CHAT_RESPONSE_END}`.
+- Inside those markers, write only the short user-visible agent reply for the
+  chat. Keep it conversational and compact: what you decided or changed, what
+  the next UX/domain agent should consider, and whether this pass is ready.
+- Do not put the full evidence report, raw prompt, prompt path, command logs, or
+  long markdown dump inside the chat response markers.
 """
     generator_prompt = (
         base
@@ -5904,27 +5915,20 @@ def _automatic_ux_pending_chat_content(
     report_path: Path,
     workspace_path: str | None,
 ) -> str:
-    prompt_display = _display_path_for_automatic_ux_report(
-        prompt_path,
-        workspace_path=workspace_path,
-    )
+    del prompt_path
     evidence_display = _display_path_for_automatic_ux_report(
         report_path,
         workspace_path=workspace_path,
     )
-    verb = "Generating" if label == "UX Generator" else "Reviewing"
+    verb = "Estoy definiendo" if label == "UX Generator" else "Estoy revisando"
+    noun = "la baseline visual" if label == "UX Generator" else "la propuesta UX"
     return "\n".join(
         [
             f"# {label} pass {iteration}",
             "",
-            "Status: running",
+            f"{verb} {noun} desde el brief aprobado.",
             "",
-            f"{verb} the visible UX baseline from the approved domain brief.",
-            "",
-            f"Prompt: `{prompt_display}`",
-            f"Evidence: `{evidence_display}`",
-            "",
-            "Full UX output will be stored in the evidence file, not in chat.",
+            f"Cuando termine dejo el detalle en `{evidence_display}`.",
         ]
     ) + "\n"
 
@@ -5957,26 +5961,28 @@ def _automatic_ux_chat_content(
     report_path: Path,
     workspace_path: str | None,
 ) -> str:
-    status = "completed" if result.exit_code == 0 else "failed"
     evidence_path = _display_path_for_automatic_ux_report(
         report_path,
         workspace_path=workspace_path,
     )
-    report_summary = _automatic_ux_report_summary(report_path)
+    chat_response = _automatic_ux_model_chat_response(result, report_path)
+    if result.exit_code == 0:
+        if not chat_response:
+            chat_response = (
+                f"Termine la pasada {iteration} de {label}. "
+                "La baseline UX quedo lista para el siguiente agente."
+            )
+        return _automatic_ux_chat_with_evidence_note(
+            chat_response,
+            evidence_path=evidence_path,
+        )
+
     output_summary = _automatic_ux_output_summary(result)
-    lines = [
-        f"# {label} pass {iteration}",
-        "",
-        f"Status: {status}",
-        "",
-        f"Evidence: `{evidence_path}`",
-    ]
-    if report_summary:
-        lines.extend(("", f"Summary: {report_summary}"))
-    if output_summary and result.exit_code != 0:
-        lines.extend(("", f"Output excerpt: {output_summary}"))
-    lines.extend(("", "Full UX output is stored in the evidence file, not in chat."))
-    return "\n".join(lines) + "\n"
+    failure_detail = chat_response or output_summary or "No se capturo salida del agente UX."
+    return _automatic_ux_chat_with_evidence_note(
+        f"No pude completar la pasada {iteration} de {label}.\n\nDetalle: {failure_detail}",
+        evidence_path=evidence_path,
+    )
 
 
 def _display_path_for_automatic_ux_report(
@@ -6007,6 +6013,101 @@ def _automatic_ux_report_summary(report_path: Path) -> str:
     return ""
 
 
+def _automatic_ux_model_chat_response(
+    result: ProjectFactoryInitCommandResult,
+    report_path: Path,
+) -> str:
+    report_text = _read_automatic_ux_report_text(report_path)
+    for text in (report_text, result.stdout, result.stderr):
+        marked = _extract_automatic_ux_chat_response(text)
+        if marked:
+            return _compact_automatic_ux_markdown(marked, max_chars=900)
+    if result.exit_code == 0:
+        for text in (report_text, result.stdout):
+            cleaned = _clean_automatic_ux_agent_output(text)
+            if cleaned:
+                return _compact_automatic_ux_markdown(cleaned, max_chars=900)
+    return ""
+
+
+def _read_automatic_ux_report_text(report_path: Path) -> str:
+    if not report_path.is_file():
+        return ""
+    try:
+        return report_path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _extract_automatic_ux_chat_response(text: str) -> str:
+    if not text:
+        return ""
+    _, start_found, after_start = text.partition(_AUTOMATIC_UX_CHAT_RESPONSE_START)
+    if not start_found:
+        return ""
+    body, end_found, _ = after_start.partition(_AUTOMATIC_UX_CHAT_RESPONSE_END)
+    if not end_found:
+        body = after_start
+    return body.strip()
+
+
+def _clean_automatic_ux_agent_output(text: str) -> str:
+    if not text:
+        return ""
+    lines: list[str] = []
+    skipping_cli_header = True
+    cli_noise_prefixes = (
+        "reading additional input from stdin",
+        "openai codex ",
+        "--------",
+        "workdir:",
+        "model:",
+        "provider:",
+        "approval:",
+        "sandbox:",
+        "reasoning effort:",
+        "reasoning summaries:",
+        "session id:",
+    )
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            if lines:
+                lines.append("")
+            continue
+        lower = line.lower()
+        if skipping_cli_header and lower.startswith(cli_noise_prefixes):
+            continue
+        skipping_cli_header = False
+        if lower.startswith("user read and follow the full automatic ux prompt"):
+            continue
+        lines.append(raw_line.rstrip())
+    cleaned = "\n".join(lines).strip()
+    if _looks_like_automatic_ux_technical_report(cleaned):
+        return _automatic_ux_report_summary_from_text(cleaned)
+    return cleaned
+
+
+def _looks_like_automatic_ux_technical_report(text: str) -> bool:
+    lowered = text.lower()
+    return (
+        "status:" in lowered
+        and "evidence:" in lowered
+        and "full ux output is stored" in lowered
+    )
+
+
+def _automatic_ux_report_summary_from_text(text: str) -> str:
+    for line in text.splitlines():
+        clean = line.strip().strip("-* ")
+        if not clean or clean.startswith("#"):
+            continue
+        if clean.lower().startswith(("status:", "evidence:", "summary:")):
+            continue
+        return clean
+    return ""
+
+
 def _automatic_ux_output_summary(result: ProjectFactoryInitCommandResult) -> str:
     text = "\n".join(
         part.strip()
@@ -6014,6 +6115,25 @@ def _automatic_ux_output_summary(result: ProjectFactoryInitCommandResult) -> str
         if part and part.strip()
     )
     return _compact_automatic_ux_text(text, max_chars=360)
+
+
+def _automatic_ux_chat_with_evidence_note(content: str, *, evidence_path: str) -> str:
+    compact = _compact_automatic_ux_markdown(content.strip(), max_chars=1000)
+    if evidence_path and evidence_path not in compact:
+        compact = f"{compact}\n\nDeje el detalle en `{evidence_path}`."
+    return compact.rstrip() + "\n"
+
+
+def _compact_automatic_ux_markdown(text: str, *, max_chars: int) -> str:
+    compact_lines = [line.rstrip() for line in text.strip().splitlines()]
+    while compact_lines and not compact_lines[0]:
+        compact_lines.pop(0)
+    while compact_lines and not compact_lines[-1]:
+        compact_lines.pop()
+    compact = "\n".join(compact_lines).strip()
+    if len(compact) <= max_chars:
+        return compact
+    return compact[: max_chars - 15].rstrip() + " ... [truncated]"
 
 
 def _compact_automatic_ux_text(text: str, *, max_chars: int) -> str:

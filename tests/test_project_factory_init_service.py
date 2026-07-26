@@ -242,14 +242,13 @@ def test_init_service_run_pipeline_generates_workspace_ux_and_blocked_context(
         "UX Reviewer",
     ]
     assert all(message.run_id == completed.id for message in ux_messages)
-    assert "UX Generator pass 1" in ux_messages[0].content
-    assert "UX Reviewer pass 2" in ux_messages[-1].content
+    assert "Ajuste la direccion visual inicial" in ux_messages[0].content
+    assert "La propuesta UX queda lista" in ux_messages[-1].content
     assert all(len(message.content) < 800 for message in ux_messages)
     assert all(".codex/ux/" in message.content for message in ux_messages)
-    assert all(
-        "Full UX output is stored in the evidence file" in message.content
-        for message in ux_messages
-    )
+    assert all("Status:" not in message.content for message in ux_messages)
+    assert all("Evidence:" not in message.content for message in ux_messages)
+    assert all(".codex/factory/prompts/" not in message.content for message in ux_messages)
     assert (
         completed.phase(ProjectFactoryInitPhaseName.LOCAL_GIT_COMMIT).status
         == ProjectFactoryInitPhaseStatus.COMPLETED
@@ -303,8 +302,8 @@ def test_automatic_ux_messages_are_visible_while_agent_runs(
         assert message is not None
         assert message.agent_label == label
         assert message.status == ChatMessageStatus.PENDING
-        assert "Status: running" in message.content
-        assert ".codex/factory/prompts/ux-" in message.content
+        assert "Estoy" in message.content
+        assert ".codex/factory/prompts/ux-" not in message.content
         assert ".codex/ux/ux-" in message.content
         observed.append((role, iteration))
 
@@ -358,22 +357,24 @@ def test_automatic_ux_messages_are_visible_while_agent_runs(
     )
 
 
-def test_automatic_ux_chat_content_keeps_large_output_out_of_chat(
+def test_automatic_ux_chat_content_uses_agent_reply_not_technical_report(
     tmp_path: Path,
 ) -> None:
     workspace = tmp_path / "clinica-norte"
     report_path = workspace / ".codex/ux/ux-generator-report.md"
     report_path.parent.mkdir(parents=True)
     report_path.write_text(
-        "# UX generator report\n\n"
-        "Created a branded logo and tightened the app shell.\n"
+        "BEGIN_AUTOMATIC_UX_CHAT_RESPONSE\n"
+        "Ajuste la direccion visual inicial para una clinica: navegacion clara, "
+        "jerarquia de turnos y una marca simple lista para revisar.\n"
+        "END_AUTOMATIC_UX_CHAT_RESPONSE\n"
         + ("full report detail\n" * 10_000),
         encoding="utf-8",
     )
     result = ProjectFactoryInitCommandResult(
         argv=("codex", "exec", "short prompt"),
         cwd=str(workspace),
-        exit_code=1,
+        exit_code=0,
         stdout="stdout " + ("very long model output " * 10_000),
         stderr="stderr " + ("large failure detail " * 10_000),
     )
@@ -386,12 +387,13 @@ def test_automatic_ux_chat_content_keeps_large_output_out_of_chat(
         workspace_path=str(workspace),
     )
 
-    assert "UX Generator pass 1" in content
-    assert "Status: failed" in content
-    assert "Evidence: `.codex/ux/ux-generator-report.md`" in content
-    assert "Created a branded logo" in content
-    assert "Output excerpt:" in content
-    assert "Full UX output is stored in the evidence file, not in chat." in content
+    assert "Ajuste la direccion visual inicial" in content
+    assert "Deje el detalle en `.codex/ux/ux-generator-report.md`" in content
+    assert "UX Generator pass 1" not in content
+    assert "Status:" not in content
+    assert "Evidence:" not in content
+    assert "Output excerpt:" not in content
+    assert "Full UX output is stored in the evidence file, not in chat." not in content
     assert "full report detail" not in content
     assert content.count("very long model output") < 3
     assert len(content) < 1200
@@ -1098,7 +1100,12 @@ class _FakeInitCommandRunner:
                 argv=argv,
                 cwd=str(cwd_path),
                 exit_code=0,
-                stdout="UX generator ok",
+                stdout=(
+                    "BEGIN_AUTOMATIC_UX_CHAT_RESPONSE\n"
+                    "Ajuste la direccion visual inicial y deje la app lista "
+                    "para revision UX.\n"
+                    "END_AUTOMATIC_UX_CHAT_RESPONSE\n"
+                ),
                 env=env,
             )
         if "Automatic New Project UX Reviewer" in prompt:
@@ -1129,7 +1136,12 @@ class _FakeInitCommandRunner:
                 argv=argv,
                 cwd=str(cwd_path),
                 exit_code=0,
-                stdout=f"status: {status}\nrelease_gate: pass",
+                stdout=(
+                    "BEGIN_AUTOMATIC_UX_CHAT_RESPONSE\n"
+                    f"La propuesta UX queda lista para continuar. status: {status}; "
+                    "release_gate: pass.\n"
+                    "END_AUTOMATIC_UX_CHAT_RESPONSE\n"
+                ),
                 env=env,
             )
         stdout = "true" if argv[:2] == ("git", "rev-parse") else "ok"
