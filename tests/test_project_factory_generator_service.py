@@ -139,6 +139,11 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     assert "Repeat password" not in screens
     assert "Activate account" not in screens
     assert "label: 'Workbench'" not in screens
+    assert "NavigationDestination" not in screens
+    assert "HomeScreen" not in screens
+    assert "NotificationsScreen" not in screens
+    assert "AdminScreen" not in screens
+    assert "AuthenticatedProjectShell" in screens
     assert "CodexBridgeDevModeWrapper" in main
     assert "DeveloperFeedbackTemplate" in main
     assert "CODEX DEV" not in screens
@@ -2740,6 +2745,7 @@ def test_generator_writes_flutter_mobile_v1_template(tmp_path: Path) -> None:
     android_manifest = (
         mobile / "android/app/src/main/AndroidManifest.xml"
     ).read_text(encoding="utf-8")
+    assert 'android:label="Clinica Norte"' in android_manifest
     assert 'android:networkSecurityConfig="@xml/network_security_config"' in (
         android_manifest
     )
@@ -2776,9 +2782,12 @@ def test_generator_writes_flutter_mobile_v1_template(tmp_path: Path) -> None:
     assert "/admin/business-records" in api_client
     assert "/notifications" in api_client
     screens = (mobile / "lib/src/screens.dart").read_text(encoding="utf-8")
-    assert "user.canAccessAdmin" in screens
+    assert "NavigationDestination" not in screens
+    assert "HomeScreen" not in screens
+    assert "NotificationsScreen" not in screens
+    assert "AdminScreen" not in screens
+    assert "AuthenticatedProjectShell" in screens
     assert "Enter demo as role" in screens
-    assert "No notifications" in screens
     mock_api = (mobile / "lib/src/mock_api_client.dart").read_text(encoding="utf-8")
     assert "seedRoles" in mock_api
     assert "employee" in mock_api
@@ -2980,11 +2989,16 @@ def test_generated_web_preview_validation_accepts_real_and_blocks_mock(
     ProjectFactoryGeneratorService().generate(manifest_plan)
 
     project = tmp_path / "clinica-norte"
+    clean_env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {"API_BASE_URL", "APP_RUNTIME_PROFILE", "API_RUNTIME"}
+    }
     real = subprocess.run(
         ["scripts/validate_web_preview.sh"],
         cwd=project,
         env={
-            **os.environ,
+            **clean_env,
             "API_BASE_URL": "https://preview.nienfos.com/clinica-norte/api",
         },
         text=True,
@@ -3002,7 +3016,7 @@ def test_generated_web_preview_validation_accepts_real_and_blocks_mock(
         ["scripts/validate_web_preview.sh"],
         cwd=project,
         env={
-            **os.environ,
+            **clean_env,
             "API_BASE_URL": "https://preview.nienfos.com/clinica-norte/api",
             "REQUIRE_WEB_BUILD_OUTPUT": "true",
         },
@@ -3016,7 +3030,7 @@ def test_generated_web_preview_validation_accepts_real_and_blocks_mock(
         ["scripts/validate_web_preview.sh"],
         cwd=project,
         env={
-            **os.environ,
+            **clean_env,
             "API_BASE_URL": "https://preview.nienfos.com/clinica-norte/api",
             "APP_RUNTIME_PROFILE": "mock",
         },

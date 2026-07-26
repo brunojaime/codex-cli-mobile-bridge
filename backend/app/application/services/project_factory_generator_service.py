@@ -5820,6 +5820,10 @@ fi
 if [[ "$FRONTEND_STRATEGY" == "flutter" ]]; then
   [[ -f "$ROOT_DIR/apps/mobile/lib/src/screens.dart" ]] || fail "Flutter screens.dart missing"
   ! grep -q "label: 'Workbench'" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "generated product app must not expose a Workbench navigation tab"
+  ! grep -q "NavigationDestination" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "deterministic Flutter baseline must not impose product navigation destinations"
+  ! grep -q "HomeScreen" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "deterministic Flutter baseline must not impose scaffold-owned product screens"
+  ! grep -q "NotificationsScreen" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "deterministic Flutter baseline must not impose scaffold-owned product screens"
+  ! grep -q "AdminScreen" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "deterministic Flutter baseline must not impose scaffold-owned product screens"
   ! grep -q "Invite token or link" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "URL invite flow must not ask users to paste invite tokens"
   grep -q "Crear contrasena" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "invite activation password label missing"
   grep -q "Repetir contrasena" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "invite activation password confirmation label missing"
@@ -9220,8 +9224,6 @@ def _mobile_android_manifest(display_name: str) -> str:
     </application>
 </manifest>
 """
-
-
 def _mobile_android_network_security_config() -> str:
     return """<?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
@@ -10269,7 +10271,6 @@ class SessionController extends ChangeNotifier {
 def _mobile_screens_dart(name: str) -> str:
     return f"""import 'package:flutter/material.dart';
 
-import 'api_client.dart';
 import 'models.dart';
 import 'session_controller.dart';
 
@@ -10310,8 +10311,6 @@ class ProjectHome extends StatefulWidget {{
 }}
 
 class _ProjectHomeState extends State<ProjectHome> {{
-  int _index = 0;
-
   @override
   Widget build(BuildContext context) {{
     return AnimatedBuilder(
@@ -10320,25 +10319,12 @@ class _ProjectHomeState extends State<ProjectHome> {{
         if (!widget.controller.isAuthenticated) {{
           return AuthScreen(controller: widget.controller, projectName: widget.projectName);
         }}
-        final user = widget.controller.user!;
-        final pages = <Widget>[
-          HomeScreen(user: user, onLogout: widget.controller.logout),
-          NotificationsScreen(api: widget.controller.api, token: widget.controller.token!),
-          if (user.canAccessAdmin)
-            AdminScreen(api: widget.controller.api, token: widget.controller.token!),
-        ];
         return Scaffold(
           appBar: AppBar(title: Text(widget.projectName)),
-          body: pages[_index.clamp(0, pages.length - 1)],
-          bottomNavigationBar: NavigationBar(
-            selectedIndex: _index.clamp(0, pages.length - 1),
-            onDestinationSelected: (value) => setState(() => _index = value),
-            destinations: <Widget>[
-              const NavigationDestination(icon: Icon(Icons.home_outlined), label: 'Home'),
-              const NavigationDestination(icon: Icon(Icons.notifications_outlined), label: 'Notifications'),
-              if (user.canAccessAdmin)
-                const NavigationDestination(icon: Icon(Icons.admin_panel_settings_outlined), label: 'Admin'),
-            ],
+          body: AuthenticatedProjectShell(
+            user: widget.controller.user!,
+            runtimeProfile: widget.runtimeProfile,
+            onLogout: widget.controller.logout,
           ),
         );
       }},
@@ -10493,150 +10479,43 @@ class _AuthScreenState extends State<AuthScreen> {{
   }}
 }}
 
-class HomeScreen extends StatelessWidget {{
-  const HomeScreen({{super.key, required this.user, required this.onLogout}});
+class AuthenticatedProjectShell extends StatelessWidget {{
+  const AuthenticatedProjectShell({{
+    super.key,
+    required this.user,
+    required this.runtimeProfile,
+    required this.onLogout,
+  }});
+
   final AppUser user;
+  final String runtimeProfile;
   final Future<void> Function() onLogout;
 
   @override
   Widget build(BuildContext context) {{
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: <Widget>[
-        Text(user.email, style: Theme.of(context).textTheme.titleLarge),
-        const SizedBox(height: 8),
-        Text('Roles: ${{user.roles.join(', ')}}'),
-        const SizedBox(height: 16),
-        OutlinedButton(onPressed: onLogout, child: const Text('Logout')),
-      ],
-    );
-  }}
-}}
-
-class AdminScreen extends StatefulWidget {{
-  const AdminScreen({{super.key, required this.api, required this.token}});
-  final ProjectApiClient api;
-  final String token;
-
-  @override
-  State<AdminScreen> createState() => _AdminScreenState();
-}}
-
-class _AdminScreenState extends State<AdminScreen> {{
-  late Future<void> _load;
-  List<AdminUser> _users = <AdminUser>[];
-  List<String> _roles = <String>[];
-  List<BusinessRecord> _businessRecords = <BusinessRecord>[];
-  final _domain = TextEditingController();
-
-  @override
-  void initState() {{
-    super.initState();
-    _load = _refresh();
-  }}
-
-  @override
-  void dispose() {{
-    _domain.dispose();
-    super.dispose();
-  }}
-
-  Future<void> _refresh() async {{
-    _users = await widget.api.adminUsers(widget.token);
-    _roles = await widget.api.adminRoles(widget.token);
-    _businessRecords = await widget.api.businessRecords(widget.token);
-  }}
-
-  @override
-  Widget build(BuildContext context) {{
-    return FutureBuilder<void>(
-      future: _load,
-      builder: (context, snapshot) {{
-        if (snapshot.connectionState != ConnectionState.done) {{
-          return const Center(child: CircularProgressIndicator());
-        }}
-        if (snapshot.hasError) {{
-          return Center(child: Text(snapshot.error.toString()));
-        }}
-        return ListView(
-          padding: const EdgeInsets.all(20),
-          children: <Widget>[
-            Text('Users', style: Theme.of(context).textTheme.titleMedium),
-            if (_users.isEmpty) const Text('No users'),
-            ..._users.map((user) => ListTile(title: Text(user.email), subtitle: Text(user.isActive ? 'active' : 'inactive'))),
-            const Divider(),
-            Text('Roles: ${{_roles.join(', ')}}'),
-            const Divider(),
-            TextField(controller: _domain, decoration: const InputDecoration(labelText: 'New business record')),
-            FilledButton(onPressed: _createBusinessRecord, child: const Text('Create business record')),
-            if (_businessRecords.isEmpty) const Text('No business records'),
-            ..._businessRecords.map((domain) => ListTile(title: Text(domain.name))),
-          ],
-        );
-      }},
-    );
-  }}
-
-  Future<void> _createBusinessRecord() async {{
-    final name = _domain.text.trim();
-    if (name.isEmpty) return;
-    await widget.api.createBusinessRecord(widget.token, name);
-    _domain.clear();
-    setState(() => _load = _refresh());
-  }}
-}}
-
-class NotificationsScreen extends StatefulWidget {{
-  const NotificationsScreen({{super.key, required this.api, required this.token}});
-  final ProjectApiClient api;
-  final String token;
-
-  @override
-  State<NotificationsScreen> createState() => _NotificationsScreenState();
-}}
-
-class _NotificationsScreenState extends State<NotificationsScreen> {{
-  late Future<List<AppNotification>> _load;
-
-  @override
-  void initState() {{
-    super.initState();
-    _load = widget.api.notifications(widget.token);
-  }}
-
-  @override
-  Widget build(BuildContext context) {{
-    return FutureBuilder<List<AppNotification>>(
-      future: _load,
-      builder: (context, snapshot) {{
-        if (snapshot.connectionState != ConnectionState.done) {{
-          return const Center(child: CircularProgressIndicator());
-        }}
-        if (snapshot.hasError) {{
-          return Center(child: Text(snapshot.error.toString()));
-        }}
-        final items = snapshot.data ?? <AppNotification>[];
-        if (items.isEmpty) {{
-          return const Center(child: Text('No notifications'));
-        }}
-        return ListView(
-          children: items.map((item) {{
-            return ListTile(
-              title: Text(item.title),
-              subtitle: Text(item.body),
-              trailing: item.isRead
-                  ? const Icon(Icons.done)
-                  : IconButton(
-                      icon: const Icon(Icons.mark_email_read_outlined),
-                      onPressed: () async {{
-                        await widget.api.markNotificationRead(widget.token, item.id);
-                        setState(() => _load = widget.api.notifications(widget.token));
-                      }},
-                    ),
-            );
-          }}).toList(),
-        );
-      }},
+    return SafeArea(
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 520),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                Text(user.email, style: Theme.of(context).textTheme.titleLarge),
+                const SizedBox(height: 8),
+                Text(runtimeProfile),
+                const SizedBox(height: 16),
+                OutlinedButton(
+                  onPressed: onLogout,
+                  child: const Text('Cerrar sesión'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }}
 }}
@@ -12134,8 +12013,8 @@ New-project creation uses Codex CLI by default with:
 - Login and registration.
 - Google login placeholders.
 - RBAC with owner/admin/manager/staff/customer/guest.
-- Admin business-records shell.
-- Notification foundations.
+- Admin/RBAC infrastructure foundation.
+- Notification infrastructure foundation.
 - FastAPI backend v1 with SQLite DATABASE_URL, PBKDF2 password hashing,
   JWT-compatible HS256 tokens, admin seed by env, RBAC guards, business records CRUD,
   notification outbox, healthcheck, CORS, and generated tests.
@@ -12152,8 +12031,10 @@ New-project creation uses Codex CLI by default with:
 ## Intent
 
 Build `{name}` as a Flutter iOS/Android/Web app with a FastAPI backend, auth,
-admin, roles, permissions, business records management, notifications, Codex Feedback
-Bridge, app updater, and Workbench-driven feature growth.
+roles, permissions, admin/notification infrastructure, Codex Feedback Bridge,
+app updater, and Workbench-driven feature growth. The deterministic Flutter
+baseline starts from a clean authenticated shell; product navigation, visible
+domain screens, colors, logo, and app icon are owned by UX/Domain generation.
 
 ## Business Context
 
@@ -12177,13 +12058,14 @@ New-project creation uses Codex CLI by default with:
 - Login and registration.
 - Google login placeholders.
 - RBAC with owner/admin/manager/staff/customer/guest.
-- Admin business-records shell.
-- Notification foundations.
+- Admin/RBAC infrastructure foundation.
+- Notification infrastructure foundation.
 - FastAPI backend v1 with SQLite DATABASE_URL, PBKDF2 password hashing,
   JWT-compatible HS256 tokens, admin seed by env, RBAC guards, business records CRUD,
   notification outbox, healthcheck, CORS, and generated tests.
 - Flutter mobile v1 with API_BASE_URL configuration, real auth/session calls,
-  RBAC admin gating, business records screens, notifications, and generated tests.
+  a clean authenticated shell, no scaffold-imposed product navigation, and
+  generated tests.
 - SDD artifacts for future Workbench features.
 - Baseline Workbench diagrams for components, classes, entity relationships, and
   deployment.
@@ -12208,7 +12090,7 @@ Create the foundation for `{name}` in incremental validated slices:
 Create the foundation for `{name}` in incremental validated slices:
 
 1. Complete business research and visual direction.
-2. Extend the generated Flutter auth/admin/notification app with business records UX.
+2. Define and implement domain-specific Flutter information architecture, navigation, screens, and visual identity.
 3. Extend FastAPI backend v1 beyond the generated auth/RBAC/admin/notification base.
 4. Add business workflow resources and workflows.
 5. Wire Feedback Bridge, updater, and Workbench.
@@ -12245,9 +12127,9 @@ def _initial_task_items(frontend_strategy: str = "flutter") -> tuple[dict[str, s
                 "description": "Generated auth includes real email/password flow and explicit Google credential placeholders.",
             },
             {
-                "title": "Add RBAC and admin shell.",
+                "title": "Add RBAC and admin infrastructure.",
                 "status": "done",
-                "description": "Generated RBAC roles and admin shell are present.",
+                "description": "Generated RBAC roles and admin infrastructure are present.",
             },
             {
                 "title": "Add business records CRUD foundation.",
@@ -12287,9 +12169,9 @@ def _initial_task_items(frontend_strategy: str = "flutter") -> tuple[dict[str, s
             "description": "Analyze user-provided visual references and convert them into tokens, components, and screen patterns.",
         },
         {
-            "title": "Generate Flutter mobile v1 with API_BASE_URL, auth/session, RBAC admin gating, business records management, notifications, and generated tests.",
+            "title": "Generate clean Flutter mobile v1 with API_BASE_URL, auth/session, runtime wiring, and no scaffold-imposed product navigation.",
             "status": "done",
-            "description": "Generated Flutter mobile v1 foundation is present.",
+            "description": "Generated Flutter mobile v1 clean authenticated foundation is present.",
         },
         {
             "title": "Generate backend v1 with FastAPI, auth, RBAC, admin, business records CRUD foundation, and notifications.",
@@ -12302,14 +12184,14 @@ def _initial_task_items(frontend_strategy: str = "flutter") -> tuple[dict[str, s
             "description": "Generated auth includes real email/password flow and explicit Google credential placeholders.",
         },
         {
-            "title": "Add RBAC and admin shell.",
+            "title": "Add RBAC and admin infrastructure.",
             "status": "done",
-            "description": "Generated RBAC roles and admin shell are present.",
+            "description": "Generated RBAC roles and admin infrastructure are present.",
         },
         {
-            "title": "Add business records CRUD foundation.",
+            "title": "Add business records API foundation.",
             "status": "done",
-            "description": "Generated business records management foundation is present.",
+            "description": "Generated business records API foundation is present without scaffold-owned product screens.",
         },
         {
             "title": "Add notification foundation.",
@@ -12516,7 +12398,7 @@ those references:
 
 - app shell;
 - branded header;
-- bottom navigation;
+- navigation pattern selected for the domain;
 - metric card;
 - product/catalog card;
 - inventory item card;
@@ -12525,7 +12407,7 @@ those references:
 - secondary action button;
 - empty state;
 - dashboard summary card;
-- settings/menu row.
+- domain action row.
 
 Use `design/tokens.yaml` as the source for colors, spacing, radii, borders,
 shadows, typography, and icon sizes.
@@ -12559,7 +12441,8 @@ def _visual_validation_report_template(project_assets: object = None) -> str:
 
 ## Intentional Differences
 
-- The generated baseline uses the default Project Factory design system until references are attached.
+- The deterministic baseline stays visually minimal until UX/Domain selects a
+  domain-specific design direction.
 
 ## Result
 
@@ -12588,7 +12471,7 @@ Generation must fail if the UI remains generic while visual references exist.
             "## Derived Screens",
             "",
             "- login/auth: logo/app_icon/exact_asset references when present.",
-            "- home/admin: product reference imagery and visual rhythm when present.",
+            "- domain surfaces: product reference imagery and visual rhythm when present.",
             "- web/APK icon surfaces: app_icon references when present.",
             "",
             "## Logo And Icon",

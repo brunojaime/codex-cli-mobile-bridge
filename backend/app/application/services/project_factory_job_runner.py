@@ -977,6 +977,9 @@ Required UX brief input:
   `assets/brand/logo.svg` and `apps/mobile/assets/brand/app_icon_source.svg`.
   The installable Android app must not keep the Flutter default logo or a
   generic `Generated Preview` display name.
+- Treat the generated Flutter/Svelte baseline as infrastructure only. Do not
+  inherit scaffold navigation, placeholder destinations, generic admin surfaces,
+  default colors, logo, or app icon as product decisions.
 """
         (prompt_root / "research-planning.md").write_text(
             base
@@ -1003,6 +1006,13 @@ clear UX direction for the factory generator: audience, first-use intent,
 information architecture, navigation model, primary screens, empty/loading/error
 states, logo/app icon direction, visual tone, accessibility constraints,
 mobile/desktop expectations, benchmark notes, and UX acceptance criteria.
+
+Choose the information architecture, navigation model, visual hierarchy, color
+direction, iconography, logo treatment, and app icon expectation from the domain
+and references. If user assets include a logo or app icon, require preserving
+and using them. If they do not, define a minimal domain-appropriate identity and
+app icon direction. Avoid prescribing a generic menu pattern; the UX brief must
+justify the pattern it selects for this specific app type.
 """,
             encoding="utf-8",
         )
@@ -1103,6 +1113,12 @@ Pass budget:
 
 Evidence must be concise. Include: files changed, visual decisions, checks run,
 what remains for the next UX pass, and the machine-readable decision below.
+
+Define and implement the product information architecture, navigation, primary
+screens, color direction, iconography, logo treatment, and app icon source from
+the domain brief and assets. Do not leave the initialized app as a generic
+authenticated shell, and do not treat scaffold navigation or default colors as
+accepted product UX.
 """,
             encoding="utf-8",
         )
@@ -1123,6 +1139,10 @@ functional/backend/business-logic changes.
 This automatic UX lane can run up to 10 generator/reviewer passes. You own the
 stop decision. Return complete as soon as the UX is good enough for this stage;
 do not spend all 10 passes unless material UX issues remain.
+
+Reject completion if the product still inherits scaffold/default navigation,
+default color choices, a missing logo/icon decision, or generic authenticated
+shell screens instead of domain-specific IA and visuals.
 
 If more UX-only work is needed, write `.codex/ux/ux-reviewer-report.md` with the
 required follow-up. If the UX is professional and validated, write the same file
