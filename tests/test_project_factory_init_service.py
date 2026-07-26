@@ -1027,6 +1027,13 @@ def test_init_service_bounds_large_automatic_ux_prompt_and_passes_it_by_file(
     )
     assert command_runner.ux_generator_calls == 1
     assert command_runner.ux_reviewer_calls == 1
+    ux_timeout_indexes = [
+        index
+        for index, command in enumerate(command_runner.commands)
+        if command and ".codex/factory/prompts/ux-" in command[-1]
+    ]
+    assert ux_timeout_indexes
+    assert all(command_runner.timeouts[index] == 1200.0 for index in ux_timeout_indexes)
     assert (
         completed.phase(ProjectFactoryInitPhaseName.UX_GENERATOR).status
         == ProjectFactoryInitPhaseStatus.COMPLETED
@@ -1099,6 +1106,7 @@ class _FakeInitCommandRunner:
         self.ux_generator_calls = 0
         self.ux_reviewer_calls = 0
         self.commands: list[tuple[str, ...]] = []
+        self.timeouts: list[float] = []
 
     def run(
         self,
@@ -1108,8 +1116,8 @@ class _FakeInitCommandRunner:
         env: dict[str, str] | None = None,
         timeout_seconds: float = 0,
     ):
-        del timeout_seconds
         self.commands.append(argv)
+        self.timeouts.append(timeout_seconds)
         cwd_path = Path(cwd or ".")
         prompt = argv[-1] if argv else ""
         if ".codex/factory/prompts/" in prompt:
