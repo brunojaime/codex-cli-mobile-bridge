@@ -78,6 +78,21 @@ def test_valid_manifest_includes_required_product_defaults(tmp_path: Path) -> No
         "tasks.md",
         "metadata.yaml",
     ]
+    assert manifest["project_management"]["enabled"] is True
+    assert manifest["project_management"]["standard"] == "project-charter/v1"
+    assert manifest["project_management"]["primary_document"] == (
+        "docs/project-management/acta/current/acta.md"
+    )
+    assert manifest["project_management"]["latest_render"] == (
+        "docs/project-management/acta/current/render.html"
+    )
+    assert manifest["project_management"]["latest_release"] is None
+    assert manifest["project_management"]["modules"]["charter"] == (
+        "docs/project-management/acta/README.md"
+    )
+    assert manifest["project_management"]["validation_policy"][
+        "block_on_pending_required_logo"
+    ] is True
 
 
 def test_creation_workflow_defaults_to_twenty_generator_and_twenty_reviewer_runs(

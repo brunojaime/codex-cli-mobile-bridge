@@ -7,6 +7,10 @@ from pathlib import Path
 from backend.app.application.services.sdd_llm_instruction_service import (
     SddLlmInstructionService,
 )
+from backend.app.application.services.project_document_discovery_service import (
+    ProjectDocumentDiscoveryError,
+    ProjectDocumentDiscoveryService,
+)
 from backend.app.application.services.sdd_context_pack_service import SddContextPack
 from backend.app.application.services.sdd_project_service import (
     SddDiagram,
@@ -135,6 +139,7 @@ class SddWorkbenchView:
     traceability_matrix: tuple[SddWorkbenchTraceabilityRow, ...]
     impact_queue: tuple[SddWorkbenchImpactQueueItem, ...]
     preview_readiness: dict[str, object]
+    documents: dict[str, object]
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -150,6 +155,7 @@ class SddWorkbenchView:
             "traceability_matrix": [asdict(item) for item in self.traceability_matrix],
             "impact_queue": [asdict(item) for item in self.impact_queue],
             "preview_readiness": self.preview_readiness,
+            "documents": self.documents,
         }
 
 
@@ -159,11 +165,13 @@ class SddWorkbenchViewService:
         *,
         validation_service: SddPreflightValidationService | None = None,
         llm_instruction_service: SddLlmInstructionService | None = None,
+        project_document_service: ProjectDocumentDiscoveryService | None = None,
     ) -> None:
         self._validation_service = validation_service or SddPreflightValidationService()
         self._llm_instruction_service = (
             llm_instruction_service or SddLlmInstructionService()
         )
+        self._project_document_service = project_document_service
 
     def build_view(
         self,
@@ -202,7 +210,45 @@ class SddWorkbenchViewService:
             traceability_matrix=_traceability_matrix(project, workspace),
             impact_queue=_impact_queue(project, workspace),
             preview_readiness=_preview_readiness(workspace),
+            documents=_documents(
+                workspace,
+                project_document_service=self._project_document_service,
+            ),
         )
+
+
+def _documents(
+    workspace: Path,
+    *,
+    project_document_service: ProjectDocumentDiscoveryService | None,
+) -> dict[str, object]:
+    if project_document_service is None:
+        return {
+            "available": False,
+            "status": "not_configured",
+            "modules": [],
+            "nextActions": ["Project document discovery service is not configured."],
+        }
+    try:
+        payload = project_document_service.workbench_documents_payload(workspace)
+    except ProjectDocumentDiscoveryError as exc:
+        return {
+            "available": False,
+            "status": "blocked",
+            "error": str(exc),
+            "modules": [],
+            "nextActions": ["Fix workspace document paths before using documents."],
+        }
+    return {
+        "available": True,
+        "status": "ready",
+        "root": payload.get("root"),
+        "standard": payload.get("standard"),
+        "workspacePath": payload.get("workspace_path"),
+        "evidence": payload.get("evidence") or {},
+        "modules": payload.get("modules") or [],
+        "charter": payload.get("charter") or {},
+    }
 
 
 def _preview_readiness(workspace: Path) -> dict[str, object]:

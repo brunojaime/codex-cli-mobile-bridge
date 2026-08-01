@@ -1,0 +1,121 @@
+{
+  "spec_id": "022-project-charter-documentation-framework",
+  "title": "Project Charter Documentation Framework",
+  "status": "completed",
+  "plans": [
+    {
+      "id": "plan-1",
+      "title": "Charter Contract And Data Model",
+      "status": "completed",
+      "tasks": [
+        {"id": "T001", "title": "Define project_management manifest schema.", "status": "completed"},
+        {"id": "T002", "title": "Define charter metadata schema.", "status": "completed"},
+        {"id": "T003", "title": "Define brand metadata schema.", "status": "completed"},
+        {"id": "T004", "title": "Define document state machine.", "status": "completed"},
+        {"id": "T005", "title": "Define versioning rules.", "status": "completed"},
+        {"id": "T006", "title": "Define validation result payload.", "status": "completed"},
+        {"id": "T007", "title": "Add Project Factory draft-to-charter traceability.", "status": "completed"}
+      ]
+    },
+    {
+      "id": "plan-2",
+      "title": "Deterministic Project Factory Baseline",
+      "status": "completed",
+      "tasks": [
+        {"id": "T008", "title": "Pass approved draft/contract data to deterministic init.", "status": "completed"},
+        {"id": "T009", "title": "Remove generic deterministic metadata fallback when approved data exists.", "status": "completed"},
+        {"id": "T010", "title": "Generate project-management index and routing docs.", "status": "completed"},
+        {"id": "T011", "title": "Generate charter current source, metadata, brand, changelog, and rules.", "status": "completed"},
+        {"id": "T012", "title": "Generate dormant WBS, roles, risks, and alternatives modules.", "status": "completed"},
+        {"id": "T013", "title": "Generate initial charter from New Project contract.", "status": "completed"},
+        {"id": "T014", "title": "Copy or reference logo/app icon assets and brand metadata.", "status": "completed"},
+        {"id": "T015", "title": "Update Project Factory generator tests.", "status": "completed"}
+      ]
+    },
+    {
+      "id": "plan-3",
+      "title": "Modular Context And Natural-Language Routing",
+      "status": "completed",
+      "tasks": [
+        {"id": "T016", "title": "Write module-specific instructions.", "status": "completed"},
+        {"id": "T017", "title": "Add charter glossary.", "status": "completed"},
+        {"id": "T018", "title": "Define natural-language intent categories.", "status": "completed"},
+        {"id": "T019", "title": "Add charter-impact prompt/context rules.", "status": "completed"},
+        {"id": "T020", "title": "Prevent silent delivery/versioning.", "status": "completed"},
+        {"id": "T021", "title": "Add charter-only context routing rules.", "status": "completed"},
+        {"id": "T022", "title": "Add natural-language routing tests.", "status": "completed"}
+      ]
+    },
+    {
+      "id": "plan-4",
+      "title": "Versioning, Changelog, Validation, And Release Snapshots",
+      "status": "completed",
+      "tasks": [
+        {"id": "T023", "title": "Implement charter validation.", "status": "completed"},
+        {"id": "T024", "title": "Implement brand/logo export gate.", "status": "completed"},
+        {"id": "T025", "title": "Implement draft edit behavior.", "status": "completed"},
+        {"id": "T026", "title": "Implement release snapshot creation.", "status": "completed"},
+        {"id": "T027", "title": "Enforce immutable delivered releases.", "status": "completed"},
+        {"id": "T028", "title": "Implement changelog requirement.", "status": "completed"},
+        {"id": "T029", "title": "Implement version bump recommendations.", "status": "completed"},
+        {"id": "T030", "title": "Add versioning and validation tests.", "status": "completed"}
+      ]
+    },
+    {
+      "id": "plan-5",
+      "title": "Rendering And Export Pipeline",
+      "status": "completed",
+      "tasks": [
+        {"id": "T031", "title": "Choose Markdown-to-HTML first rendering path.", "status": "completed"},
+        {"id": "T032", "title": "Add charter print stylesheet.", "status": "completed"},
+        {"id": "T033", "title": "Implement deterministic render manifest.", "status": "completed"},
+        {"id": "T034", "title": "Render latest charter to HTML.", "status": "completed"},
+        {"id": "T035", "title": "Add optional PDF export hook.", "status": "completed"},
+        {"id": "T036", "title": "Block stale or invalid export.", "status": "completed"},
+        {"id": "T037", "title": "Add render/export tests.", "status": "completed"}
+      ]
+    },
+    {
+      "id": "plan-6",
+      "title": "Backend Document APIs And Workbench Indexing",
+      "status": "completed",
+      "tasks": [
+        {"id": "T038", "title": "Add safe project document discovery service.", "status": "completed"},
+        {"id": "T039", "title": "Add project document list endpoint.", "status": "completed"},
+        {"id": "T040", "title": "Add latest charter endpoint.", "status": "completed"},
+        {"id": "T041", "title": "Add validate and render endpoints.", "status": "completed"},
+        {"id": "T042", "title": "Add release endpoint.", "status": "completed"},
+        {"id": "T043", "title": "Add release list/read endpoints.", "status": "completed"},
+        {"id": "T044", "title": "Expose documents in Workbench discovery.", "status": "completed"}
+      ]
+    },
+    {
+      "id": "plan-7",
+      "title": "Flutter/Workbench Viewer",
+      "status": "completed",
+      "tasks": [
+        {"id": "T045", "title": "Add mobile API client document models.", "status": "completed"},
+        {"id": "T046", "title": "Add Documents or Project Charter navigation entry.", "status": "completed"},
+        {"id": "T047", "title": "Build latest-charter view.", "status": "completed"},
+        {"id": "T048", "title": "Render PDF-like HTML preview inside Flutter.", "status": "completed"},
+        {"id": "T049", "title": "Add validation panel.", "status": "completed"},
+        {"id": "T050", "title": "Add natural-language change action.", "status": "completed"},
+        {"id": "T051", "title": "Add refresh render and release action.", "status": "completed"},
+        {"id": "T052", "title": "Add previous versions panel.", "status": "completed"}
+      ]
+    },
+    {
+      "id": "plan-8",
+      "title": "Validation, Migration, And Documentation",
+      "status": "completed",
+      "tasks": [
+        {"id": "T053", "title": "Add backend API tests.", "status": "completed"},
+        {"id": "T054", "title": "Add Flutter widget tests.", "status": "completed"},
+        {"id": "T055", "title": "Add Project Factory init baseline tests.", "status": "completed"},
+        {"id": "T056", "title": "Add migration/backfill guidance.", "status": "completed"},
+        {"id": "T057", "title": "Document operator workflow.", "status": "completed"},
+        {"id": "T058", "title": "Run focused regression validation.", "status": "completed"}
+      ]
+    }
+  ]
+}

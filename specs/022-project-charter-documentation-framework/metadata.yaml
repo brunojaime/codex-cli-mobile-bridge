@@ -1,0 +1,37 @@
+id: 022-project-charter-documentation-framework
+slug: 022-project-charter-documentation-framework
+title: Project Charter Documentation Framework
+description: Add Project Charter as a first-class New Project deliverable with deterministic baseline creation, modular documentation context, versioning, export validation, and Flutter/Workbench viewing.
+status: completed
+type: feature
+domains:
+  - project-factory
+  - project-management
+  - workbench
+  - sdd
+  - mobile
+  - document-rendering
+related_specs:
+  - 005-new-project-factory
+  - 011-new-project-guided-intake
+  - 017-new-project-deterministic-init-pipeline
+  - 019-domain-factory-mode
+  - 021-ux-agent-lane
+tasks:
+  total: 58
+  completed: 58
+  partial: 0
+  pending: 0
+generated:
+  title: false
+  description: false
+  user_pinned_title: true
+  user_pinned_description: true
+available_files:
+  - spec.md
+  - plan.md
+  - tasks.md
+  - traceability.yaml
+  - tree.json
+  - migration-backfill.md
+  - operator-workflow.md

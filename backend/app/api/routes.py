@@ -139,6 +139,15 @@ from backend.app.api.schemas import (
     ProjectFactoryJobResponse,
     ProjectFactoryJobsResponse,
     ProjectFactoryOptionsResponse,
+    ProjectDocumentCharterReleaseRequest,
+    ProjectDocumentCharterReleaseResponse,
+    ProjectDocumentCharterRenderRequest,
+    ProjectDocumentCharterRenderResponse,
+    ProjectDocumentCharterReleasesResponse,
+    ProjectDocumentCharterResponse,
+    ProjectDocumentCharterValidationRequest,
+    ProjectDocumentCharterValidationResponse,
+    ProjectDocumentsResponse,
     ProjectFactoryReferenceAssetDeleteResponse,
     ProjectFactoryReferenceAssetResponse,
     ProjectFactoryReferenceAssetsResponse,
@@ -204,6 +213,10 @@ from backend.app.application.services.project_factory_service import (
 )
 from backend.app.application.services.project_factory_reference_asset_service import (
     ProjectFactoryReferenceAssetError,
+)
+from backend.app.application.services.project_document_discovery_service import (
+    ProjectDocumentNotFoundError,
+    ProjectDocumentWorkspaceError,
 )
 from backend.app.application.services.web_preview_deploy_service import (
     WebPreviewDeployInput,
@@ -2381,6 +2394,178 @@ async def sync_web_preview_invite(
     except WebPreviewInviteError as exc:
         raise _web_preview_invite_http_error(exc) from exc
     return WebPreviewInviteResponse(**payload)
+
+
+@router.get("/project-documents", response_model=ProjectDocumentsResponse)
+async def list_project_documents(
+    workspace_path: str | None = Query(default=None),
+    workspace_path_alias: str | None = Query(default=None, alias="workspacePath"),
+    draft_id: str | None = Query(default=None),
+    draft_id_alias: str | None = Query(default=None, alias="draftId"),
+    job_id: str | None = Query(default=None),
+    job_id_alias: str | None = Query(default=None, alias="jobId"),
+    container: AppContainer = Depends(get_container),
+) -> ProjectDocumentsResponse:
+    try:
+        payload = await run_in_threadpool(
+            container.project_document_discovery_service.list_documents,
+            workspace_path=workspace_path or workspace_path_alias,
+            draft_id=draft_id or draft_id_alias,
+            job_id=job_id or job_id_alias,
+        )
+    except ProjectDocumentWorkspaceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ProjectDocumentsResponse(**payload)
+
+
+@router.get(
+    "/project-documents/charter",
+    response_model=ProjectDocumentCharterResponse,
+)
+async def get_project_document_charter(
+    workspace_path: str | None = Query(default=None),
+    workspace_path_alias: str | None = Query(default=None, alias="workspacePath"),
+    draft_id: str | None = Query(default=None),
+    draft_id_alias: str | None = Query(default=None, alias="draftId"),
+    job_id: str | None = Query(default=None),
+    job_id_alias: str | None = Query(default=None, alias="jobId"),
+    include_render_content: bool = Query(default=True),
+    container: AppContainer = Depends(get_container),
+) -> ProjectDocumentCharterResponse:
+    try:
+        payload = await run_in_threadpool(
+            container.project_document_discovery_service.charter_detail,
+            workspace_path=workspace_path or workspace_path_alias,
+            draft_id=draft_id or draft_id_alias,
+            job_id=job_id or job_id_alias,
+            include_render_content=include_render_content,
+        )
+    except ProjectDocumentWorkspaceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ProjectDocumentCharterResponse(**payload)
+
+
+@router.post(
+    "/project-documents/charter/validate",
+    response_model=ProjectDocumentCharterValidationResponse,
+)
+async def validate_project_document_charter(
+    request: ProjectDocumentCharterValidationRequest,
+    container: AppContainer = Depends(get_container),
+) -> ProjectDocumentCharterValidationResponse:
+    try:
+        payload = await run_in_threadpool(
+            container.project_document_discovery_service.validate_charter,
+            workspace_path=request.workspace_path,
+            draft_id=request.draft_id,
+            job_id=request.job_id,
+            client_export=request.client_export,
+        )
+    except ProjectDocumentWorkspaceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ProjectDocumentCharterValidationResponse(**payload)
+
+
+@router.post(
+    "/project-documents/charter/render",
+    response_model=ProjectDocumentCharterRenderResponse,
+)
+async def render_project_document_charter(
+    request: ProjectDocumentCharterRenderRequest,
+    container: AppContainer = Depends(get_container),
+) -> ProjectDocumentCharterRenderResponse:
+    try:
+        payload = await run_in_threadpool(
+            container.project_document_discovery_service.render_charter,
+            workspace_path=request.workspace_path,
+            draft_id=request.draft_id,
+            job_id=request.job_id,
+        )
+    except ProjectDocumentWorkspaceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ProjectDocumentCharterRenderResponse(**payload)
+
+
+@router.post(
+    "/project-documents/charter/release",
+    response_model=ProjectDocumentCharterReleaseResponse,
+)
+async def release_project_document_charter(
+    request: ProjectDocumentCharterReleaseRequest,
+    container: AppContainer = Depends(get_container),
+) -> ProjectDocumentCharterReleaseResponse:
+    try:
+        payload = await run_in_threadpool(
+            container.project_document_discovery_service.release_charter,
+            version=request.version,
+            workspace_path=request.workspace_path,
+            draft_id=request.draft_id,
+            job_id=request.job_id,
+            changed_fields=set(request.changed_fields),
+            changelog_entry=request.changelog_entry,
+            client_export=request.client_export,
+        )
+    except ProjectDocumentWorkspaceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not payload.get("ok"):
+        raise HTTPException(status_code=409, detail=payload)
+    return ProjectDocumentCharterReleaseResponse(**payload)
+
+
+@router.get(
+    "/project-documents/charter/releases",
+    response_model=ProjectDocumentCharterReleasesResponse,
+)
+async def list_project_document_charter_releases(
+    workspace_path: str | None = Query(default=None),
+    workspace_path_alias: str | None = Query(default=None, alias="workspacePath"),
+    draft_id: str | None = Query(default=None),
+    draft_id_alias: str | None = Query(default=None, alias="draftId"),
+    job_id: str | None = Query(default=None),
+    job_id_alias: str | None = Query(default=None, alias="jobId"),
+    container: AppContainer = Depends(get_container),
+) -> ProjectDocumentCharterReleasesResponse:
+    try:
+        payload = await run_in_threadpool(
+            container.project_document_discovery_service.list_charter_releases,
+            workspace_path=workspace_path or workspace_path_alias,
+            draft_id=draft_id or draft_id_alias,
+            job_id=job_id or job_id_alias,
+        )
+    except ProjectDocumentWorkspaceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ProjectDocumentCharterReleasesResponse(**payload)
+
+
+@router.get(
+    "/project-documents/charter/releases/{release_version}",
+    response_model=ProjectDocumentCharterReleaseResponse,
+)
+async def get_project_document_charter_release(
+    release_version: str,
+    workspace_path: str | None = Query(default=None),
+    workspace_path_alias: str | None = Query(default=None, alias="workspacePath"),
+    draft_id: str | None = Query(default=None),
+    draft_id_alias: str | None = Query(default=None, alias="draftId"),
+    job_id: str | None = Query(default=None),
+    job_id_alias: str | None = Query(default=None, alias="jobId"),
+    include_render_content: bool = Query(default=False),
+    container: AppContainer = Depends(get_container),
+) -> ProjectDocumentCharterReleaseResponse:
+    try:
+        payload = await run_in_threadpool(
+            container.project_document_discovery_service.read_charter_release,
+            release_version,
+            workspace_path=workspace_path or workspace_path_alias,
+            draft_id=draft_id or draft_id_alias,
+            job_id=job_id or job_id_alias,
+            include_render_content=include_render_content,
+        )
+    except ProjectDocumentWorkspaceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ProjectDocumentNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return ProjectDocumentCharterReleaseResponse(**payload)
 
 
 @router.get("/sdd/projects", response_model=SddProjectsResponse)

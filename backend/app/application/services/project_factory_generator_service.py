@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 import json
 import re
 import subprocess
@@ -11,12 +12,32 @@ from typing import Any
 from backend.app.application.services.asset_depot_service import (
     AssetDepotService,
 )
+from backend.app.application.services.project_charter_document_service import (
+    build_charter_render_manifest,
+    render_charter_markdown_to_html,
+)
 from backend.app.application.services.project_factory_manifest_service import (
     ProjectFactoryManifestPlan,
 )
 from backend.app.application.services.project_factory_reference_asset_service import (
     ProjectFactoryReferenceAsset,
     ProjectFactoryReferenceAssetService,
+)
+from backend.app.domain.entities.project_management import (
+    PROJECT_CHARTER_BRAND_PATH,
+    PROJECT_CHARTER_CHANGELOG_PATH,
+    PROJECT_CHARTER_METADATA_PATH,
+    PROJECT_CHARTER_RENDER_MANIFEST_PATH,
+    PROJECT_CHARTER_RENDER_PATH,
+    PROJECT_CHARTER_SOURCE_PATH,
+    PROJECT_MANAGEMENT_ROOT,
+    ProjectCharterBrandMetadata,
+    ProjectCharterDocumentState,
+    ProjectCharterLogoSource,
+    ProjectCharterLogoStatus,
+    ProjectCharterMetadata,
+    ProjectCharterValidationResult,
+    CharterFieldSource,
 )
 
 
@@ -382,6 +403,7 @@ def _project_files(manifest: dict[str, Any]) -> dict[str, str]:
             frontend_strategy,
         ),
     }
+    files.update(_project_management_files(manifest))
     files.update(_baseline_diagram_files(name, business_type, primary_goal, frontend_strategy))
     files.update(_initial_task_node_files(frontend_strategy))
     files.update(_backend_files(slug))
@@ -3477,6 +3499,12 @@ PY
 
 cd "$ROOT_DIR"
 if [[ "$FRONTEND_STRATEGY" == "flutter" ]]; then
+  if grep -RIn "withOpacity(" "$MOBILE_DIR/lib" >/tmp/project-factory-deprecated-flutter-api.txt 2>/dev/null; then
+    cat /tmp/project-factory-deprecated-flutter-api.txt >&2
+    echo "Flutter source uses deprecated Color.withOpacity; replace it with withValues(alpha: ...)" >&2
+    exit 1
+  fi
+
   APP_RELEASE_TAG=android-v0.1.0-build.1 \
   APP_RUNTIME_PROFILE=real \
   API_BASE_URL=https://api.validation.invalid \
@@ -4558,6 +4586,37 @@ fail_blocked() {{
   exit 2
 }}
 
+reject_deprecated_flutter_apis() {{
+  local report="/tmp/project-factory-deprecated-flutter-api.txt"
+  if grep -RIn "withOpacity(" apps/mobile/lib >"$report" 2>/dev/null; then
+    cat "$report" >&2
+    fail_blocked "Flutter source uses deprecated Color.withOpacity; replace it with withValues(alpha: ...) before publishing"
+  fi
+}}
+
+ensure_clean_tree_for_preview_tag() {{
+  local status
+  status="$(git status --porcelain)"
+  if [[ -z "$status" ]]; then
+    return 0
+  fi
+  if [[ "${{AUTO_COMMIT_DIRTY_PREVIEW_RELEASE:-true}}" != "true" ]]; then
+    git status --short >&2
+    fail_blocked "working tree must be clean before tagging the preview release"
+  fi
+  git status --short >&2
+  git add -A || fail_blocked "could not stage Project Factory output before Android preview release"
+  if [[ -z "$(git diff --cached --name-only)" ]]; then
+    return 0
+  fi
+  git \\
+    -c user.name="${{PROJECT_FACTORY_GIT_USER_NAME:-Codex Project Factory}}" \\
+    -c user.email="${{PROJECT_FACTORY_GIT_USER_EMAIL:-codex-project-factory@local}}" \\
+    commit -m "${{PROJECT_FACTORY_FINAL_COMMIT_MESSAGE:-Finalize Project Factory output before Android preview release}}" || \\
+    fail_blocked "could not commit Project Factory output before Android preview release"
+  git push origin "$branch" || fail_blocked "could not push Project Factory auto-commit before Android preview release"
+}}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --push)
@@ -4589,6 +4648,7 @@ bridge_env_require APP_RUNTIME_PROFILE API_RUNTIME API_BASE_URL
 [[ "$APP_RUNTIME_PROFILE" == "preview" ]] || fail_blocked "APP_RUNTIME_PROFILE must be preview"
 [[ "$API_RUNTIME" == "cloudflare_preview" ]] || fail_blocked "API_RUNTIME must be cloudflare_preview"
 [[ "${{API_BASE_URL%/}}" == "$PREVIEW_API_BASE_URL" ]] || fail_blocked "API_BASE_URL must match preview API"
+reject_deprecated_flutter_apis
 bridge_env_load_preview_signing || fail_blocked "stable Android preview signing is required"
 cp "$ANDROID_KEYSTORE_PATH" apps/mobile/android/upload-keystore.jks
 cat > apps/mobile/android/key.properties <<EOF
@@ -4603,10 +4663,6 @@ scripts/smoke_preview_api.sh
 
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail_blocked "not inside a git repository"
 git rev-parse --verify HEAD >/dev/null 2>&1 || fail_blocked "no git commit exists"
-if [[ -n "$(git status --porcelain)" ]]; then
-  git status --short >&2
-  fail_blocked "working tree must be clean before tagging the preview release"
-fi
 
 origin_url="$(git remote get-url origin 2>/dev/null || true)"
 [[ -n "$origin_url" ]] || fail_blocked "origin remote is not configured"
@@ -4630,6 +4686,7 @@ branch="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
 [[ -n "$branch" ]] || fail_blocked "HEAD is detached; release from a named branch"
 upstream="$(git rev-parse --abbrev-ref --symbolic-full-name '@{{u}}' 2>/dev/null || true)"
 [[ -n "$upstream" ]] || fail_blocked "current branch has no upstream"
+ensure_clean_tree_for_preview_tag
 local_head="$(git rev-parse HEAD)"
 remote_head="$(git rev-parse "$upstream" 2>/dev/null || true)"
 [[ "$local_head" == "$remote_head" ]] || fail_blocked "local HEAD is not pushed to $upstream"
@@ -5217,7 +5274,8 @@ SOURCE_APP="${{SOURCE_APP:-{slug}}}"
 PREVIEW_API_BASE_URL="${{PREVIEW_API_BASE_URL:-${{API_BASE_URL:-https://preview.nienfos.com/$SOURCE_APP/api}}}}"
 PREVIEW_API_BASE_URL="${{PREVIEW_API_BASE_URL%/}}"
 
-bridge_env_require APP_RUNTIME_PROFILE API_RUNTIME API_BASE_URL BRIDGE_URL PREVIEW_ADMIN_PASSWORD
+bridge_env_require APP_RUNTIME_PROFILE API_RUNTIME API_BASE_URL PREVIEW_ADMIN_PASSWORD
+bridge_env_require_any "Bridge URL" BRIDGE_PUBLIC_URL BRIDGE_URL
 bridge_env_require_any "preview D1 database" PREVIEW_D1_DATABASE CLOUDFLARE_D1_DATABASE
 if [[ "$FRONTEND_STRATEGY" == "flutter" ]]; then
   bridge_env_require INSTALLABLE_APPS_REGISTRATION_TOKEN APP_RELEASE_TAG APP_ANDROID_PREVIEW_RELEASE_TAG
@@ -5231,9 +5289,21 @@ fi
   fail "Preview API must be https://preview.nienfos.com/$SOURCE_APP/api"
 [[ "${{API_BASE_URL%/}}" == "$PREVIEW_API_BASE_URL" ]] || fail "API_BASE_URL must match Preview API"
 
+ensure_backend_validation_env() {{
+  cd "$ROOT_DIR/backend"
+  local validation_venv="${{BACKEND_VALIDATION_VENV:-$ROOT_DIR/backend/.venv}}"
+  if [[ ! -x "$validation_venv/bin/python" ]]; then
+    python3 -m venv "$validation_venv"
+  fi
+  # shellcheck disable=SC1091
+  . "$validation_venv/bin/activate"
+  python -m pip install -e ".[dev]" >/dev/null
+}}
+
 run_backend_tests() {{
   cd "$ROOT_DIR/backend"
-  python3 -m pytest tests -q
+  ensure_backend_validation_env
+  python -m pytest tests -q
 }}
 
 run_flutter_analyze() {{
@@ -5286,6 +5356,14 @@ run_apksigner_verify() {{
   if [[ -z "$apksigner_bin" && -n "${{ANDROID_HOME:-}}" ]]; then
     apksigner_bin="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f 2>/dev/null | sort -V | tail -n 1)"
   fi
+  if [[ -z "$apksigner_bin" ]]; then
+    local sdk_root
+    for sdk_root in "${{ANDROID_SDK_ROOT:-}}" "$HOME/Android/Sdk" "$HOME/.local/share/android-sdk" "/opt/android-sdk"; do
+      [[ -n "$sdk_root" && -d "$sdk_root/build-tools" ]] || continue
+      apksigner_bin="$(find "$sdk_root/build-tools" -name apksigner -type f 2>/dev/null | sort -V | tail -n 1)"
+      [[ -n "$apksigner_bin" ]] && break
+    done
+  fi
   [[ -n "$apksigner_bin" ]] || {{
     printf 'apksigner is required\\n' >&2
     return 2
@@ -5305,7 +5383,8 @@ run_apksigner_verify() {{
 }}
 
 run_invite_e2e() {{
-  python3 - "$BRIDGE_URL" "$SOURCE_APP" "$PREVIEW_ADMIN_PASSWORD" <<'PY'
+  local bridge_validation_url="${{BRIDGE_URL:-${{BRIDGE_PUBLIC_URL:-}}}}"
+  python3 - "$bridge_validation_url" "$SOURCE_APP" "$PREVIEW_ADMIN_PASSWORD" <<'PY'
 from __future__ import annotations
 
 import json
@@ -5419,6 +5498,10 @@ fi
 
 if [[ "$FRONTEND_STRATEGY" == "flutter" ]]; then
   [[ -f "$ROOT_DIR/apps/mobile/lib/src/screens.dart" ]] || fail "Flutter screens.dart missing"
+  ! grep -RIn "withOpacity(" "$ROOT_DIR/apps/mobile/lib" >/tmp/project-factory-deprecated-flutter-api.txt 2>/dev/null || {{
+    cat /tmp/project-factory-deprecated-flutter-api.txt >&2
+    fail "Flutter source uses deprecated Color.withOpacity; replace it with withValues(alpha: ...)"
+  }}
   ! grep -q "label: 'Workbench'" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "generated product app must not expose a Workbench navigation tab"
   ! grep -q "NavigationDestination" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "deterministic Flutter baseline must not impose product navigation destinations"
   ! grep -q "HomeScreen" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "deterministic Flutter baseline must not impose scaffold-owned product screens"
@@ -5855,6 +5938,10 @@ if [[ "$TAG" == android-preview-v* || "$TAG" == android-v* ]]; then
       "$ROOT_DIR/apps/mobile/lib" "$ROOT_DIR/backend/app" >/tmp/project-factory-release-profile-grep.txt 2>/dev/null; then
     cat /tmp/project-factory-release-profile-grep.txt >&2
     fail "productive source defaults to mock/local runtime"
+  fi
+  if grep -RIn "withOpacity(" "$ROOT_DIR/apps/mobile/lib" >/tmp/project-factory-deprecated-flutter-api.txt 2>/dev/null; then
+    cat /tmp/project-factory-deprecated-flutter-api.txt >&2
+    fail "Flutter source uses deprecated Color.withOpacity; replace it with withValues(alpha: ...)"
   fi
 fi
 
@@ -11688,6 +11775,490 @@ Generation must fail if the UI remains generic while visual references exist.
         ]
     )
     return "\n".join(lines)
+
+
+def _project_management_files(manifest: dict[str, Any]) -> dict[str, str]:
+    seed = _charter_seed(manifest)
+    acta = _initial_charter_markdown(seed)
+    rendered = render_charter_markdown_to_html(acta)
+    metadata = _charter_metadata(seed, rendered.source_hash, rendered.render_hash)
+    brand = _charter_brand_metadata(manifest)
+    render_manifest = build_charter_render_manifest(
+        source_hash=rendered.source_hash,
+        render_hash=rendered.render_hash,
+        generated_at=_now_iso(),
+        validation=_empty_charter_validation_result(),
+    )
+    return {
+        f"{PROJECT_MANAGEMENT_ROOT}/index.md": _project_management_index(),
+        f"{PROJECT_MANAGEMENT_ROOT}/glossary.md": _project_management_glossary(),
+        f"{PROJECT_MANAGEMENT_ROOT}/versioning.md": _project_management_versioning(),
+        f"{PROJECT_MANAGEMENT_ROOT}/context-routing.md": (
+            _project_management_context_routing()
+        ),
+        "docs/project-management/acta/README.md": _charter_readme(),
+        PROJECT_CHARTER_SOURCE_PATH: acta,
+        PROJECT_CHARTER_METADATA_PATH: _to_yaml(metadata.to_metadata_payload()),
+        PROJECT_CHARTER_BRAND_PATH: _to_yaml(brand.to_metadata_payload()),
+        PROJECT_CHARTER_RENDER_PATH: rendered.html,
+        PROJECT_CHARTER_RENDER_MANIFEST_PATH: (
+            json.dumps(render_manifest, indent=2, sort_keys=True) + "\n"
+        ),
+        PROJECT_CHARTER_CHANGELOG_PATH: _charter_changelog(),
+        "docs/project-management/acta/validation-rules.md": (
+            _charter_validation_rules()
+        ),
+        "docs/project-management/acta/export-rules.md": _charter_export_rules(),
+        "docs/project-management/acta/releases/.gitkeep": "",
+        "docs/project-management/wbs/README.md": _module_readme(
+            "WBS / EDT",
+            "Use this module only when the user asks to plan project work breakdown.",
+        ),
+        "docs/project-management/wbs/wbs.md": "# WBS / EDT\n\nNo WBS has been drafted yet.\n",
+        "docs/project-management/wbs/wbs.puml": "@startwbs\n* Project\n@endwbs\n",
+        "docs/project-management/roles/README.md": _module_readme(
+            "Roles And Responsibilities",
+            "Use this module only when the user asks for roles, responsibilities, skills, or competencies.",
+        ),
+        "docs/project-management/roles/roles-responsibilities.md": (
+            "# Roles And Responsibilities\n\nNo roles matrix has been drafted yet.\n"
+        ),
+        "docs/project-management/roles/skills-competencies.md": (
+            "# Skills And Competencies\n\nNo skills matrix has been drafted yet.\n"
+        ),
+        "docs/project-management/risks/README.md": _module_readme(
+            "Risks",
+            "Use this module only when the user asks to identify, evaluate, or track project risks.",
+        ),
+        "docs/project-management/risks/risks.md": "# Risks\n\nNo risks have been drafted yet.\n",
+        "docs/project-management/alternatives/README.md": _module_readme(
+            "Alternative Matrices",
+            "Use this module only when the user asks to compare options or build a decision matrix.",
+        ),
+        "docs/project-management/alternatives/decision-matrix-template.md": (
+            "# Decision Matrix Template\n\n"
+            "| Option | Criteria | Score | Notes |\n"
+            "| --- | --- | --- | --- |\n"
+        ),
+        "assets/brand/.gitkeep": "",
+    }
+
+
+def _empty_charter_validation_result() -> ProjectCharterValidationResult:
+    return ProjectCharterValidationResult(issues=(), generated_at=_now_iso())
+
+
+def _now_iso() -> str:
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _charter_seed(manifest: dict[str, Any]) -> dict[str, object]:
+    project_management = manifest.get("project_management")
+    seed = (
+        dict(project_management.get("charter_seed"))
+        if isinstance(project_management, dict)
+        and isinstance(project_management.get("charter_seed"), dict)
+        else {}
+    )
+    decisions = (
+        dict(seed.get("decisions"))
+        if isinstance(seed.get("decisions"), dict)
+        else {}
+    )
+    return {
+        "project_name": str(
+            seed.get("project_name")
+            or decisions.get("name")
+            or manifest.get("name")
+            or ""
+        ),
+        "client": _optional_seed_text(
+            seed,
+            decisions,
+            "client",
+            "clientName",
+            "organization",
+        ),
+        "business_type": str(
+            seed.get("business_type")
+            or decisions.get("businessType")
+            or manifest.get("business_type")
+            or ""
+        ),
+        "project_objective": str(
+            seed.get("project_objective")
+            or decisions.get("projectObjective")
+            or decisions.get("primaryGoal")
+            or manifest.get("primary_goal")
+            or ""
+        ),
+        "product_objective": _optional_seed_text(
+            seed,
+            decisions,
+            "product_objective",
+            "productObjective",
+        ),
+        "benefits": _seed_list(seed.get("benefits") or decisions.get("benefits")),
+        "scope": _seed_list(seed.get("scope") or decisions.get("scope")),
+        "pending_definitions": _seed_list(seed.get("pending_definitions")),
+        "source": str(seed.get("source") or "project_factory_manifest"),
+    }
+
+
+def _optional_seed_text(
+    seed: dict[str, object],
+    decisions: dict[str, object],
+    *keys: str,
+) -> str | None:
+    for key in keys:
+        value = seed.get(key)
+        if value is None:
+            value = decisions.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _seed_list(value: object) -> list[str]:
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    if isinstance(value, list | tuple):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return []
+
+
+def _initial_charter_markdown(seed: dict[str, object]) -> str:
+    project_name = str(seed["project_name"])
+    client = str(seed["client"] or "Pendiente de definicion")
+    project_objective = str(seed["project_objective"])
+    product_objective = str(
+        seed["product_objective"] or "Pendiente de definicion"
+    )
+    benefits = list(seed["benefits"]) if isinstance(seed["benefits"], list) else []
+    scope = list(seed["scope"]) if isinstance(seed["scope"], list) else []
+    pending = _pending_definitions(seed)
+    return f"""# Acta de Proyecto
+
+## Portada
+
+- Proyecto: {project_name}
+- Cliente u organizacion: {client}
+- Documento: Acta de Proyecto
+- Version de trabajo: v0.1
+- Version entregada: sin entrega inicial
+- Estado: draft
+- Responsable: Codex Project Factory
+- Logo: ver `brand.yaml`
+
+## Historial de revisiones
+
+| Fecha | Version | Estado | Descripcion | Autor | Entregada |
+| --- | --- | --- | --- | --- | --- |
+| Sin fecha de entrega | v0.1 | draft | Primera version de trabajo generada desde Project Factory. | Codex Project Factory | No |
+
+## Indice
+
+1. Resumen ejecutivo
+2. Objetivo del proyecto
+3. Objetivo del producto
+4. Beneficios esperados
+5. Alcance preliminar
+6. Definiciones pendientes
+
+## Resumen ejecutivo
+
+Este documento inicia el marco formal del proyecto {project_name}. La informacion disponible proviene del contrato inicial de Project Factory y se mantendra como version de trabajo hasta que el usuario solicite una entrega al cliente.
+
+## Objetivo del proyecto
+
+{project_objective}
+
+## Objetivo del producto
+
+{product_objective}
+
+## Beneficios esperados
+
+{_markdown_list_or_pending(benefits)}
+
+## Alcance preliminar
+
+{_markdown_list_or_pending(scope)}
+
+## Definiciones pendientes
+
+{_markdown_list(pending)}
+"""
+
+
+def _pending_definitions(seed: dict[str, object]) -> list[str]:
+    pending = list(seed["pending_definitions"]) if isinstance(seed["pending_definitions"], list) else []
+    if not seed["client"]:
+        pending.append("Confirmar cliente u organizacion destinataria del acta.")
+    if not seed["product_objective"]:
+        pending.append("Definir el objetivo del producto.")
+    if not seed["benefits"]:
+        pending.append("Definir beneficios esperados para el cliente o negocio.")
+    if not seed["scope"]:
+        pending.append("Definir alcance preliminar incluido y no incluido.")
+    return list(dict.fromkeys(pending))
+
+
+def _markdown_list_or_pending(items: list[str]) -> str:
+    if items:
+        return _markdown_list(items)
+    return "- Pendiente de definicion."
+
+
+def _markdown_list(items: list[str]) -> str:
+    return "\n".join(f"- {item}" for item in items)
+
+
+def _charter_metadata(
+    seed: dict[str, object],
+    source_hash: str,
+    render_hash: str | None,
+) -> ProjectCharterMetadata:
+    return ProjectCharterMetadata(
+        title="Acta de Proyecto",
+        project_name=str(seed["project_name"]),
+        client=seed["client"] if isinstance(seed["client"], str) else None,
+        author="Codex Project Factory",
+        status=ProjectCharterDocumentState.DRAFT,
+        draft_version="v0.1",
+        delivered_version=None,
+        source_hash=source_hash,
+        render_hash=render_hash,
+        created_at=None,
+        updated_at=None,
+        field_sources={
+            "project_objective": CharterFieldSource(
+                source=str(seed["source"]),
+                confidence=1.0,
+                notes="Mapped from the Project Factory primary goal.",
+            ),
+            "product_objective": CharterFieldSource(
+                source=str(seed["source"]) if seed["product_objective"] else "pending_definition",
+                confidence=1.0 if seed["product_objective"] else 0.0,
+            ),
+            "expected_benefits": CharterFieldSource(
+                source=str(seed["source"]) if seed["benefits"] else "pending_definition",
+                confidence=1.0 if seed["benefits"] else 0.0,
+            ),
+            "preliminary_scope": CharterFieldSource(
+                source=str(seed["source"]) if seed["scope"] else "pending_definition",
+                confidence=1.0 if seed["scope"] else 0.0,
+            ),
+        },
+    )
+
+
+def _charter_brand_metadata(manifest: dict[str, Any]) -> ProjectCharterBrandMetadata:
+    logo_mode = str(
+        manifest.get("visual_references", {}).get("logo_mode")
+        if isinstance(manifest.get("visual_references"), dict)
+        else "generate"
+    )
+    project_assets = manifest.get("asset_depot", {}).get("project_assets", [])
+    brand_asset = _brand_asset_for_role(project_assets, "logo")
+    if brand_asset is not None:
+        return ProjectCharterBrandMetadata(
+            logo_status=ProjectCharterLogoStatus.PROVIDED,
+            logo_source=ProjectCharterLogoSource.USER_UPLOAD,
+            logo_path=_brand_asset_destination(brand_asset, "logo"),
+            notes="Logo asset linked during Project Factory intake.",
+        )
+    brand_asset = _brand_asset_for_role(project_assets, "app_icon")
+    if brand_asset is not None:
+        return ProjectCharterBrandMetadata(
+            logo_status=ProjectCharterLogoStatus.PROVIDED,
+            logo_source=ProjectCharterLogoSource.USER_UPLOAD,
+            logo_path=_brand_asset_destination(brand_asset, "app_icon"),
+            notes="App icon asset linked during Project Factory intake; confirm whether it should also be used as the document logo.",
+        )
+    if logo_mode == "generate":
+        return ProjectCharterBrandMetadata(
+            logo_status=ProjectCharterLogoStatus.GENERATED,
+            logo_source=ProjectCharterLogoSource.GENERATED,
+            logo_path=None,
+            notes="Project Factory was asked to generate brand material; no logo file is attached to the initial charter yet.",
+        )
+    return ProjectCharterBrandMetadata(
+        logo_status=ProjectCharterLogoStatus.PENDING,
+        logo_source=ProjectCharterLogoSource.NONE,
+        logo_path=None,
+        notes=f"Logo mode `{logo_mode}` requires a later logo decision before client export.",
+    )
+
+
+def _brand_asset_for_role(project_assets: object, role: str) -> dict[str, object] | None:
+    if not isinstance(project_assets, list):
+        return None
+    for item in project_assets:
+        if isinstance(item, dict) and item.get("role") == role:
+            return item
+    return None
+
+
+def _brand_asset_destination(asset: dict[str, object], role: str) -> str:
+    suffix = Path(str(asset.get("original_filename") or "")).suffix.lower() or ".bin"
+    if role == "logo":
+        return f"assets/brand/logo{suffix}"
+    return f"assets/brand/app_icon_source{suffix}"
+
+
+def _project_management_index() -> str:
+    return """# Project Management Documents
+
+This folder contains client-facing and internal project-management documents.
+
+## Modules
+
+- `acta/`: Project Charter and client delivery versioning.
+- `wbs/`: Work Breakdown Structure / EDT.
+- `roles/`: Roles, responsibilities, skills, and competencies.
+- `risks/`: Risk management.
+- `alternatives/`: Decision and alternative matrices.
+
+Agents should load only the module requested by the user.
+"""
+
+
+def _project_management_glossary() -> str:
+    return """# Glossary
+
+- Project objective: the temporary work the project will execute.
+- Product objective: the durable product capability expected after delivery.
+- Benefits: measurable or qualitative value expected from the project.
+- Preliminary scope: work currently understood as included or excluded.
+- Pending definitions: explicit unknowns that must not be invented.
+- Revision history: the table that records draft and delivered document changes.
+- Draft version: internal working version.
+- Delivered version: immutable client-facing snapshot.
+- Client export: a user-approved deliverable prepared for the client.
+"""
+
+
+def _project_management_versioning() -> str:
+    return """# Versioning
+
+- `v0.x` is internal draft work.
+- `v1.0` is the first client-delivered version.
+- `v1.x` is a minor delivered update.
+- `v2.0` is a structural delivered update.
+- Draft edits do not change the latest delivered version.
+- A delivered version must be snapshotted under `acta/releases/vX.Y/`.
+- Delivered snapshots are immutable.
+"""
+
+
+def _project_management_context_routing() -> str:
+    return """# Context Routing
+
+This file is the deterministic routing contract for project-management documents.
+Agents must load only the context required by the user's request.
+
+For charter-only work, read:
+
+- `docs/project-management/index.md`
+- `docs/project-management/acta/README.md`
+- `docs/project-management/acta/current/acta.md`
+- `docs/project-management/acta/current/metadata.yaml`
+- `docs/project-management/acta/validation-rules.md`
+
+Do not read WBS, roles, risks, or alternatives unless the user asks for that module.
+
+## Intent Categories
+
+- charter_identity: project name, client, logo decision, cover metadata.
+- executive_summary: resumen ejecutivo.
+- project_objective: objetivo del proyecto.
+- product_objective: objetivo del producto.
+- benefits: beneficios esperados.
+- scope: alcance preliminar.
+- pending_definitions: definiciones pendientes.
+- versioning: delivered version, revision history, changelog, release snapshot.
+- render_export: preview/render/PDF/client export.
+- wbs: WBS / EDT.
+- roles: roles, responsibilities, skills, competencies.
+- risks: risks.
+- alternatives: decision and alternative matrices.
+
+## Module Context
+
+- WBS requests read only `index.md`, `wbs/README.md`, `wbs/wbs.md`, and `wbs/wbs.puml`.
+- Roles requests read only `index.md`, `roles/README.md`, `roles/roles-responsibilities.md`, and `roles/skills-competencies.md`.
+- Risk requests read only `index.md`, `risks/README.md`, and `risks/risks.md`.
+- Alternatives requests read only `index.md`, `alternatives/README.md`, and `alternatives/decision-matrix-template.md`.
+
+## Delivery Guardrail
+
+Never deliver, export, release, snapshot, or bump a client-visible version unless the user explicitly asks with words such as entregar, exportar, versionar, release, PDF, enviar al cliente, or preparar version para cliente.
+"""
+
+
+def _charter_readme() -> str:
+    return """# Project Charter / Acta
+
+The acta is the first client-facing project document. It explains why the project exists, what product outcome is expected, expected benefits, preliminary scope, and pending definitions.
+
+Markdown is the source of truth. Rendered HTML/PDF artifacts are generated from the current source and must not be edited directly.
+
+## Read This Module When
+
+- The user mentions acta, project charter, document, cover, client, logo, objectives, benefits, scope, pending definitions, revision history, render, export, or client delivery.
+- The user asks for content that clearly belongs in the client-facing project document.
+
+## Do Not Read This Module When
+
+- The user asks only for WBS, roles, risks, or alternatives and does not ask to update the acta.
+
+## Delivery Guardrail
+
+Editing the draft acta is allowed from natural language. Delivering, exporting, releasing, or bumping the client-visible version requires explicit user intent.
+"""
+
+
+def _charter_changelog() -> str:
+    return """# Charter Changelog
+
+No client-delivered version has been created yet.
+"""
+
+
+def _charter_validation_rules() -> str:
+    return """# Charter Validation Rules
+
+Client export must be blocked when required identity, objective, benefits, logo decision, revision history, changelog, or render freshness checks fail.
+
+Unknown information must remain under pending definitions until the user provides it.
+"""
+
+
+def _charter_export_rules() -> str:
+    return """# Charter Export Rules
+
+Export requires explicit user intent. Draft edits do not deliver a client version. Delivered versions are immutable and must be stored under `acta/releases/vX.Y/`.
+"""
+
+
+def _module_readme(title: str, routing_rule: str) -> str:
+    return f"""# {title}
+
+{routing_rule}
+
+Keep this module dormant until requested. Do not load it for charter-only updates.
+
+## Read This Module When
+
+- The user explicitly asks for this module or its core artifact.
+- The acta explicitly says this module must be expanded next and the user confirms that work.
+
+## Do Not Read This Module When
+
+- The user is only editing charter identity, objectives, benefits, scope, pending definitions, rendering, or versioning.
+- Another module such as alternatives, risks, roles, or WBS is requested instead.
+"""
 
 
 def _gitignore() -> str:

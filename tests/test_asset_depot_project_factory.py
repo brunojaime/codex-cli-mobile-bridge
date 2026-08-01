@@ -163,6 +163,12 @@ def test_project_factory_promotes_asset_roles_and_preserves_bytes(
     assert "logo_only_also_sets_app_icon_source: true" in visual_contract
     assert "app_icon_only_also_sets_logo: true" in visual_contract
     assert "preserve_source_bytes: true" in visual_contract
+    brand = (project / "docs/project-management/acta/current/brand.yaml").read_text(
+        encoding="utf-8"
+    )
+    assert "logo_status: provided" in brand
+    assert "logo_source: user_upload" in brand
+    assert "logo_path: assets/brand/logo.png" in brand
     pubspec = (project / "apps/mobile/pubspec.yaml").read_text(encoding="utf-8")
     assert "assets/brand/" in pubspec
 

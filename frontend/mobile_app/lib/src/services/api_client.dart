@@ -13,6 +13,7 @@ import '../models/dev_pipeline_handoff.dart';
 import '../models/domain_factory.dart';
 import '../models/feedback_queue_item.dart';
 import '../models/installable_app.dart';
+import '../models/project_documents.dart';
 import '../models/project_factory.dart';
 import '../models/prod_update_status.dart';
 import '../models/server_capabilities.dart';
@@ -463,6 +464,197 @@ class ApiClient {
     }
 
     return ProjectFactoryInitJob.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<ProjectDocuments> listProjectDocuments({
+    String? workspacePath,
+    String? draftId,
+    String? jobId,
+  }) async {
+    final response = await _client.get(
+      _projectDocumentsUri(
+        '/project-documents',
+        workspacePath: workspacePath,
+        draftId: draftId,
+        jobId: jobId,
+      ),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to list project documents: ${response.body}');
+    }
+
+    return ProjectDocuments.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<ProjectDocumentCharterDetail> getProjectDocumentCharter({
+    String? workspacePath,
+    String? draftId,
+    String? jobId,
+    bool includeRenderContent = true,
+  }) async {
+    final response = await _client.get(
+      _projectDocumentsUri(
+        '/project-documents/charter',
+        workspacePath: workspacePath,
+        draftId: draftId,
+        jobId: jobId,
+        extraQuery: <String, String>{
+          'include_render_content': '$includeRenderContent',
+        },
+      ),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to fetch project charter: ${response.body}');
+    }
+
+    return ProjectDocumentCharterDetail.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<ProjectDocumentCharterValidationResponse>
+      validateProjectDocumentCharter({
+    String? workspacePath,
+    String? draftId,
+    String? jobId,
+    bool clientExport = true,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/project-documents/charter/validate'),
+      headers: <String, String>{'Content-Type': 'application/json'},
+      body: jsonEncode(_projectDocumentsRequestBody(
+        workspacePath: workspacePath,
+        draftId: draftId,
+        jobId: jobId,
+        extra: <String, dynamic>{'clientExport': clientExport},
+      )),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to validate project charter: ${response.body}');
+    }
+
+    return ProjectDocumentCharterValidationResponse.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<ProjectDocumentCharterRenderResponse> renderProjectDocumentCharter({
+    String? workspacePath,
+    String? draftId,
+    String? jobId,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/project-documents/charter/render'),
+      headers: <String, String>{'Content-Type': 'application/json'},
+      body: jsonEncode(_projectDocumentsRequestBody(
+        workspacePath: workspacePath,
+        draftId: draftId,
+        jobId: jobId,
+      )),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to render project charter: ${response.body}');
+    }
+
+    return ProjectDocumentCharterRenderResponse.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<ProjectDocumentCharterReleaseResponse> releaseProjectDocumentCharter({
+    required String version,
+    String? workspacePath,
+    String? draftId,
+    String? jobId,
+    List<String> changedFields = const <String>[],
+    String? changelogEntry,
+    bool clientExport = true,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/project-documents/charter/release'),
+      headers: <String, String>{'Content-Type': 'application/json'},
+      body: jsonEncode(_projectDocumentsRequestBody(
+        workspacePath: workspacePath,
+        draftId: draftId,
+        jobId: jobId,
+        extra: <String, dynamic>{
+          'version': version,
+          'changedFields': changedFields,
+          if (changelogEntry != null && changelogEntry.trim().isNotEmpty)
+            'changelogEntry': changelogEntry.trim(),
+          'clientExport': clientExport,
+        },
+      )),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('Failed to release project charter: ${response.body}');
+    }
+
+    return ProjectDocumentCharterReleaseResponse.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<ProjectDocumentCharterReleasesResponse>
+      listProjectDocumentCharterReleases({
+    String? workspacePath,
+    String? draftId,
+    String? jobId,
+  }) async {
+    final response = await _client.get(
+      _projectDocumentsUri(
+        '/project-documents/charter/releases',
+        workspacePath: workspacePath,
+        draftId: draftId,
+        jobId: jobId,
+      ),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception(
+          'Failed to list project charter releases: ${response.body}');
+    }
+
+    return ProjectDocumentCharterReleasesResponse.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<ProjectDocumentCharterReleaseResponse>
+      getProjectDocumentCharterRelease({
+    required String version,
+    String? workspacePath,
+    String? draftId,
+    String? jobId,
+    bool includeRenderContent = false,
+  }) async {
+    final response = await _client.get(
+      _projectDocumentsUri(
+        '/project-documents/charter/releases/$version',
+        workspacePath: workspacePath,
+        draftId: draftId,
+        jobId: jobId,
+        extraQuery: <String, String>{
+          'include_render_content': '$includeRenderContent',
+        },
+      ),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception(
+          'Failed to fetch project charter release: ${response.body}');
+    }
+
+    return ProjectDocumentCharterReleaseResponse.fromJson(
       jsonDecode(response.body) as Map<String, dynamic>,
     );
   }
@@ -1742,6 +1934,53 @@ class ApiClient {
     return SessionDetail.fromJson(
       jsonDecode(response.body) as Map<String, dynamic>,
     );
+  }
+
+  Uri _projectDocumentsUri(
+    String path, {
+    String? workspacePath,
+    String? draftId,
+    String? jobId,
+    Map<String, String> extraQuery = const <String, String>{},
+  }) {
+    final query = <String, String>{};
+    final trimmedWorkspace = workspacePath?.trim();
+    final trimmedDraftId = draftId?.trim();
+    final trimmedJobId = jobId?.trim();
+    if (trimmedWorkspace != null && trimmedWorkspace.isNotEmpty) {
+      query['workspacePath'] = trimmedWorkspace;
+    }
+    if (trimmedDraftId != null && trimmedDraftId.isNotEmpty) {
+      query['draftId'] = trimmedDraftId;
+    }
+    if (trimmedJobId != null && trimmedJobId.isNotEmpty) {
+      query['jobId'] = trimmedJobId;
+    }
+    query.addAll(extraQuery);
+    return Uri.parse('$baseUrl$path').replace(queryParameters: query);
+  }
+
+  Map<String, dynamic> _projectDocumentsRequestBody({
+    String? workspacePath,
+    String? draftId,
+    String? jobId,
+    Map<String, dynamic> extra = const <String, dynamic>{},
+  }) {
+    final body = <String, dynamic>{};
+    final trimmedWorkspace = workspacePath?.trim();
+    final trimmedDraftId = draftId?.trim();
+    final trimmedJobId = jobId?.trim();
+    if (trimmedWorkspace != null && trimmedWorkspace.isNotEmpty) {
+      body['workspacePath'] = trimmedWorkspace;
+    }
+    if (trimmedDraftId != null && trimmedDraftId.isNotEmpty) {
+      body['draftId'] = trimmedDraftId;
+    }
+    if (trimmedJobId != null && trimmedJobId.isNotEmpty) {
+      body['jobId'] = trimmedJobId;
+    }
+    body.addAll(extra);
+    return body;
   }
 
   Future<http.MultipartFile> _multipartFileFromXFile(

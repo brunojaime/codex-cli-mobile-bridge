@@ -1,0 +1,67 @@
+spec_id: 022-project-charter-documentation-framework
+title: Project Charter Documentation Framework
+status: completed
+
+requirements:
+  FR-001:
+    title: Generated project includes charter framework
+    acceptance_criteria: [AC-001, AC-002, AC-003]
+    tasks: [T001, T002, T003, T008, T009, T010, T011, T012, T013, T014, T015, T055]
+  FR-002:
+    title: Initial charter is client-facing and minimal
+    acceptance_criteria: [AC-003, AC-004, AC-009]
+    tasks: [T002, T003, T011, T013, T014, T023, T024, T037]
+  FR-003:
+    title: Agents update charter through natural language
+    acceptance_criteria: [AC-005, AC-006]
+    tasks: [T016, T017, T018, T019, T020, T021, T022, T050]
+  FR-004:
+    title: Draft and delivered versioning are separate
+    acceptance_criteria: [AC-007, AC-008, AC-009, AC-012]
+    tasks: [T004, T005, T006, T023, T025, T026, T027, T028, T029, T030, T043, T052]
+  FR-005:
+    title: Charter renders as a PDF-like document
+    acceptance_criteria: [AC-010, AC-011]
+    tasks: [T031, T032, T033, T034, T035, T036, T037, T045, T047, T048, T049, T051]
+  FR-006:
+    title: Backend and Workbench expose project documents safely
+    acceptance_criteria: [AC-010, AC-011, AC-012]
+    tasks: [T038, T039, T040, T041, T042, T043, T044, T053]
+  FR-007:
+    title: Mobile UI shows latest charter and version state
+    acceptance_criteria: [AC-010, AC-011, AC-012]
+    tasks: [T045, T046, T047, T048, T049, T050, T051, T052, T054]
+  FR-008:
+    title: Regression tests and rollout docs exist
+    acceptance_criteria: [AC-013]
+    tasks: [T015, T022, T030, T037, T053, T054, T055, T056, T057, T058]
+
+acceptance_criteria:
+  AC-001:
+    tests: [T015, T055]
+  AC-002:
+    tests: [T015, T055]
+  AC-003:
+    tests: [T015, T023, T037]
+  AC-004:
+    tests: [T024, T030]
+  AC-005:
+    tests: [T022]
+  AC-006:
+    tests: [T022]
+  AC-007:
+    tests: [T030]
+  AC-008:
+    tests: [T030, T053]
+  AC-009:
+    tests: [T030, T037, T053]
+  AC-010:
+    tests: [T054]
+  AC-011:
+    tests: [T054]
+  AC-012:
+    tests: [T053, T054]
+  AC-013:
+    tests: [T015, T022, T030, T037, T053, T054, T055, T058]
+
+diagrams: {}

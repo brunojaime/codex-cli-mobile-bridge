@@ -22,14 +22,22 @@ from backend.app.application.services.cloudflare_preview_service import (
     CloudflareClient,
     CloudflarePreviewDoctorService,
 )
+from backend.app.application.services.asset_depot_service import AssetDepotService
 from backend.app.application.services.project_factory_generator_service import (
     ProjectFactoryGeneratorError,
     ProjectFactoryGeneratorService,
 )
 from backend.app.application.services.project_factory_manifest_service import (
+    DEFAULT_BACKEND,
+    DEFAULT_FIRST_RELEASE_MODE,
     FRONTEND_STRATEGIES,
     ProjectFactoryManifestInput,
+    ProjectFactoryManifestPlan,
     ProjectFactoryManifestService,
+)
+from backend.app.application.services.project_factory_reference_asset_service import (
+    ProjectFactoryReferenceAsset,
+    ProjectFactoryReferenceAssetService,
 )
 from backend.app.application.services.web_preview_deploy_service import (
     WebPreviewDeployInput,
@@ -178,6 +186,21 @@ class SubprocessProjectFactoryInitCommandRunner:
             )
 
 
+@dataclass(frozen=True, slots=True)
+class _StoredProjectAsset:
+    asset_id: str
+    role: str
+    notes: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class _DeterministicBaselineContext:
+    manifest_plan: ProjectFactoryManifestPlan
+    reference_assets: tuple[ProjectFactoryReferenceAsset, ...] = ()
+    project_assets: tuple[_StoredProjectAsset, ...] = ()
+    from_real_draft: bool = False
+
+
 class ProjectFactoryInitConflictError(RuntimeError):
     pass
 
@@ -198,6 +221,7 @@ class ProjectFactoryInitService:
         cloudflare_doctor_service: CloudflarePreviewDoctorService | None = None,
         web_preview_deploy_service: WebPreviewDeployService | None = None,
         chat_repository: ChatRepository | None = None,
+        asset_depot_service: AssetDepotService | None = None,
     ) -> None:
         self._state_root = Path(state_root).expanduser().resolve()
         self._init_state_dir = self._state_root / "init_jobs"
@@ -214,6 +238,7 @@ class ProjectFactoryInitService:
         self._cloudflare_doctor_service = cloudflare_doctor_service
         self._web_preview_deploy_service = web_preview_deploy_service
         self._chat_repository = chat_repository
+        self._asset_depot_service = asset_depot_service
         self._lock = RLock()
         self._jobs: dict[str, ProjectFactoryInitJob] = {}
         self._init_state_dir.mkdir(parents=True, exist_ok=True)
@@ -547,11 +572,25 @@ class ProjectFactoryInitService:
             evidence: list[ProjectFactoryInitCommandEvidence] = []
             generated = False
             if not target.exists():
-                generated_result = self._generate_frontend_baseline(
-                    job,
-                    target=target,
-                    strategy=strategy,
-                )
+                try:
+                    generated_result = self._generate_frontend_baseline(
+                        job,
+                        target=target,
+                        strategy=strategy,
+                    )
+                except ProjectFactoryInitConflictError as exc:
+                    return self._block_frontend_baseline(
+                        job,
+                        blocker=_frontend_blocker(
+                            code="frontend_baseline_generation_blocked",
+                            message=str(exc),
+                            next_action=(
+                                "Resolve the Project Factory draft/contract issue "
+                                "and rerun deterministic init."
+                            ),
+                        ),
+                        evidence=tuple(evidence),
+                    )
                 generated = True
                 evidence.append(
                     ProjectFactoryInitCommandEvidence(
@@ -2800,24 +2839,161 @@ class ProjectFactoryInitService:
             )
         projects_root = target.parent
         projects_root.mkdir(parents=True, exist_ok=True)
-        platforms = ("web",) if strategy == "svelte" else ("ios", "android", "web")
+        context = self._deterministic_baseline_context(
+            job,
+            projects_root=projects_root,
+            strategy=strategy,
+        )
+        if context.project_assets and self._asset_depot_service is None:
+            raise ProjectFactoryInitConflictError(
+                "Asset Depot service is required to copy promoted project assets."
+            )
+        try:
+            result = ProjectFactoryGeneratorService(
+                reference_asset_service=(
+                    self._reference_asset_service()
+                    if context.reference_assets
+                    else None
+                ),
+                asset_depot_service=self._asset_depot_service,
+            ).generate(
+                context.manifest_plan,
+                reference_assets=context.reference_assets,
+                project_assets=context.project_assets,
+            )
+        except ProjectFactoryGeneratorError as exc:
+            raise ProjectFactoryInitConflictError(str(exc)) from exc
+        return result.to_payload()
+
+    def _deterministic_baseline_context(
+        self,
+        job: ProjectFactoryInitJob,
+        *,
+        projects_root: Path,
+        strategy: str,
+    ) -> _DeterministicBaselineContext:
+        draft_payload = self._stored_draft_payload(job.relationships.draft_id)
+        if draft_payload is None:
+            return _DeterministicBaselineContext(
+                manifest_plan=self._fallback_manifest_plan(
+                    job,
+                    projects_root=projects_root,
+                    strategy=strategy,
+                ),
+                from_real_draft=False,
+            )
+
+        project_assets = self._stored_project_assets(job.relationships.draft_id)
+        request = _manifest_input_from_stored_draft(
+            draft_payload,
+            job=job,
+            strategy=strategy,
+            project_assets=project_assets,
+        )
+        guided_intake = (
+            draft_payload.get("guided_intake")
+            if isinstance(draft_payload.get("guided_intake"), dict)
+            else {}
+        )
+        guided_enabled = request.guided_intake_enabled or bool(
+            guided_intake.get("enabled") if isinstance(guided_intake, dict) else False
+        )
+        guided_status = str(
+            guided_intake.get("status") if isinstance(guided_intake, dict) else ""
+        )
+        if guided_enabled and guided_status not in {"confirmed", "build_started"}:
+            raise ProjectFactoryInitConflictError(
+                "Confirm the guided New Project contract before deterministic init."
+            )
+
         manifest_plan = ProjectFactoryManifestService(
+            projects_root=projects_root,
+        ).plan_manifest(request)
+        manifest_plan = _manifest_plan_with_deterministic_charter_seed(
+            manifest_plan,
+            request=request,
+            guided_intake=guided_intake if isinstance(guided_intake, dict) else {},
+        )
+        if not manifest_plan.ok:
+            details = "; ".join(error.message for error in manifest_plan.errors)
+            raise ProjectFactoryInitConflictError(
+                details or "Stored Project Factory draft is not valid."
+            )
+        return _DeterministicBaselineContext(
+            manifest_plan=manifest_plan,
+            reference_assets=self._stored_reference_assets(job.relationships.draft_id),
+            project_assets=project_assets,
+            from_real_draft=True,
+        )
+
+    def _fallback_manifest_plan(
+        self,
+        job: ProjectFactoryInitJob,
+        *,
+        projects_root: Path,
+        strategy: str,
+    ) -> ProjectFactoryManifestPlan:
+        platforms = ("web",) if strategy == "svelte" else ("ios", "android", "web")
+        business_type = _slug_from_name(job.project_name or job.slug).replace("-", "_")
+        return ProjectFactoryManifestService(
             projects_root=projects_root,
         ).plan_manifest(
             ProjectFactoryManifestInput(
                 name=job.project_name,
-                business_type="project",
-                primary_goal="Generated deterministic baseline",
+                business_type=business_type,
+                primary_goal=f"Create the {job.project_name} application baseline",
                 slug=job.slug,
                 platforms=platforms,
                 frontend_strategy=strategy,
             )
         )
+
+    def _stored_draft_payload(self, draft_id: str) -> dict[str, object] | None:
+        path = self._state_root / "drafts" / f"{draft_id}.json"
         try:
-            result = ProjectFactoryGeneratorService().generate(manifest_plan)
-        except ProjectFactoryGeneratorError as exc:
-            raise ProjectFactoryInitConflictError(str(exc)) from exc
-        return result.to_payload()
+            payload = _read_json(path)
+        except Exception:
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    def _stored_project_assets(
+        self,
+        draft_id: str,
+    ) -> tuple[_StoredProjectAsset, ...]:
+        path = self._state_root / "draft_assets" / f"{draft_id}.json"
+        try:
+            payload = _read_json(path)
+        except Exception:
+            return ()
+        assets = payload.get("assets") if isinstance(payload, dict) else None
+        if not isinstance(assets, list):
+            return ()
+        return tuple(
+            _StoredProjectAsset(
+                asset_id=str(item.get("asset_id") or ""),
+                role=str(item.get("role") or ""),
+                notes=str(item.get("notes") or ""),
+            )
+            for item in assets
+            if isinstance(item, dict) and item.get("asset_id") and item.get("role")
+        )
+
+    def _reference_asset_service(self) -> ProjectFactoryReferenceAssetService | None:
+        if self._settings is None:
+            return None
+        return ProjectFactoryReferenceAssetService(
+            storage_root=self._settings.project_factory_reference_asset_dir,
+            max_image_bytes=self._settings.image_max_upload_bytes,
+        )
+
+    def _stored_reference_assets(
+        self,
+        draft_id: str,
+    ) -> tuple[ProjectFactoryReferenceAsset, ...]:
+        service = self._reference_asset_service()
+        if service is None:
+            return ()
+        return service.list_assets(draft_id)
 
     def _mark_frontend_running(self, job: ProjectFactoryInitJob, message: str) -> None:
         current = self._jobs.get(job.id, job)
@@ -3429,6 +3605,160 @@ def _cloudflare_blocker(
         command=command,
         recoverable=True,
     )
+
+
+def _manifest_input_from_stored_draft(
+    draft_payload: dict[str, object],
+    *,
+    job: ProjectFactoryInitJob,
+    strategy: str,
+    project_assets: tuple[_StoredProjectAsset, ...],
+) -> ProjectFactoryManifestInput:
+    request = draft_payload.get("request")
+    if not isinstance(request, dict):
+        raise ProjectFactoryInitConflictError(
+            "Stored Project Factory draft is missing its request payload."
+        )
+    return ProjectFactoryManifestInput(
+        name=str(request.get("name") or job.project_name),
+        business_type=str(
+            request.get("business_type")
+            or _slug_from_name(job.project_name or job.slug).replace("-", "_")
+        ),
+        primary_goal=str(
+            request.get("primary_goal")
+            or f"Create the {job.project_name} application baseline"
+        ),
+        slug=job.slug or _optional_str(request.get("slug")),
+        platforms=_stored_string_tuple(
+            request.get("platforms"),
+            default=("web",) if strategy == "svelte" else ("ios", "android", "web"),
+        ),
+        backend=str(request.get("backend") or DEFAULT_BACKEND),
+        frontend_strategy=str(request.get("frontend_strategy") or strategy),
+        logo_mode=str(request.get("logo_mode") or "generate"),
+        first_release_mode=str(
+            request.get("first_release_mode") or DEFAULT_FIRST_RELEASE_MODE
+        ),
+        initial_admin_emails=_stored_string_tuple(
+            request.get("initial_admin_emails"),
+            default=(),
+        ),
+        visual_reference_paths=_stored_string_tuple(
+            request.get("visual_reference_paths"),
+            default=(),
+        ),
+        visual_reference_assets=_stored_mapping_tuple(
+            request.get("visual_reference_assets")
+            or _stored_manifest_visual_reference_assets(draft_payload),
+        ),
+        project_assets=tuple(
+            {
+                "asset_id": asset.asset_id,
+                "role": asset.role,
+                "notes": asset.notes,
+            }
+            for asset in project_assets
+        ),
+        guided_intake_enabled=bool(request.get("guided_intake_enabled") or False),
+    )
+
+
+def _manifest_plan_with_deterministic_charter_seed(
+    manifest_plan: ProjectFactoryManifestPlan,
+    *,
+    request: ProjectFactoryManifestInput,
+    guided_intake: dict[str, object],
+) -> ProjectFactoryManifestPlan:
+    if not manifest_plan.ok:
+        return manifest_plan
+    manifest = dict(manifest_plan.manifest)
+    project_management = dict(manifest.get("project_management") or {})
+    charter_seed: dict[str, object] = {
+        "source": "project_factory_draft",
+        "project_name": request.name,
+        "business_type": request.business_type,
+        "project_objective": request.primary_goal,
+        "logo_mode": request.logo_mode,
+        "confirmed_guided_intake": False,
+    }
+    status = str(guided_intake.get("status") or "")
+    if bool(guided_intake.get("enabled")) and status in {
+        "confirmed",
+        "build_started",
+    }:
+        preview = (
+            dict(guided_intake.get("contractPreview"))
+            if isinstance(guided_intake.get("contractPreview"), dict)
+            else {}
+        )
+        decisions = (
+            dict(preview.get("decisions"))
+            if isinstance(preview.get("decisions"), dict)
+            else {}
+        )
+        charter_seed.update(
+            {
+                "source": "confirmed_guided_intake_contract",
+                "confirmed_guided_intake": True,
+                "decisions": decisions,
+                "pending_definitions": _guided_pending_definitions(guided_intake),
+            }
+        )
+    project_management["charter_seed"] = charter_seed
+    manifest["project_management"] = project_management
+    return replace(manifest_plan, manifest=manifest)
+
+
+def _stored_string_tuple(
+    value: object,
+    *,
+    default: tuple[str, ...],
+) -> tuple[str, ...]:
+    if isinstance(value, list | tuple):
+        items = tuple(str(item) for item in value if str(item).strip())
+        return items if items else default
+    return default
+
+
+def _stored_mapping_tuple(value: object) -> tuple[dict[str, object], ...]:
+    if not isinstance(value, list | tuple):
+        return ()
+    return tuple(dict(item) for item in value if isinstance(item, dict))
+
+
+def _stored_manifest_visual_reference_assets(
+    draft_payload: dict[str, object],
+) -> object:
+    manifest_plan = draft_payload.get("manifest_plan")
+    if not isinstance(manifest_plan, dict):
+        return ()
+    manifest = manifest_plan.get("manifest")
+    if not isinstance(manifest, dict):
+        return ()
+    visual = manifest.get("visual_references")
+    if not isinstance(visual, dict):
+        return ()
+    return visual.get("reference_assets") or ()
+
+
+def _guided_pending_definitions(guided_intake: dict[str, object]) -> list[str]:
+    raw_items = guided_intake.get("missingFields") or guided_intake.get(
+        "missing_fields"
+    )
+    if not isinstance(raw_items, list):
+        return []
+    pending: list[str] = []
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        field = str(item.get("field") or "").strip()
+        message = str(item.get("message") or "").strip()
+        if field and message:
+            pending.append(f"{field}: {message}")
+        elif field:
+            pending.append(field)
+    return pending
 
 
 def _frontend_blocker(
@@ -5437,8 +5767,6 @@ def _resolve_bridge_public_url(
         command_env.get("BRIDGE_PUBLIC_URL"),
         command_env.get("CODEX_APP_UPDATER_BRIDGE_URL"),
         command_env.get("API_BASE_URL"),
-        os.environ.get("BRIDGE_PUBLIC_URL"),
-        os.environ.get("CODEX_APP_UPDATER_BRIDGE_URL"),
     )
     for candidate in candidates:
         public_url = _non_local_http_url(candidate)
@@ -5446,6 +5774,13 @@ def _resolve_bridge_public_url(
             return public_url
     if not _is_local_bridge_url(bridge_base_url):
         return bridge_base_url.rstrip("/")
+    for candidate in (
+        os.environ.get("BRIDGE_PUBLIC_URL"),
+        os.environ.get("CODEX_APP_UPDATER_BRIDGE_URL"),
+    ):
+        public_url = _non_local_http_url(candidate)
+        if public_url and not _is_preview_app_public_url(public_url, settings=settings):
+            return public_url
     if settings is not None:
         tailscale = detect_tailscale_info(
             settings.tailscale_socket,
