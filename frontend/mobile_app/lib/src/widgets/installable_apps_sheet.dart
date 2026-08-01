@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:codex_app_updater/codex_app_updater.dart';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../models/installable_app.dart';
 import '../services/api_client.dart';
@@ -11,10 +12,12 @@ class InstallableAppsSheet extends StatefulWidget {
     super.key,
     required this.apiClient,
     this.updaterController,
+    this.apkUrlLauncher,
   });
 
   final ApiClient apiClient;
   final CodexAppUpdaterController? updaterController;
+  final Future<bool> Function(Uri apkUrl)? apkUrlLauncher;
 
   @override
   State<InstallableAppsSheet> createState() => _InstallableAppsSheetState();
@@ -68,26 +71,20 @@ class _InstallableAppsSheetState extends State<InstallableAppsSheet> {
     if (!app.canInstall || apkUrl == null) return;
     setState(() {
       _activeSourceApp = app.sourceApp;
-      _statusText = 'Starting download';
+      _statusText = 'Opening APK link';
       _errorText = null;
     });
     final resolvedApkUrl = _resolveInstallableApkUrl(
       widget.apiClient.baseUrl,
       apkUrl,
     );
-    final installed = await _updaterController.installExternalApk(
-      apkUrl: resolvedApkUrl,
-      sourceApp: app.sourceApp,
-      displayName: app.displayName,
-      apkAssetName: app.apkAssetName,
-      sha256: app.sha256,
-      sizeBytes: app.sizeBytes,
-    );
+    final launcher = widget.apkUrlLauncher ?? _launchExternalApkUrl;
+    final opened = await launcher(resolvedApkUrl);
     if (!mounted) return;
     setState(() {
-      _statusText = installed ? 'Installer opened' : _statusText;
-      if (!installed && _errorText == null) {
-        _errorText = _failureLabel(_updaterController.failureReason);
+      _statusText = opened ? 'APK link opened' : _statusText;
+      if (!opened) {
+        _errorText = 'Could not open APK link';
       }
     });
   }
@@ -235,7 +232,7 @@ class _InstallableAppCard extends StatelessWidget {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.download_rounded),
-                  label: Text(app.canInstall ? 'Install' : 'Unavailable'),
+                  label: Text(app.canInstall ? 'Open APK' : 'Unavailable'),
                 ),
               ],
             ),
@@ -387,6 +384,10 @@ String _failureLabel(CodexAppUpdateFailureReason? reason) {
     CodexAppUpdateFailureReason.securityException => 'Android blocked install',
     _ => 'Install failed',
   };
+}
+
+Future<bool> _launchExternalApkUrl(Uri apkUrl) {
+  return launchUrl(apkUrl, mode: LaunchMode.externalApplication);
 }
 
 String _formatBytes(int bytes) {

@@ -37,7 +37,7 @@ void main() {
     expect(find.text('Codex Disabled'), findsOneWidget);
     expect(find.text('1.0.0+12  •  Available'), findsOneWidget);
     expect(find.text('No release  •  Disabled'), findsOneWidget);
-    expect(find.text('Install'), findsOneWidget);
+    expect(find.text('Open APK'), findsOneWidget);
     expect(find.text('Unavailable'), findsOneWidget);
   });
 
@@ -55,7 +55,7 @@ void main() {
         findsOneWidget);
     expect(
         find.textContaining('android-preview-v0.1.0-build.1'), findsOneWidget);
-    expect(find.text('Install'), findsOneWidget);
+    expect(find.text('Open APK'), findsOneWidget);
   });
 
   testWidgets('shows clear non-installable preview states', (tester) async {
@@ -86,34 +86,37 @@ void main() {
     expect(find.textContaining('Mock/demo'), findsOneWidget);
   });
 
-  testWidgets('install button downloads and opens installer', (tester) async {
-    final controller = _RecordingInstallController();
-    addTearDown(controller.dispose);
+  testWidgets('install button opens APK link externally', (tester) async {
+    var launchCallCount = 0;
+    Uri? launchedUrl;
 
     await tester.pumpWidget(
       _harness(
         http.Response(_appsJson(), 200),
-        controller: controller,
+        apkUrlLauncher: (uri) async {
+          launchCallCount += 1;
+          launchedUrl = uri;
+          return true;
+        },
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Install'));
+    await tester.tap(find.text('Open APK'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
 
-    expect(controller.installCallCount, 1);
+    expect(launchCallCount, 1);
     expect(
-      controller.requestedApkUrl.toString(),
+      launchedUrl.toString(),
       'http://bridge.test/app-updates/satshowroom/apk/tag/satshowroom.apk',
     );
-    expect(controller.requestedSourceApp, 'satshowroom');
-    expect(find.text('Installer opened'), findsOneWidget);
+    expect(find.text('APK link opened'), findsOneWidget);
   });
 
   testWidgets('install rewrites loopback APK URL to active bridge host',
       (tester) async {
-    final controller = _RecordingInstallController();
-    addTearDown(controller.dispose);
+    var launchCallCount = 0;
+    Uri? launchedUrl;
 
     await tester.pumpWidget(
       _harness(
@@ -125,40 +128,38 @@ void main() {
           200,
         ),
         baseUrl: 'http://bridge.tailnet.test',
-        controller: controller,
+        apkUrlLauncher: (uri) async {
+          launchCallCount += 1;
+          launchedUrl = uri;
+          return true;
+        },
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Install'));
+    await tester.tap(find.text('Open APK'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
 
-    expect(controller.installCallCount, 1);
+    expect(launchCallCount, 1);
     expect(
-      controller.requestedApkUrl.toString(),
+      launchedUrl.toString(),
       'http://bridge.tailnet.test/app-updates/satshowroom/apk/tag/satshowroom.apk?platform=android&channel=stable',
     );
   });
 
-  testWidgets('checksum failure is visible', (tester) async {
-    final controller = _RecordingInstallController(
-      result: false,
-      configuredFailureReason: CodexAppUpdateFailureReason.checksumMismatch,
-    );
-    addTearDown(controller.dispose);
-
+  testWidgets('APK link open failure is visible', (tester) async {
     await tester.pumpWidget(
       _harness(
         http.Response(_appsJson(sha256: 'a' * 64), 200),
-        controller: controller,
+        apkUrlLauncher: (_) async => false,
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Install'));
+    await tester.tap(find.text('Open APK'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
 
-    expect(find.text('Checksum failed'), findsOneWidget);
+    expect(find.text('Could not open APK link'), findsOneWidget);
   });
 }
 
@@ -166,6 +167,7 @@ Widget _harness(
   http.Response response, {
   String baseUrl = 'http://bridge.test',
   CodexAppUpdaterController? controller,
+  Future<bool> Function(Uri apkUrl)? apkUrlLauncher,
 }) {
   return MaterialApp(
     home: Scaffold(
@@ -178,6 +180,7 @@ Widget _harness(
           }),
         ),
         updaterController: controller,
+        apkUrlLauncher: apkUrlLauncher,
       ),
     ),
   );
@@ -269,37 +272,4 @@ String _previewAppsJson({
     ]
   }
   ''';
-}
-
-class _RecordingInstallController extends CodexAppUpdaterController {
-  _RecordingInstallController({
-    this.result = true,
-    this.configuredFailureReason,
-  });
-
-  final bool result;
-  final CodexAppUpdateFailureReason? configuredFailureReason;
-  int installCallCount = 0;
-  Uri? requestedApkUrl;
-  String? requestedSourceApp;
-
-  @override
-  Future<bool> installExternalApk({
-    required Uri apkUrl,
-    required String sourceApp,
-    String? displayName,
-    String? apkAssetName,
-    String? sha256,
-    int? sizeBytes,
-    bool requireChecksum = false,
-  }) async {
-    installCallCount += 1;
-    requestedApkUrl = apkUrl;
-    requestedSourceApp = sourceApp;
-    status =
-        result ? CodexAppUpdateStatus.dismissed : CodexAppUpdateStatus.failed;
-    failureReason = configuredFailureReason;
-    notifyListeners();
-    return result;
-  }
 }
