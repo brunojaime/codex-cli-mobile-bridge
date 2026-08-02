@@ -93,10 +93,15 @@
     }
   },
   "satshowroom": {
+    "aliases": [
+      "sat",
+      "sat-showroom",
+      "SAT Showroom"
+    ],
     "apkAssetPattern": "satshowroom*.apk",
-    "displayName": "satshowroom Preview",
+    "displayName": "SAT Showroom",
     "enabled": true,
-    "expectedPackageId": "com.nienfos.satshowroom",
+    "expectedPackageId": "com.example.satshowroom",
     "latestAssetName": "satshowroom.apk",
     "mockOrDemo": false,
     "previewUrl": "https://preview.nienfos.com/satshowroom",
@@ -113,8 +118,8 @@
     "requiredMinimumBuild": null,
     "runtimeProfile": "preview",
     "verifiedPackageIds": {
-      "android-preview-v0.1.0-build.50": "com.nienfos.satshowroom",
-      "satshowroom.apk": "com.nienfos.satshowroom"
+      "android-preview-v0.1.0-build.50": "com.example.satshowroom",
+      "satshowroom.apk": "com.example.satshowroom"
     }
   },
   "smart-nienfos": {

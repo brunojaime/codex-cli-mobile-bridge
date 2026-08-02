@@ -70,6 +70,11 @@ Silent install is not in scope.
 - Dynamic installable-app registration must require
   `INSTALLABLE_APPS_REGISTRATION_TOKEN`; without it, `POST /installable-apps`
   stays disabled.
+- Private Project Factory GitHub repos require Bridge-side
+  `APP_UPDATE_GITHUB_TOKEN` for release metadata lookup and APK proxy
+  streaming. Without it, registration can write the app entry, but
+  `/installable-apps/{sourceApp}` will not expose `latestBuild`/APK metadata
+  for private releases.
 - Registration payloads must not include direct external APK URLs. Codex Mobile
   installs only through Bridge APK proxy URLs returned by `/installable-apps`.
 - Private GitHub repos may return 404 without authentication; use authenticated tools or Bridge server-side token before concluding a repo/release is missing.

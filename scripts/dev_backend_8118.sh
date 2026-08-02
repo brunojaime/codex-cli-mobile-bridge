@@ -119,6 +119,7 @@ write_runtime_env() {
     "${RUNTIME_DIR}/runtime"
   local codex_command codex_use_exec codex_exec_args codex_resume_args
   local github_owner github_visibility github_branch registration_token
+  local app_update_github_token
   local cloudflare_api_token cloudflare_dns_token cloudflare_account_id
   local cloudflare_zone_id cloudflare_zone_name web_preview_apply_enabled
   local web_preview_invite_secret web_preview_email_provider web_preview_email_from
@@ -135,6 +136,7 @@ write_runtime_env() {
   github_visibility="$(codex_env_value PROJECT_FACTORY_GITHUB_VISIBILITY "private")"
   github_branch="$(codex_env_value PROJECT_FACTORY_GITHUB_DEFAULT_BRANCH "main")"
   registration_token="$(codex_env_value INSTALLABLE_APPS_REGISTRATION_TOKEN "")"
+  app_update_github_token="$(codex_env_value APP_UPDATE_GITHUB_TOKEN "")"
   cloudflare_api_token="$(codex_env_value CLOUDFLARE_API_TOKEN "")"
   cloudflare_dns_token="$(codex_env_value CLOUDFLARE_DNS_API_TOKEN "")"
   cloudflare_account_id="$(codex_env_value CLOUDFLARE_ACCOUNT_ID "")"
@@ -184,6 +186,7 @@ PROJECT_FACTORY_GITHUB_VISIBILITY=${github_visibility}
 PROJECT_FACTORY_GITHUB_DEFAULT_BRANCH=${github_branch}
 INSTALLABLE_APPS_REGISTRATION_TOKEN=${registration_token}
 BRIDGE_REGISTRATION_TOKEN=${registration_token}
+APP_UPDATE_GITHUB_TOKEN=${app_update_github_token}
 CLOUDFLARE_API_TOKEN=${cloudflare_api_token}
 CLOUDFLARE_DNS_API_TOKEN=${cloudflare_dns_token}
 CLOUDFLARE_ACCOUNT_ID=${cloudflare_account_id}
@@ -264,6 +267,7 @@ start_backend() {
 
   local codex_command codex_use_exec codex_exec_args codex_resume_args
   local github_owner github_visibility github_branch registration_token
+  local app_update_github_token
   local cloudflare_api_token cloudflare_dns_token cloudflare_account_id
   local cloudflare_zone_id cloudflare_zone_name web_preview_apply_enabled
   local web_preview_invite_secret web_preview_email_provider web_preview_email_from
@@ -280,6 +284,7 @@ start_backend() {
   github_visibility="$(codex_env_value PROJECT_FACTORY_GITHUB_VISIBILITY "private")"
   github_branch="$(codex_env_value PROJECT_FACTORY_GITHUB_DEFAULT_BRANCH "main")"
   registration_token="$(codex_env_value INSTALLABLE_APPS_REGISTRATION_TOKEN "")"
+  app_update_github_token="$(codex_env_value APP_UPDATE_GITHUB_TOKEN "")"
   cloudflare_api_token="$(codex_env_value CLOUDFLARE_API_TOKEN "")"
   cloudflare_dns_token="$(codex_env_value CLOUDFLARE_DNS_API_TOKEN "")"
   cloudflare_account_id="$(codex_env_value CLOUDFLARE_ACCOUNT_ID "")"
@@ -331,6 +336,7 @@ start_backend() {
     PROJECT_FACTORY_GITHUB_DEFAULT_BRANCH="${github_branch}" \
     INSTALLABLE_APPS_REGISTRATION_TOKEN="${registration_token}" \
     BRIDGE_REGISTRATION_TOKEN="${registration_token}" \
+    APP_UPDATE_GITHUB_TOKEN="${app_update_github_token}" \
     CLOUDFLARE_API_TOKEN="${cloudflare_api_token}" \
     CLOUDFLARE_DNS_API_TOKEN="${cloudflare_dns_token}" \
     CLOUDFLARE_ACCOUNT_ID="${cloudflare_account_id}" \

@@ -172,7 +172,15 @@ Example response when current app is up to date:
 9. Compare latest build with `currentBuild`.
 10. Return update metadata.
 
-For private GitHub repositories, `apkUrl` must point back to the Bridge APK proxy endpoint, not to `browser_download_url` on GitHub. The Bridge uses its configured GitHub token server-side to stream the selected release asset to the app. This keeps Flutter apps decoupled from GitHub authentication and avoids exposing private repository URLs or tokens to devices.
+For private GitHub repositories, `apkUrl` must point back to the Bridge APK
+proxy endpoint, not to `browser_download_url` on GitHub. The Bridge uses its
+configured `APP_UPDATE_GITHUB_TOKEN` server-side to list releases and stream the
+selected release asset to the app. DEV/stage backends that create private
+Project Factory repos must export this token; otherwise `/installable-apps`
+registration can succeed but the follow-up lookup may return
+`installStatusHint=release_metadata_unavailable` and no `latestBuild`. This
+keeps Flutter apps decoupled from GitHub authentication and avoids exposing
+private repository URLs or tokens to devices.
 
 The APK proxy must:
 

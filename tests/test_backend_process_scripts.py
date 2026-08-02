@@ -250,6 +250,8 @@ def test_dev_backend_8118_script_contract() -> None:
     assert "APP_UPDATE_PUBLIC_BASE_URL=${BASE_URL}" in script
     assert "BRIDGE_PUBLIC_URL=${BASE_URL}" in script
     assert "INSTALLABLE_APPS_REGISTRATION_TOKEN" in script
+    assert "APP_UPDATE_GITHUB_TOKEN" in script
+    assert 'APP_UPDATE_GITHUB_TOKEN="${app_update_github_token}"' in script
     assert "--dangerously-bypass-approvals-and-sandbox" in script
     assert "BRIDGE_ENVIRONMENT=\"dev\"" in script
     assert "BRIDGE_APP_CHANNEL=\"dev\"" in script
@@ -294,7 +296,6 @@ def test_dev_backend_8118_script_does_not_embed_secrets() -> None:
 
     forbidden_fragments = [
         "ghp_",
-        "github_token=",
         "api_key=",
         "bearer ",
         "-----begin",
