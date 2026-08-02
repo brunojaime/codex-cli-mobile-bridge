@@ -161,7 +161,6 @@ jobs:
       - name: Validate Android release networking
         env:
           API_BASE_URL: ${{ steps.release_channel.outputs.api_base_url }}
-          CODEX_APP_UPDATER_BRIDGE_URL: ${{ steps.release_channel.outputs.api_base_url }}
         run: python3 scripts/validate_android_release_network.py
 
       - name: Validate Android release channel
@@ -185,10 +184,6 @@ jobs:
           bridge_url="${{ steps.release_channel.outputs.api_base_url }}"
           args=()
           args+=(--dart-define=API_BASE_URL="$bridge_url")
-          args+=(--dart-define=APP_UPDATER_ENABLED=true)
-          args+=(--dart-define=CODEX_APP_UPDATER_ENABLED=true)
-          args+=(--dart-define=CODEX_APP_UPDATER_BRIDGE_URL="$bridge_url")
-          args+=(--dart-define=CODEX_APP_UPDATER_AUTO_INSTALL=false)
           args+=(--dart-define=BRIDGE_APP_SOURCE_APP="${{ steps.release_channel.outputs.source_app }}")
           args+=(--dart-define=BRIDGE_APP_CHANNEL="${{ steps.release_channel.outputs.channel }}")
           args+=(--dart-define=BRIDGE_UPDATER_CHANNEL="${{ steps.release_channel.outputs.updater_channel }}")

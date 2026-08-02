@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
-import 'package:codex_app_updater/codex_app_updater.dart';
 import 'package:codex_bridge_workbench/codex_bridge_workbench.dart';
-import 'package:package_info_plus/package_info_plus.dart';
 
 import 'src/screens/chat_screen.dart';
 import 'src/models/codex_tooling.dart';
@@ -12,14 +10,6 @@ import 'src/services/api_client.dart';
 const _configuredApiBaseUrl = String.fromEnvironment(
   'API_BASE_URL',
   defaultValue: '',
-);
-const _configuredAppUpdaterEnabled = bool.fromEnvironment(
-  'APP_UPDATER_ENABLED',
-  defaultValue: true,
-);
-const _configuredAppUpdaterAutoInstall = bool.fromEnvironment(
-  'CODEX_APP_UPDATER_AUTO_INSTALL',
-  defaultValue: false,
 );
 const _configuredCodexBridgeDevMode = bool.fromEnvironment(
   'CODEX_BRIDGE_DEV_MODE',
@@ -42,23 +32,17 @@ const _configuredBridgeUpdaterChannel = String.fromEnvironment(
   'BRIDGE_UPDATER_CHANNEL',
   defaultValue: 'prod',
 );
-const _fallbackAppVersion = '1.0.0';
-const _fallbackAppBuild = 41;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final apiBaseUrl = _configuredApiBaseUrl.isNotEmpty
       ? _configuredApiBaseUrl
       : _defaultApiBaseUrl();
-  final packageInfo = await PackageInfo.fromPlatform();
   final notificationService = createChatNotificationService();
   await notificationService.initialize();
   runApp(
     CodexMobileApp(
       initialApiBaseUrl: apiBaseUrl,
-      currentVersion: packageInfo.version,
-      currentBuild: _parseBuildNumber(packageInfo.buildNumber),
-      appUpdaterEnabled: shouldEnableCodexAppUpdater(),
       notificationService: notificationService,
     ),
   );
@@ -78,21 +62,6 @@ String _defaultApiBaseUrl() {
   }
 
   return 'http://localhost:8000';
-}
-
-int _parseBuildNumber(String buildNumber) {
-  return int.tryParse(buildNumber.trim()) ?? _fallbackAppBuild;
-}
-
-@visibleForTesting
-bool shouldEnableCodexAppUpdater({
-  bool configuredEnabled = _configuredAppUpdaterEnabled,
-  bool? isWebOverride,
-  TargetPlatform? platformOverride,
-}) {
-  final isWeb = isWebOverride ?? kIsWeb;
-  final platform = platformOverride ?? defaultTargetPlatform;
-  return configuredEnabled && !isWeb && platform == TargetPlatform.android;
 }
 
 @visibleForTesting
@@ -122,20 +91,10 @@ class CodexMobileApp extends StatefulWidget {
   const CodexMobileApp({
     super.key,
     required this.initialApiBaseUrl,
-    this.currentVersion = _fallbackAppVersion,
-    this.currentBuild = _fallbackAppBuild,
-    this.appUpdaterEnabled = false,
-    this.appUpdaterController,
-    this.appUpdaterCheckOnStart = true,
     this.notificationService = const NoopChatNotificationService(),
   });
 
   final String initialApiBaseUrl;
-  final String currentVersion;
-  final int currentBuild;
-  final bool appUpdaterEnabled;
-  final CodexAppUpdaterController? appUpdaterController;
-  final bool appUpdaterCheckOnStart;
   final ChatNotificationService notificationService;
 
   @override
@@ -208,20 +167,7 @@ class _CodexMobileAppState extends State<CodexMobileApp> {
           workspacePath: resolveCodexBridgeWorkbenchWorkspacePath(),
           sddFeedbackSubmitter: _submitBridgeSddFeedback,
           sddActionSubmitter: _submitBridgeSddCodexAction,
-          child: CodexAppUpdater(
-            config: CodexAppUpdaterConfig(
-              sourceApp: _configuredBridgeSourceApp,
-              bridgeUrl: _activeBridgeUrl,
-              currentVersion: widget.currentVersion,
-              currentBuild: widget.currentBuild,
-              channel: _configuredBridgeUpdaterChannel,
-              enabled: widget.appUpdaterEnabled,
-              autoInstallAvailableUpdates: _configuredAppUpdaterAutoInstall,
-            ),
-            controller: widget.appUpdaterController,
-            checkOnStart: widget.appUpdaterCheckOnStart,
-            child: home,
-          ),
+          child: home,
         );
       },
     );
