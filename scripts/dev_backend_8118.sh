@@ -118,6 +118,7 @@ write_runtime_env() {
     "${DATA_DIR}/asset_depot" "${DATA_DIR}/project_factory_state" \
     "${RUNTIME_DIR}/runtime"
   local codex_command codex_use_exec codex_exec_args codex_resume_args
+  local project_factory_step_timeout_seconds
   local github_owner github_visibility github_branch registration_token
   local app_update_github_token
   local cloudflare_api_token cloudflare_dns_token cloudflare_account_id
@@ -132,6 +133,7 @@ write_runtime_env() {
   codex_use_exec="$(codex_env_value CODEX_USE_EXEC "true")"
   codex_exec_args="$(codex_env_value CODEX_EXEC_ARGS "--skip-git-repo-check --color never --dangerously-bypass-approvals-and-sandbox")"
   codex_resume_args="$(codex_env_value CODEX_RESUME_ARGS "--skip-git-repo-check --dangerously-bypass-approvals-and-sandbox")"
+  project_factory_step_timeout_seconds="$(codex_env_value PROJECT_FACTORY_STEP_TIMEOUT_SECONDS "1200")"
   github_owner="$(codex_env_value PROJECT_FACTORY_GITHUB_OWNER "")"
   github_visibility="$(codex_env_value PROJECT_FACTORY_GITHUB_VISIBILITY "private")"
   github_branch="$(codex_env_value PROJECT_FACTORY_GITHUB_DEFAULT_BRANCH "main")"
@@ -181,6 +183,7 @@ FEEDBACK_IMAGE_DIR=${DATA_DIR}/feedback_images
 FEEDBACK_AUDIO_DIR=${DATA_DIR}/feedback_audio
 ASSET_DEPOT_DIR=${DATA_DIR}/asset_depot
 PROJECT_FACTORY_STATE_DIR=${DATA_DIR}/project_factory_state
+PROJECT_FACTORY_STEP_TIMEOUT_SECONDS=${project_factory_step_timeout_seconds}
 PROJECT_FACTORY_GITHUB_OWNER=${github_owner}
 PROJECT_FACTORY_GITHUB_VISIBILITY=${github_visibility}
 PROJECT_FACTORY_GITHUB_DEFAULT_BRANCH=${github_branch}
@@ -266,6 +269,7 @@ start_backend() {
   fi
 
   local codex_command codex_use_exec codex_exec_args codex_resume_args
+  local project_factory_step_timeout_seconds
   local github_owner github_visibility github_branch registration_token
   local app_update_github_token
   local cloudflare_api_token cloudflare_dns_token cloudflare_account_id
@@ -280,6 +284,7 @@ start_backend() {
   codex_use_exec="$(codex_env_value CODEX_USE_EXEC "true")"
   codex_exec_args="$(codex_env_value CODEX_EXEC_ARGS "--skip-git-repo-check --color never --dangerously-bypass-approvals-and-sandbox")"
   codex_resume_args="$(codex_env_value CODEX_RESUME_ARGS "--skip-git-repo-check --dangerously-bypass-approvals-and-sandbox")"
+  project_factory_step_timeout_seconds="$(codex_env_value PROJECT_FACTORY_STEP_TIMEOUT_SECONDS "1200")"
   github_owner="$(codex_env_value PROJECT_FACTORY_GITHUB_OWNER "")"
   github_visibility="$(codex_env_value PROJECT_FACTORY_GITHUB_VISIBILITY "private")"
   github_branch="$(codex_env_value PROJECT_FACTORY_GITHUB_DEFAULT_BRANCH "main")"
@@ -331,6 +336,7 @@ start_backend() {
     FEEDBACK_AUDIO_DIR="${DATA_DIR}/feedback_audio" \
     ASSET_DEPOT_DIR="${DATA_DIR}/asset_depot" \
     PROJECT_FACTORY_STATE_DIR="${DATA_DIR}/project_factory_state" \
+    PROJECT_FACTORY_STEP_TIMEOUT_SECONDS="${project_factory_step_timeout_seconds}" \
     PROJECT_FACTORY_GITHUB_OWNER="${github_owner}" \
     PROJECT_FACTORY_GITHUB_VISIBILITY="${github_visibility}" \
     PROJECT_FACTORY_GITHUB_DEFAULT_BRANCH="${github_branch}" \

@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     project_factory_async_jobs: bool = True
     project_factory_generator_runs_override: int | None = None
     project_factory_reviewer_runs_override: int | None = None
-    project_factory_step_timeout_seconds: int = 0
+    project_factory_step_timeout_seconds: int = 1200
     project_factory_run_generated_validation: bool = False
     project_factory_publication_validation_mode: Literal["remote", "local"] = "remote"
     project_factory_github_owner: str | None = None

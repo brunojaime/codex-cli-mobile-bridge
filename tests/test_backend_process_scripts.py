@@ -247,6 +247,8 @@ def test_dev_backend_8118_script_contract() -> None:
     assert "PROJECT_FACTORY_GITHUB_OWNER" in script
     assert "PROJECT_FACTORY_GITHUB_VISIBILITY" in script
     assert "PROJECT_FACTORY_GITHUB_DEFAULT_BRANCH" in script
+    assert "PROJECT_FACTORY_STEP_TIMEOUT_SECONDS" in script
+    assert 'PROJECT_FACTORY_STEP_TIMEOUT_SECONDS="${project_factory_step_timeout_seconds}"' in script
     assert "APP_UPDATE_PUBLIC_BASE_URL=${BASE_URL}" in script
     assert "BRIDGE_PUBLIC_URL=${BASE_URL}" in script
     assert "INSTALLABLE_APPS_REGISTRATION_TOKEN" in script
