@@ -23,6 +23,8 @@ from backend.app.application.services.project_factory_reference_asset_service im
     ProjectFactoryReferenceAsset,
     ProjectFactoryReferenceAssetService,
 )
+from backend.app.application.services.sdd_index_service import SddIndexService
+from backend.app.application.services.sdd_standard_service import SddStandardService
 from backend.app.domain.entities.project_management import (
     PROJECT_CHARTER_BRAND_PATH,
     PROJECT_CHARTER_CHANGELOG_PATH,
@@ -172,6 +174,7 @@ class ProjectFactoryGeneratorService:
                             size_bytes=path.stat().st_size,
                         )
                     )
+            _refresh_sdd_indexes(target, written)
             git_status = _init_git(target)
         except Exception as exc:
             _cleanup_created_target(target)
@@ -201,6 +204,7 @@ def _project_files(manifest: dict[str, Any]) -> dict[str, str]:
         ".codex/project.yaml": _to_yaml(manifest),
         "codex-bridge.yaml": _codex_bridge_yaml(slug, name),
         ".gitignore": _gitignore(),
+        ".specify/memory/constitution.md": _constitution(name),
         "README.md": _readme(name, business_type, primary_goal, frontend_strategy),
         "AGENTS.md": _agents(name),
         "scripts/finalize_local_commit.sh": _finalize_local_commit_script(),
@@ -269,6 +273,18 @@ def _project_files(manifest: dict[str, Any]) -> dict[str, str]:
         ),
         "specs/001-product-foundation/tasks.md": _initial_tasks(
             frontend_strategy,
+        ),
+        "specs/001-product-foundation/traceability.yaml": _initial_traceability(),
+        "specs/001-product-foundation/diagrams/foundation-flow.mmd": (
+            _foundation_flow_diagram()
+        ),
+        "specs/001-product-foundation/diagrams/foundation-flow.yaml": (
+            _feature_diagram_metadata(
+                "foundation-flow",
+                "sequence",
+                "specs/001-product-foundation/diagrams/foundation-flow.mmd",
+                "Product foundation validation flow.",
+            )
         ),
         "specs/001-product-foundation/tree.json": _initial_tree_json(
             frontend_strategy,
@@ -10813,6 +10829,37 @@ This project was created by Codex Mobile Bridge Project Factory.
 """
 
 
+def _constitution(name: str) -> str:
+    return f"""---
+template_id: constitution
+artifact_type: constitution
+owner: project
+source: generated-project-factory
+status: draft
+---
+
+# Project Constitution
+
+## Scope
+
+This constitution governs `{name}` after Project Factory initialization.
+
+## Workbench-Owned Rules
+
+- Use `workbench-sdd/v1` as the project SDD standard.
+- Keep `codex-bridge.yaml`, `.sdd/` indexes, specs, traceability, and baseline
+  diagram metadata consistent before Codex write flows.
+- Protected baseline diagrams require documented impact review before changes.
+
+## Project-Owned Rules
+
+- Release builds must use real backend configuration and real data paths unless
+  a demo/mock release is explicitly requested.
+- Secrets stay in environment variables or secret managers.
+- Product changes start from specs, plans, tasks, and traceability.
+"""
+
+
 def _baseline_diagram_files(
     name: str,
     business_type: str,
@@ -10829,14 +10876,14 @@ def _baseline_diagram_files(
         "architecture/components.mmd": _components_diagram(frontend_strategy),
         "architecture/components.yaml": _diagram_metadata(
             "components",
-            "component",
+            "components",
             "architecture/components.mmd",
             f"Baseline component diagram for {name}.",
         ),
         "architecture/classes.mmd": _classes_diagram(name),
         "architecture/classes.yaml": _diagram_metadata(
             "classes",
-            "class",
+            "domain-model",
             "architecture/classes.mmd",
             f"Baseline class model for {name}.",
         ),
@@ -11055,13 +11102,35 @@ def _diagram_metadata(
 ) -> str:
     return _to_yaml(
         {
-            "id": diagram_id,
+            "diagram_id": diagram_id,
             "title": title,
             "diagram_type": diagram_type,
             "scope": "baseline",
             "owner": "project",
             "source": source,
             "status": "draft",
+            "change_policy": "baseline_impact_required",
+        }
+    )
+
+
+def _feature_diagram_metadata(
+    diagram_id: str,
+    diagram_type: str,
+    source: str,
+    title: str,
+) -> str:
+    return _to_yaml(
+        {
+            "diagram_id": diagram_id,
+            "title": title,
+            "diagram_type": diagram_type,
+            "scope": "feature",
+            "owner": "project",
+            "source": source,
+            "status": "draft",
+            "related_specs": ["001-product-foundation"],
+            "baseline_impact": "none",
         }
     )
 
@@ -11094,13 +11163,13 @@ def _diagram_index() -> str:
             "diagrams": {
                 "components": {
                     "path": "architecture/components.mmd",
-                    "diagram_type": "component",
+                    "diagram_type": "components",
                     "scope": "baseline",
                     "metadata_path": "architecture/components.yaml",
                 },
                 "classes": {
                     "path": "architecture/classes.mmd",
-                    "diagram_type": "class",
+                    "diagram_type": "domain-model",
                     "scope": "baseline",
                     "metadata_path": "architecture/classes.yaml",
                 },
@@ -11561,60 +11630,149 @@ def _initial_metadata(
     task_items = _initial_task_items(frontend_strategy)
     completed = sum(1 for item in task_items if item["status"] == "done")
     pending = len(task_items) - completed
+    return f"""id: 001-product-foundation
+slug: 001-product-foundation
+title: Product Foundation
+description: Initial product foundation for {name}.
+status: draft
+type: feature
+lifecycle_status: draft
+created_at: generated
+updated_at: generated
+generated:
+  title: false
+  description: false
+  user_pinned_title: true
+  user_pinned_description: true
+tasks:
+  total: {len(task_items)}
+  completed: {completed}
+  pending: {pending}
+last_run_state: ready
+metadata_status: fresh
+available_files: [spec.md, plan.md, tasks.md, tree.json, traceability.yaml]
+diagrams:
+  components:
+    path: architecture/components.mmd
+    diagram_type: components
+    scope: baseline
+  classes:
+    path: architecture/classes.mmd
+    diagram_type: domain-model
+    scope: baseline
+  entity-relationship:
+    path: architecture/entity-relationship.mmd
+    diagram_type: entity-relationship
+    scope: baseline
+  deployment:
+    path: architecture/deployment.mmd
+    diagram_type: deployment
+    scope: baseline
+project_slug: {slug}
+"""
+
+
+def _initial_traceability() -> str:
     return _to_yaml(
         {
-            "id": "001-product-foundation",
-            "slug": "001-product-foundation",
+            "spec_id": "001-product-foundation",
             "title": "Product Foundation",
-            "description": f"Initial product foundation for {name}.",
-            "lifecycle_status": "draft",
-            "created_at": None,
-            "updated_at": None,
-            "generated": {
-                "title": False,
-                "description": False,
-                "user_pinned_title": True,
-                "user_pinned_description": True,
+            "status": "draft",
+            "requirements": {
+                "FR-001": {
+                    "acceptance_criteria": ["AC-001"],
+                    "tasks": [
+                        "plan-1-task-3",
+                        "plan-1-task-4",
+                        "plan-1-task-9",
+                    ],
+                    "diagrams": [
+                        "specs/001-product-foundation/diagrams/foundation-flow.mmd",
+                        "architecture/components.mmd",
+                        "architecture/classes.mmd",
+                        "architecture/entity-relationship.mmd",
+                        "architecture/deployment.mmd",
+                    ],
+                }
             },
-            "tasks": {
-                "total": len(task_items),
-                "completed": completed,
-                "pending": pending,
+            "acceptance_criteria": {
+                "AC-001": {
+                    "tests": [
+                        "backend/tests/test_backend.py",
+                        "apps/mobile/test/config_test.dart",
+                        "scripts/validate_generated_project.sh",
+                    ],
+                }
             },
-            "last_run_state": None,
-            "metadata_status": "fresh",
-            "metadata_warnings": [],
-            "metadata_stale_paths": [],
-            "available_files": ["spec.md", "plan.md", "tasks.md", "tree.json"],
-            "diagrams": [
-                {
-                    "id": "components",
-                    "path": "architecture/components.mmd",
-                    "diagram_type": "component",
-                    "scope": "baseline",
+            "diagrams": {
+                "specs/001-product-foundation/diagrams/foundation-flow.mmd": {
+                    "scope": "feature",
+                    "impact_policy": "none",
                 },
-                {
-                    "id": "classes",
-                    "path": "architecture/classes.mmd",
-                    "diagram_type": "class",
+                "architecture/components.mmd": {
                     "scope": "baseline",
+                    "impact_policy": "baseline_impact_required",
                 },
-                {
-                    "id": "entity-relationship",
-                    "path": "architecture/entity-relationship.mmd",
-                    "diagram_type": "entity-relationship",
+                "architecture/classes.mmd": {
                     "scope": "baseline",
+                    "impact_policy": "baseline_impact_required",
                 },
-                {
-                    "id": "deployment",
-                    "path": "architecture/deployment.mmd",
-                    "diagram_type": "deployment",
+                "architecture/entity-relationship.mmd": {
                     "scope": "baseline",
+                    "impact_policy": "baseline_impact_required",
                 },
-            ],
-            "project_slug": slug,
+                "architecture/deployment.mmd": {
+                    "scope": "baseline",
+                    "impact_policy": "baseline_impact_required",
+                },
+            },
         }
     )
+
+
+def _foundation_flow_diagram() -> str:
+    return """sequenceDiagram
+    participant Draft as Project Factory Draft
+    participant Generator as Deterministic Generator
+    participant Validation as Local Validation
+    participant Release as Preview Release
+
+    Draft->>Generator: Approved manifest
+    Generator->>Validation: Generated Flutter/FastAPI/SDD baseline
+    Validation->>Release: Real preview runtime contract
+    Release-->>Draft: Ready context for product work
+"""
+
+
+def _refresh_sdd_indexes(
+    target: Path,
+    written: list[ProjectFactoryGeneratedFile],
+) -> None:
+    standard = SddStandardService().load()
+    status = SddIndexService().ensure_indexes(
+        target,
+        standard=standard,
+        auto_regenerate=True,
+        allow_degraded=False,
+    )
+    if status.failed:
+        raise ProjectFactoryGeneratorError(
+            f"Failed to generate SDD indexes: {status.detail}"
+        )
+    for relative_path in (
+        ".sdd/spec-index.yaml",
+        ".sdd/diagram-index.yaml",
+        ".sdd/module-index.yaml",
+        ".sdd/context-index.yaml",
+    ):
+        path = target / relative_path
+        if path.is_file():
+            written.append(
+                ProjectFactoryGeneratedFile(
+                    path=relative_path,
+                    size_bytes=path.stat().st_size,
+                )
+            )
 
 
 def _placeholder_doc(title: str, body: str) -> str:

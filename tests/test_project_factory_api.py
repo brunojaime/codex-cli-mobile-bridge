@@ -721,14 +721,21 @@ def test_project_factory_generate_creates_local_project_foundation(tmp_path: Pat
     assert (project / "scripts/validate_initial_preview_release.sh").is_file()
     assert (project / "scripts/publish_android_release.sh").is_file()
     assert (project / "specs/001-product-foundation/spec.md").is_file()
+    assert (project / ".specify/memory/constitution.md").is_file()
     assert (project / "specs/001-product-foundation/plan.md").is_file()
     assert (project / "specs/001-product-foundation/tasks.md").is_file()
     assert (project / ".sdd/spec-index.yaml").is_file()
     assert (project / ".sdd/diagram-index.yaml").is_file()
+    assert (project / ".sdd/module-index.yaml").is_file()
+    assert (project / ".sdd/context-index.yaml").is_file()
     assert (project / "architecture/components.mmd").is_file()
     assert (project / "architecture/classes.mmd").is_file()
     assert (project / "architecture/entity-relationship.mmd").is_file()
     assert (project / "architecture/deployment.mmd").is_file()
+    assert (project / "specs/001-product-foundation/traceability.yaml").is_file()
+    assert (
+        project / "specs/001-product-foundation/diagrams/foundation-flow.mmd"
+    ).is_file()
     assert (project / "docs/research/typical-apps.md").is_file()
     assert (project / "design/tokens.yaml").is_file()
     assert (project / "infra/aws/deploy-plan.md").is_file()
@@ -754,6 +761,13 @@ def test_project_factory_generate_creates_local_project_foundation(tmp_path: Pat
     )
     assert "architecture/components.mmd" in diagram_index
     assert "architecture/entity-relationship.mmd" in diagram_index
+    assert "fingerprint:" in diagram_index
+    assert "diagram_id: components" in (
+        project / "architecture/components.yaml"
+    ).read_text(encoding="utf-8")
+    assert "change_policy: baseline_impact_required" in (
+        project / "architecture/components.yaml"
+    ).read_text(encoding="utf-8")
     assert "Nienfoadmin1994" not in _read_all_text(project)
 
 

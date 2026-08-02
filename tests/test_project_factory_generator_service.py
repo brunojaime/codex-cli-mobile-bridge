@@ -18,6 +18,8 @@ from backend.app.application.services.project_factory_manifest_service import (
     ProjectFactoryManifestInput,
     ProjectFactoryManifestService,
 )
+from backend.app.application.services.sdd_index_service import SddIndexService
+from backend.app.application.services.sdd_standard_service import SddStandardService
 from backend.app.domain.entities.project_management import (
     PROJECT_CHARTER_BRAND_PATH,
     PROJECT_CHARTER_METADATA_PATH,
@@ -45,6 +47,7 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     assert result.status == "ready"
     assert result.target_path == str(project)
     assert (project / ".codex/project.yaml").is_file()
+    assert (project / ".specify/memory/constitution.md").is_file()
     assert (project / "specs/001-product-foundation/spec.md").is_file()
     assert (project / "specs/001-product-foundation/tree.json").is_file()
     assert (
@@ -55,6 +58,8 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     ).is_file()
     assert (project / ".sdd/spec-index.yaml").is_file()
     assert (project / ".sdd/diagram-index.yaml").is_file()
+    assert (project / ".sdd/module-index.yaml").is_file()
+    assert (project / ".sdd/context-index.yaml").is_file()
     assert (project / "architecture/components.mmd").is_file()
     assert (project / "architecture/components.yaml").is_file()
     assert (project / "architecture/classes.mmd").is_file()
@@ -63,6 +68,13 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     assert (project / "architecture/entity-relationship.yaml").is_file()
     assert (project / "architecture/deployment.mmd").is_file()
     assert (project / "architecture/deployment.yaml").is_file()
+    assert (project / "specs/001-product-foundation/traceability.yaml").is_file()
+    assert (
+        project / "specs/001-product-foundation/diagrams/foundation-flow.mmd"
+    ).is_file()
+    assert (
+        project / "specs/001-product-foundation/diagrams/foundation-flow.yaml"
+    ).is_file()
     assert (project / "scripts/validate_generated_project.sh").is_file()
     assert (project / "scripts/validate_publication_ready.sh").is_file()
     assert (project / "scripts/validate_release_profiles.sh").is_file()
@@ -138,6 +150,28 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     assert "pending: 4" in metadata
     assert "architecture/components.mmd" in metadata
     assert "architecture/entity-relationship.mmd" in metadata
+    components_metadata = pytest.importorskip("yaml").safe_load(
+        (project / "architecture/components.yaml").read_text(encoding="utf-8")
+    )
+    assert components_metadata["diagram_id"] == "components"
+    assert components_metadata["diagram_type"] == "components"
+    assert components_metadata["change_policy"] == "baseline_impact_required"
+    traceability = pytest.importorskip("yaml").safe_load(
+        (
+            project / "specs/001-product-foundation/traceability.yaml"
+        ).read_text(encoding="utf-8")
+    )
+    assert traceability["spec_id"] == "001-product-foundation"
+    assert "FR-001" in traceability["requirements"]
+    assert "foundation-flow" in (
+        project / "specs/001-product-foundation/diagrams/foundation-flow.yaml"
+    ).read_text(encoding="utf-8")
+    index_status = SddIndexService().ensure_indexes(
+        project,
+        standard=SddStandardService().load(),
+        auto_regenerate=False,
+    )
+    assert index_status.state == "fresh"
     manifest_payload = pytest.importorskip("yaml").safe_load(
         (project / ".codex/project.yaml").read_text(encoding="utf-8")
     )
