@@ -1,3 +1,4 @@
+import 'package:codex_app_updater/codex_app_updater.dart';
 import 'package:codex_mobile_frontend/src/services/api_client.dart';
 import 'package:codex_mobile_frontend/src/widgets/installable_apps_sheet.dart';
 import 'package:flutter/material.dart';
@@ -165,6 +166,7 @@ void main() {
 Widget _harness(
   http.Response response, {
   String baseUrl = 'http://bridge.test',
+  CodexAppUpdaterController? controller,
   Future<bool> Function(Uri apkUrl)? apkUrlLauncher,
 }) {
   return MaterialApp(
@@ -177,6 +179,7 @@ Widget _harness(
             return response;
           }),
         ),
+        updaterController: controller,
         apkUrlLauncher: apkUrlLauncher,
       ),
     ),

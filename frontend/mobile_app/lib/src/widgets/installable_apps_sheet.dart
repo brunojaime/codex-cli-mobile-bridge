@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:codex_app_updater/codex_app_updater.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -10,10 +11,12 @@ class InstallableAppsSheet extends StatefulWidget {
   const InstallableAppsSheet({
     super.key,
     required this.apiClient,
+    this.updaterController,
     this.apkUrlLauncher,
   });
 
   final ApiClient apiClient;
+  final CodexAppUpdaterController? updaterController;
   final Future<bool> Function(Uri apkUrl)? apkUrlLauncher;
 
   @override
@@ -21,24 +24,45 @@ class InstallableAppsSheet extends StatefulWidget {
 }
 
 class _InstallableAppsSheetState extends State<InstallableAppsSheet> {
+  late final CodexAppUpdaterController _updaterController =
+      widget.updaterController ?? CodexAppUpdaterController();
+  late final bool _ownsUpdaterController = widget.updaterController == null;
   late Future<List<InstallableApp>> _appsFuture;
   String? _activeSourceApp;
   String? _statusText;
   String? _errorText;
-  bool _openingApkLink = false;
 
   @override
   void initState() {
     super.initState();
     _appsFuture = widget.apiClient.listInstallableApps();
+    _updaterController.addListener(_handleUpdaterChanged);
+  }
+
+  @override
+  void dispose() {
+    _updaterController.removeListener(_handleUpdaterChanged);
+    if (_ownsUpdaterController) {
+      _updaterController.dispose();
+    }
+    super.dispose();
   }
 
   void _reload() {
     setState(() {
       _errorText = null;
       _statusText = null;
-      _openingApkLink = false;
       _appsFuture = widget.apiClient.listInstallableApps();
+    });
+  }
+
+  void _handleUpdaterChanged() {
+    if (!mounted || _activeSourceApp == null) return;
+    setState(() {
+      _statusText = _statusLabel(_updaterController.status);
+      if (_updaterController.status == CodexAppUpdateStatus.failed) {
+        _errorText = _failureLabel(_updaterController.failureReason);
+      }
     });
   }
 
@@ -49,7 +73,6 @@ class _InstallableAppsSheetState extends State<InstallableAppsSheet> {
       _activeSourceApp = app.sourceApp;
       _statusText = 'Opening APK link';
       _errorText = null;
-      _openingApkLink = true;
     });
     final resolvedApkUrl = _resolveInstallableApkUrl(
       widget.apiClient.baseUrl,
@@ -59,7 +82,6 @@ class _InstallableAppsSheetState extends State<InstallableAppsSheet> {
     final opened = await launcher(resolvedApkUrl);
     if (!mounted) return;
     setState(() {
-      _openingApkLink = false;
       _statusText = opened ? 'APK link opened' : _statusText;
       if (!opened) {
         _errorText = 'Could not open APK link';
@@ -126,7 +148,7 @@ class _InstallableAppsSheetState extends State<InstallableAppsSheet> {
                       return _InstallableAppCard(
                         app: app,
                         installing: _activeSourceApp == app.sourceApp &&
-                            _openingApkLink,
+                            _updaterController.isActiveOperation,
                         statusText: _activeSourceApp == app.sourceApp
                             ? _statusText
                             : null,
@@ -335,6 +357,33 @@ bool _isLoopbackHost(String host) {
       normalized == '0.0.0.0' ||
       normalized == '10.0.2.2' ||
       normalized == '::1';
+}
+
+String _statusLabel(CodexAppUpdateStatus status) {
+  return switch (status) {
+    CodexAppUpdateStatus.downloading => 'Downloading APK',
+    CodexAppUpdateStatus.downloaded => 'Downloaded APK',
+    CodexAppUpdateStatus.verifying => 'Verifying checksum',
+    CodexAppUpdateStatus.readyToInstall => 'Ready to install',
+    CodexAppUpdateStatus.installing => 'Opening Android installer',
+    CodexAppUpdateStatus.waitingForPermission => 'Android permission required',
+    CodexAppUpdateStatus.dismissed => 'Installer opened',
+    CodexAppUpdateStatus.failed => 'Install failed',
+    _ => 'Preparing install',
+  };
+}
+
+String _failureLabel(CodexAppUpdateFailureReason? reason) {
+  return switch (reason) {
+    CodexAppUpdateFailureReason.checksumMismatch => 'Checksum failed',
+    CodexAppUpdateFailureReason.downloadFailed => 'Failed download',
+    CodexAppUpdateFailureReason.permissionRequired =>
+      'Android permission required',
+    CodexAppUpdateFailureReason.installerUnavailable => 'Installer unavailable',
+    CodexAppUpdateFailureReason.fileMissing => 'Downloaded APK missing',
+    CodexAppUpdateFailureReason.securityException => 'Android blocked install',
+    _ => 'Install failed',
+  };
 }
 
 Future<bool> _launchExternalApkUrl(Uri apkUrl) {
