@@ -220,7 +220,7 @@ Channel contract:
   matching `android-v*`.
 - DEV: `channel=dev`, `BRIDGE_APP_CHANNEL=dev`,
   `BRIDGE_UPDATER_CHANNEL=dev`, source app `codex-mobile-dev`, Android package
-  `com.example.codex_mobile_frontend.dev`, a visible DEV app label/badge, a
+  `io.github.brunojaime.codexmobilebridge.dev`, a visible DEV app label/badge, a
   DEV stage/backend URL, visible stage/branch identity, and release tags
   matching `android-dev-v*`.
 

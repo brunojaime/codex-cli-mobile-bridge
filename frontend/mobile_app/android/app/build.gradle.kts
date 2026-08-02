@@ -50,7 +50,7 @@ android {
         }
         create("dev") {
             dimension = "environment"
-            applicationIdSuffix = ".dev"
+            applicationId = "io.github.brunojaime.codexmobilebridge.dev"
             versionNameSuffix = "-dev"
             resValue("string", "app_name", "Codex Mobile Bridge DEV")
         }

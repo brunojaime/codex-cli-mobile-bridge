@@ -174,7 +174,7 @@ jobs:
             --updater-channel "${{ steps.release_channel.outputs.updater_channel }}" \
             --environment-color "${{ steps.release_channel.outputs.environment_color }}" \
             --release-tag "${{ steps.release_channel.outputs.expected_tag }}" \
-            --expected-package-id "${{ steps.release_channel.outputs.channel == 'dev' && 'com.example.codex_mobile_frontend.dev' || 'com.example.codex_mobile_frontend' }}" \
+            --expected-package-id "${{ steps.release_channel.outputs.channel == 'dev' && 'io.github.brunojaime.codexmobilebridge.dev' || 'com.example.codex_mobile_frontend' }}" \
             --pubspec frontend/mobile_app/pubspec.yaml \
             --app-updates-registry backend/app/infrastructure/config/app_updates.json
 
@@ -207,7 +207,7 @@ jobs:
             --channel "${{ steps.release_channel.outputs.channel }}" \
             --apk "$apk_path" \
             --metadata "frontend/mobile_app/build/app/outputs/apk/${{ steps.release_channel.outputs.flavor }}/release/output-metadata.json" \
-            --expected-package-id "${{ steps.release_channel.outputs.channel == 'dev' && 'com.example.codex_mobile_frontend.dev' || 'com.example.codex_mobile_frontend' }}" \
+            --expected-package-id "${{ steps.release_channel.outputs.channel == 'dev' && 'io.github.brunojaime.codexmobilebridge.dev' || 'com.example.codex_mobile_frontend' }}" \
             --expected-output-file "app-${{ steps.release_channel.outputs.flavor }}-release.apk"
           cp "$apk_path" "release-artifacts/${{ steps.release_channel.outputs.artifact_base }}.apk"
           cp "$apk_path" "release-artifacts/${{ steps.release_channel.outputs.artifact_base }}-${{ steps.app_version.outputs.safe }}.apk"

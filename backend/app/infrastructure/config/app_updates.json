@@ -32,15 +32,15 @@
     "apkAssetPattern": "codex-mobile-dev-*.apk",
     "displayName": "Codex Mobile Bridge DEV",
     "enabled": true,
-    "expectedPackageId": "com.example.codex_mobile_frontend.dev",
+    "expectedPackageId": "io.github.brunojaime.codexmobilebridge.dev",
     "latestAssetName": "codex-mobile-dev.apk",
     "releaseChannel": "dev",
     "releaseTagPattern": "android-dev-v*",
     "repo": "brunojaime/codex-cli-mobile-bridge",
     "requiredMinimumBuild": null,
     "verifiedPackageIds": {
-      "android-dev-v*": "com.example.codex_mobile_frontend.dev",
-      "codex-mobile-dev*.apk": "com.example.codex_mobile_frontend.dev"
+      "android-dev-v*": "io.github.brunojaime.codexmobilebridge.dev",
+      "codex-mobile-dev*.apk": "io.github.brunojaime.codexmobilebridge.dev"
     }
   },
   "gestion-ludmilo": {

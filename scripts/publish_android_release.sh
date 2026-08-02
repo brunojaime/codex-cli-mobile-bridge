@@ -87,7 +87,7 @@ if [[ "$CHANNEL" == "dev" ]]; then
   UPDATER_CHANNEL="dev"
   APP_LABEL="Codex Mobile Bridge DEV"
   ENVIRONMENT_COLOR="#38BDF8"
-  EXPECTED_PACKAGE_ID="com.example.codex_mobile_frontend.dev"
+  EXPECTED_PACKAGE_ID="io.github.brunojaime.codexmobilebridge.dev"
   BRIDGE_URL="${DEV_API_BASE_URL:-${CODEX_DEV_APP_UPDATER_BRIDGE_URL:-}}"
   if [[ -z "$BRIDGE_URL" ]]; then
     echo "DEV_API_BASE_URL or CODEX_DEV_APP_UPDATER_BRIDGE_URL is required for DEV releases." >&2

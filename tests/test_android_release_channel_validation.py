@@ -110,7 +110,7 @@ def test_android_release_channel_dry_run_accepts_dev_config(
                     "releaseChannel": "dev",
                     "releaseTagPattern": "android-dev-v*",
                     "latestAssetName": "codex-mobile-dev.apk",
-                    "expectedPackageId": "com.example.codex_mobile_frontend.dev",
+                    "expectedPackageId": "io.github.brunojaime.codexmobilebridge.dev",
                 }
             }
         ),
@@ -166,7 +166,7 @@ def test_android_release_channel_rejects_local_or_mock_urls(
                     "releaseChannel": "dev",
                     "releaseTagPattern": "android-dev-v*",
                     "latestAssetName": "codex-mobile-dev.apk",
-                    "expectedPackageId": "com.example.codex_mobile_frontend.dev",
+                    "expectedPackageId": "io.github.brunojaime.codexmobilebridge.dev",
                 },
             }
         ),
@@ -233,7 +233,7 @@ def test_android_release_channel_rejects_tag_channel_mismatch(
                     "releaseChannel": "dev",
                     "releaseTagPattern": "android-dev-v*",
                     "latestAssetName": "codex-mobile-dev.apk",
-                    "expectedPackageId": "com.example.codex_mobile_frontend.dev",
+                    "expectedPackageId": "io.github.brunojaime.codexmobilebridge.dev",
                 }
             }
         ),
@@ -270,7 +270,7 @@ def test_verify_android_release_apk_checks_output_metadata(tmp_path: Path) -> No
     metadata.write_text(
         json.dumps(
             {
-                "applicationId": "com.example.codex_mobile_frontend.dev",
+                "applicationId": "io.github.brunojaime.codexmobilebridge.dev",
                 "variantName": "devRelease",
                 "elements": [{"outputFile": "app-dev-release.apk"}],
             }

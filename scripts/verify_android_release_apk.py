@@ -21,7 +21,7 @@ EXPECTED_BY_CHANNEL = {
         "output_file": "app-prod-release.apk",
     },
     "dev": {
-        "package_id": "com.example.codex_mobile_frontend.dev",
+        "package_id": "io.github.brunojaime.codexmobilebridge.dev",
         "variant": "devRelease",
         "output_file": "app-dev-release.apk",
     },

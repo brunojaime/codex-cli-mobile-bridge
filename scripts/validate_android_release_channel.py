@@ -41,7 +41,7 @@ def main() -> int:
         "codex-mobile-dev" if args.channel == "dev" else "codex-mobile"
     )
     expected_package_id = args.expected_package_id or (
-        "com.example.codex_mobile_frontend.dev"
+        "io.github.brunojaime.codexmobilebridge.dev"
         if args.channel == "dev"
         else "com.example.codex_mobile_frontend"
     )

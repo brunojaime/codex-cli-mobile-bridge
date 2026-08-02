@@ -444,7 +444,7 @@ There must be two visibly distinct app channels:
 2. DEV app
    - `dev` app/update channel;
    - source app `codex-mobile-dev`;
-   - Android package `com.example.codex_mobile_frontend.dev` so it installs
+   - Android package `io.github.brunojaime.codexmobilebridge.dev` so it installs
      side-by-side with PROD;
    - release tags `android-dev-v*`;
    - DEV API base URL;
