@@ -131,6 +131,7 @@ class ProjectFactoryRunnerContext:
     reviewer_runs: int
     codex_command: str
     timeout_seconds: int
+    codex_exec_args: str | None = None
     run_generated_validation: bool = False
     publication_validation_mode: str = "remote"
     project_assets: tuple[object, ...] = ()
@@ -671,7 +672,11 @@ class ProjectFactoryJobRunner:
             prompt_path=prompt_path,
             project_path=project_path,
         )
-        argv = _codex_argv(context.codex_command, prompt)
+        argv = _codex_argv(
+            context.codex_command,
+            prompt,
+            exec_args=context.codex_exec_args,
+        )
         try:
             result = self._process_runner.run(
                 argv=argv,

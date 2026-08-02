@@ -176,6 +176,7 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         max_reference_asset_bytes=resolved_settings.image_max_upload_bytes,
         state_root=resolved_settings.project_factory_state_dir,
         codex_command=resolved_settings.codex_command,
+        codex_exec_args=resolved_settings.codex_exec_args,
         timeout_seconds=resolved_settings.project_factory_step_timeout_seconds,
         generator_runs_override=(
             resolved_settings.project_factory_generator_runs_override

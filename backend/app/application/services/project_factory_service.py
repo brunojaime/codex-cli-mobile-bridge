@@ -230,6 +230,7 @@ class ProjectFactoryService:
         max_reference_asset_bytes: int,
         state_root: str | Path | None = None,
         codex_command: str = "codex",
+        codex_exec_args: str | None = None,
         timeout_seconds: int = 0,
         generator_runs_override: int | None = None,
         reviewer_runs_override: int | None = None,
@@ -266,6 +267,7 @@ class ProjectFactoryService:
             remote_preflight=remote_publication_preflight,
         )
         self._codex_command = codex_command
+        self._codex_exec_args = codex_exec_args
         self._timeout_seconds = timeout_seconds
         self._generator_runs_override = generator_runs_override
         self._reviewer_runs_override = reviewer_runs_override
@@ -957,6 +959,7 @@ class ProjectFactoryService:
             generator_runs=generator_runs,
             reviewer_runs=reviewer_runs,
             codex_command=self._codex_command,
+            codex_exec_args=self._codex_exec_args,
             timeout_seconds=self._timeout_seconds,
             run_generated_validation=self._run_generated_validation,
             publication_validation_mode=self._publication_validation_mode,

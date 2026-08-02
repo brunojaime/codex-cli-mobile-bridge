@@ -88,6 +88,32 @@ def test_project_factory_runner_success_writes_prompts_and_runs_pairs(
     assert events[-1]["command"] == ["bash", "scripts/validate_publication_ready.sh"]
 
 
+def test_project_factory_runner_uses_configured_codex_exec_args(
+    tmp_path: Path,
+) -> None:
+    process_runner = _FakeProcessRunner()
+    runner = _runner(tmp_path, process_runner)
+
+    runner.run(
+        _context(
+            tmp_path,
+            generator_runs=0,
+            reviewer_runs=0,
+            codex_exec_args=(
+                "--skip-git-repo-check --color never "
+                "--dangerously-bypass-approvals-and-sandbox"
+            ),
+        ),
+        event_sink=lambda _event: None,
+    )
+
+    assert process_runner.calls
+    assert "--dangerously-bypass-approvals-and-sandbox" in process_runner.calls[0]
+    assert process_runner.calls[0][-1].startswith(
+        "Read and follow the full Project Factory prompt"
+    )
+
+
 def test_project_factory_runner_fails_closed_when_visual_ux_skill_missing(
     tmp_path: Path,
 ) -> None:
@@ -923,6 +949,7 @@ def _context(
     *,
     generator_runs: int,
     reviewer_runs: int,
+    codex_exec_args: str | None = None,
     run_generated_validation: bool = False,
     publication_validation_mode: str = "local",
 ):
@@ -944,6 +971,7 @@ def _context(
         generator_runs=generator_runs,
         reviewer_runs=reviewer_runs,
         codex_command="fake-codex",
+        codex_exec_args=codex_exec_args,
         timeout_seconds=1,
         run_generated_validation=run_generated_validation,
         publication_validation_mode=publication_validation_mode,
