@@ -102,14 +102,17 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     assert (project / "backend/.gitkeep").is_file()
     assert result.git_status == "initialized_committed"
     assert _git(["log", "--oneline", "-1"], project).stdout
-    assert "Initial Project Factory baseline" in _git(
-        ["log", "--format=%s", "-1"],
-        project,
-    ).stdout
+    assert (
+        "Initial Project Factory baseline"
+        in _git(
+            ["log", "--format=%s", "-1"],
+            project,
+        ).stdout
+    )
     assert _git(["status", "--porcelain"], project).stdout == ""
-    metadata = (
-        project / "specs/001-product-foundation/metadata.yaml"
-    ).read_text(encoding="utf-8")
+    metadata = (project / "specs/001-product-foundation/metadata.yaml").read_text(
+        encoding="utf-8"
+    )
     assert "tree.json" in metadata
     assert "total: 11" in metadata
     assert "completed: 7" in metadata
@@ -123,9 +126,9 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     assert components_metadata["diagram_type"] == "components"
     assert components_metadata["change_policy"] == "baseline_impact_required"
     traceability = pytest.importorskip("yaml").safe_load(
-        (
-            project / "specs/001-product-foundation/traceability.yaml"
-        ).read_text(encoding="utf-8")
+        (project / "specs/001-product-foundation/traceability.yaml").read_text(
+            encoding="utf-8"
+        )
     )
     assert traceability["spec_id"] == "001-product-foundation"
     assert "FR-001" in traceability["requirements"]
@@ -154,12 +157,10 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     api_client = (project / "apps/mobile/lib/src/api_client.dart").read_text(
         encoding="utf-8"
     )
-    screens = (project / "apps/mobile/lib/src/screens.dart").read_text(
+    screens = (project / "apps/mobile/lib/src/screens.dart").read_text(encoding="utf-8")
+    session = (project / "apps/mobile/lib/src/session_controller.dart").read_text(
         encoding="utf-8"
     )
-    session = (
-        project / "apps/mobile/lib/src/session_controller.dart"
-    ).read_text(encoding="utf-8")
     main = (project / "apps/mobile/lib/main.dart").read_text(encoding="utf-8")
     pubspec = (project / "apps/mobile/pubspec.yaml").read_text(encoding="utf-8")
     assert "acceptPreviewInvite" in api_client
@@ -250,6 +251,45 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     assert "Nienfoadmin1994" not in _read_all_text(project)
 
 
+def test_generator_reuses_matching_existing_scaffold(tmp_path: Path) -> None:
+    service = ProjectFactoryManifestService(projects_root=tmp_path)
+    request = ProjectFactoryManifestInput(
+        name="Clinica Norte",
+        business_type="medical",
+        primary_goal="Reservar turnos",
+    )
+    manifest_plan = service.plan_manifest(request)
+    generator = ProjectFactoryGeneratorService()
+    generator.generate(manifest_plan)
+
+    reusable_plan = service.plan_manifest(request, allow_existing=True)
+    result = generator.generate(reusable_plan)
+
+    assert result.ok is True
+    assert result.status == "ready"
+    assert result.target_path == str(tmp_path / "clinica-norte")
+    assert result.message == "Managed Project Factory files refreshed."
+
+
+def test_generator_rejects_dirty_existing_scaffold(tmp_path: Path) -> None:
+    service = ProjectFactoryManifestService(projects_root=tmp_path)
+    request = ProjectFactoryManifestInput(
+        name="Clinica Norte",
+        business_type="medical",
+        primary_goal="Reservar turnos",
+    )
+    manifest_plan = service.plan_manifest(request)
+    generator = ProjectFactoryGeneratorService()
+    generator.generate(manifest_plan)
+    project = tmp_path / "clinica-norte"
+    (project / "README.md").write_text("local edit\n", encoding="utf-8")
+
+    reusable_plan = service.plan_manifest(request, allow_existing=True)
+
+    with pytest.raises(ProjectFactoryGeneratorError, match="uncommitted changes"):
+        generator.generate(reusable_plan)
+
+
 def test_generator_uses_readable_android_label_for_slug_like_project_name(
     tmp_path: Path,
 ) -> None:
@@ -266,8 +306,7 @@ def test_generator_uses_readable_android_label_for_slug_like_project_name(
     ProjectFactoryGeneratorService().generate(manifest_plan)
 
     manifest = (
-        tmp_path
-        / "prueba-24/apps/mobile/android/app/src/main/AndroidManifest.xml"
+        tmp_path / "prueba-24/apps/mobile/android/app/src/main/AndroidManifest.xml"
     ).read_text(encoding="utf-8")
     assert 'android:label="Prueba 24"' in manifest
     assert "prueba-24" not in manifest
@@ -436,9 +475,9 @@ def test_generator_writes_svelte_web_strategy_without_android_overpromise(
     build_script = (project / "scripts/build_web_preview.sh").read_text(
         encoding="utf-8"
     )
-    validation_script = (
-        project / "scripts/validate_generated_project.sh"
-    ).read_text(encoding="utf-8")
+    validation_script = (project / "scripts/validate_generated_project.sh").read_text(
+        encoding="utf-8"
+    )
     assert "npm ci" in build_script
     assert "npm install" not in build_script
     assert "npm ci" in validation_script
@@ -483,12 +522,14 @@ def test_generator_writes_svelte_web_strategy_without_android_overpromise(
     assert "api_runtime_env: VITE_API_RUNTIME" in contracts
     assert "preview_api_env: VITE_API_BASE_URL" in contracts
     assert "env: APP_RUNTIME_PROFILE" not in contracts
-    assert "web_preview_ready: false" in release_files[
-        "release/release-output-template.md"
-    ]
-    assert "installable_android: false" in release_files[
-        "release/release-output-template.md"
-    ]
+    assert (
+        "web_preview_ready: false"
+        in release_files["release/release-output-template.md"]
+    )
+    assert (
+        "installable_android: false"
+        in release_files["release/release-output-template.md"]
+    )
     scanned_files = [
         project / "README.md",
         *sorted((project / "specs/001-product-foundation").glob("*.md")),
@@ -524,9 +565,9 @@ def test_generator_writes_svelte_web_strategy_without_android_overpromise(
             "",
         ), scanned_file
 
-    final_gate = (
-        project / "scripts/validate_initial_preview_release.sh"
-    ).read_text(encoding="utf-8")
+    final_gate = (project / "scripts/validate_initial_preview_release.sh").read_text(
+        encoding="utf-8"
+    )
     assert "scripts/smoke_web_preview.sh" in final_gate
     assert "scripts/smoke_preview_api.sh" in final_gate
     assert final_gate.index("scripts/smoke_web_preview.sh") < final_gate.index(
@@ -590,9 +631,7 @@ def test_generated_svelte_project_npm_preview_contract_smoke(
             **os.environ,
             "VITE_APP_RUNTIME_PROFILE": "preview",
             "VITE_API_RUNTIME": "cloudflare_preview",
-            "VITE_API_BASE_URL": (
-                "https://preview.nienfos.com/portal-clientes/api"
-            ),
+            "VITE_API_BASE_URL": ("https://preview.nienfos.com/portal-clientes/api"),
         },
         text=True,
         capture_output=True,
@@ -690,7 +729,9 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
     )
     assert "vars.CODEX_APP_UPDATER_ENABLED || 'true'" in android_preview
 
-    android_preview_script = tmp_path / "clinica-norte/scripts/publish_android_preview_release.sh"
+    android_preview_script = (
+        tmp_path / "clinica-norte/scripts/publish_android_preview_release.sh"
+    )
     assert android_preview_script.is_file()
     assert android_preview_script.stat().st_mode & stat.S_IXUSR
     android_preview_content = android_preview_script.read_text(encoding="utf-8")
@@ -701,17 +742,16 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
         android_preview_content
     )
     assert "preview_health_ready" in smoke_preview_content
-    assert "health.get(\"assets_bound\") is True" in smoke_preview_content
-    assert "for delay in (0.5, 1.0, 2.0, 3.0, 5.0, 8.0)" in (
-        smoke_preview_content
-    )
+    assert 'health.get("assets_bound") is True' in smoke_preview_content
+    assert "for delay in (0.5, 1.0, 2.0, 3.0, 5.0, 8.0)" in (smoke_preview_content)
     assert 'PREVIEW_ORIGIN="https://preview.nienfos.com/$SOURCE_APP"' in (
         smoke_preview_content
     )
     assert 'PREVIEW_API_BASE_URL="$PREVIEW_ORIGIN/api"' in smoke_preview_content
     assert "export PREVIEW_API_BASE_URL" in smoke_preview_content
-    assert "expected_url=https://preview.nienfos.com/{source_app}/api/admin/bootstrap" in (
-        smoke_preview_content
+    assert (
+        "expected_url=https://preview.nienfos.com/{source_app}/api/admin/bootstrap"
+        in (smoke_preview_content)
     )
     assert "does not accept POST" in smoke_preview_content
     assert "android-preview-v${version//+/-build.}" in android_preview_content
@@ -720,7 +760,10 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
     assert "scripts/github_repo_access.sh" in android_preview_content
     assert "bridge_env_load_preview_signing" in android_preview_content
     assert "APP_RUNTIME_PROFILE=preview" in android_preview_content
-    assert 'ANDROID_PREVIEW_RELEASE_MODE="${ANDROID_PREVIEW_RELEASE_MODE:-bridge_local}"' in android_preview_content
+    assert (
+        'ANDROID_PREVIEW_RELEASE_MODE="${ANDROID_PREVIEW_RELEASE_MODE:-bridge_local}"'
+        in android_preview_content
+    )
     assert "--github-actions" in android_preview_content
     assert "flutter build apk" in android_preview_content
     assert "--target=lib/main_preview.dart" in android_preview_content
@@ -743,18 +786,23 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
     assert "DEBUG_PREVIEW_SIGNING" not in android_preview_content
     assert "https://preview.nienfos.com/$SOURCE_APP/api" in android_preview_content
     assert "--dart-define=CODEX_APP_UPDATER_ENABLED=true" in android_preview_content
-    assert '--dart-define=CODEX_APP_UPDATER_BRIDGE_URL="${BRIDGE_PUBLIC_URL:-${BRIDGE_URL:-}}"' in android_preview_content
-    assert "BRIDGE_REGISTRATION_URL or BRIDGE_URL is required" in android_preview_content
+    assert (
+        '--dart-define=CODEX_APP_UPDATER_BRIDGE_URL="${BRIDGE_PUBLIC_URL:-${BRIDGE_URL:-}}"'
+        in android_preview_content
+    )
+    assert (
+        "BRIDGE_REGISTRATION_URL or BRIDGE_URL is required" in android_preview_content
+    )
     assert 'BRIDGE_URL="$bridge_registration_url"' in android_preview_content
     assert '"$HOME/.local/share/android-sdk"' in android_preview_content
     assert '[[ -d "$sdk_root/build-tools" ]] || continue' in android_preview_content
-    assert "git push origin \"$tag\"" in android_preview_content
+    assert 'git push origin "$tag"' in android_preview_content
     assert android_preview_content.index(
         "Preview APK must not be signed with Android debug certificate"
     ) < android_preview_content.index('git push origin "$tag"')
-    assert android_preview_content.index('"$apksigner" verify') < android_preview_content.index(
-        'git push origin "$tag"'
-    )
+    assert android_preview_content.index(
+        '"$apksigner" verify'
+    ) < android_preview_content.index('git push origin "$tag"')
     assert "GitHub Actions Android preview workflow failed before producing" in (
         android_preview_content
     )
@@ -796,20 +844,29 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
     )
     assert "certificate SHA-256 digest/ { print $2; exit }" not in workflow_content
 
-    android_release_script = tmp_path / "clinica-norte/scripts/publish_android_release.sh"
+    android_release_script = (
+        tmp_path / "clinica-norte/scripts/publish_android_release.sh"
+    )
     assert android_release_script.is_file()
     assert android_release_script.stat().st_mode & stat.S_IXUSR
     android_release_content = android_release_script.read_text(encoding="utf-8")
     assert "apps/mobile/android is required" in android_release_content
-    assert "API_BASE_URL is required for a real Android release" in android_release_content
+    assert (
+        "API_BASE_URL is required for a real Android release" in android_release_content
+    )
     assert "GitHub Actions variable API_BASE_URL is not configured" in (
         android_release_content
     )
-    assert "real Android release cannot use APP_RUNTIME_PROFILE=mock" in android_release_content
-    assert "git push origin \"$tag\"" in android_release_content
+    assert (
+        "real Android release cannot use APP_RUNTIME_PROFILE=mock"
+        in android_release_content
+    )
+    assert 'git push origin "$tag"' in android_release_content
     assert "GitHub release $tag did not expose an APK asset" in android_release_content
 
-    release_profile_script = tmp_path / "clinica-norte/scripts/validate_release_profiles.sh"
+    release_profile_script = (
+        tmp_path / "clinica-norte/scripts/validate_release_profiles.sh"
+    )
     assert release_profile_script.is_file()
     assert release_profile_script.stat().st_mode & stat.S_IXUSR
     release_profile_content = release_profile_script.read_text(encoding="utf-8")
@@ -1084,9 +1141,9 @@ def test_generated_preview_api_smoke_retries_until_assets_bound(
     )
     ProjectFactoryGeneratorService().generate(manifest_plan)
 
-    smoke_script = (
-        tmp_path / "clinica-norte/scripts/smoke_preview_api.sh"
-    ).read_text(encoding="utf-8")
+    smoke_script = (tmp_path / "clinica-norte/scripts/smoke_preview_api.sh").read_text(
+        encoding="utf-8"
+    )
     python_source = smoke_script.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
 
     class Handler(BaseHTTPRequestHandler):
@@ -1203,14 +1260,17 @@ def test_android_preview_release_ignores_domain_factory_specs_dirty_state(
     domain_spec = project / "specs/019-domain-factory-abc123/spec.md"
     domain_spec.parent.mkdir(parents=True)
     domain_spec.write_text("# Domain Factory draft\n", encoding="utf-8")
-    assert "?? specs/019-domain-factory-abc123/" in _git(
-        ["status", "--porcelain"],
-        project,
-    ).stdout
+    assert (
+        "?? specs/019-domain-factory-abc123/"
+        in _git(
+            ["status", "--porcelain"],
+            project,
+        ).stdout
+    )
 
-    publish_script = (
-        project / "scripts/publish_android_preview_release.sh"
-    ).read_text(encoding="utf-8")
+    publish_script = (project / "scripts/publish_android_preview_release.sh").read_text(
+        encoding="utf-8"
+    )
     function_source = _extract_shell_function(
         publish_script,
         "preview_release_blocking_git_status",
@@ -1255,9 +1315,9 @@ def test_android_preview_release_ignores_gradle_kotlin_dirty_state(
     ).splitlines() == ["upload-keystore.jks", "key.properties", ".kotlin/"]
     assert ".kotlin" not in _git(["status", "--porcelain"], project).stdout
 
-    publish_script = (
-        project / "scripts/publish_android_preview_release.sh"
-    ).read_text(encoding="utf-8")
+    publish_script = (project / "scripts/publish_android_preview_release.sh").read_text(
+        encoding="utf-8"
+    )
     function_source = _extract_shell_function(
         publish_script,
         "preview_release_blocking_git_status",
@@ -1452,7 +1512,10 @@ def test_generated_initial_preview_validation_parses_apksigner_sha_formats(
     ProjectFactoryGeneratorService().generate(manifest_plan)
 
     project = tmp_path / "clinica-norte"
-    _git(["remote", "add", "origin", "https://github.com/acme/clinica-norte.git"], project)
+    _git(
+        ["remote", "add", "origin", "https://github.com/acme/clinica-norte.git"],
+        project,
+    )
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     command_log, bridge_root = _write_initial_preview_gate_fakes(
@@ -1502,9 +1565,7 @@ def test_generated_initial_preview_validation_parses_apksigner_sha_formats(
     assert completed.returncode == 0, completed.stdout + completed.stderr
     report = json.loads(report_path.read_text(encoding="utf-8"))
     signer_check = next(
-        item
-        for item in report["checks"]
-        if item["name"] == "apksigner signer SHA256"
+        item for item in report["checks"] if item["name"] == "apksigner signer SHA256"
     )
     assert signer_check["status"] == "passed"
     assert (
@@ -1528,7 +1589,10 @@ def test_generated_initial_preview_validation_fails_when_report_dirties_git(
     ProjectFactoryGeneratorService().generate(manifest_plan)
 
     project = tmp_path / "clinica-norte"
-    _git(["remote", "add", "origin", "https://github.com/acme/clinica-norte.git"], project)
+    _git(
+        ["remote", "add", "origin", "https://github.com/acme/clinica-norte.git"],
+        project,
+    )
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     command_log, bridge_root = _write_initial_preview_gate_fakes(
@@ -1579,10 +1643,13 @@ def test_generated_initial_preview_validation_fails_when_report_dirties_git(
     statuses = {item["name"]: item["status"] for item in report["checks"]}
     assert statuses["clean git status"] == "failed"
     assert statuses["validate_initial_preview_release.sh"] == "failed"
-    assert "?? release/initial-preview-validation-report.json" in _git(
-        ["status", "--porcelain"],
-        project,
-    ).stdout
+    assert (
+        "?? release/initial-preview-validation-report.json"
+        in _git(
+            ["status", "--porcelain"],
+            project,
+        ).stdout
+    )
     assert "one or more required checks failed" in completed.stdout + completed.stderr
 
 
@@ -1601,7 +1668,10 @@ def test_generated_initial_preview_validation_reports_failed_flutter_check(
     ProjectFactoryGeneratorService().generate(manifest_plan)
 
     project = tmp_path / "clinica-norte"
-    _git(["remote", "add", "origin", "https://github.com/acme/clinica-norte.git"], project)
+    _git(
+        ["remote", "add", "origin", "https://github.com/acme/clinica-norte.git"],
+        project,
+    )
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     command_log, bridge_root = _write_initial_preview_gate_fakes(
@@ -1653,7 +1723,10 @@ def test_generated_initial_preview_validation_rejects_bad_bridge_registration(
     ProjectFactoryGeneratorService().generate(manifest_plan)
 
     project = tmp_path / "clinica-norte"
-    _git(["remote", "add", "origin", "https://github.com/acme/clinica-norte.git"], project)
+    _git(
+        ["remote", "add", "origin", "https://github.com/acme/clinica-norte.git"],
+        project,
+    )
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -1720,10 +1793,7 @@ def test_generated_initial_preview_validation_rejects_bad_bridge_registration(
             **payload,
         }
         fake_curl.write_text(
-            "#!/usr/bin/env bash\n"
-            "cat <<'JSON'\n"
-            f"{json.dumps(detail)}\n"
-            "JSON\n",
+            f"#!/usr/bin/env bash\ncat <<'JSON'\n{json.dumps(detail)}\nJSON\n",
             encoding="utf-8",
         )
         fake_curl.chmod(0o755)
@@ -1762,7 +1832,10 @@ def test_generated_initial_preview_validation_checks_expected_apk_sha256(
     ProjectFactoryGeneratorService().generate(manifest_plan)
 
     project = tmp_path / "clinica-norte"
-    _git(["remote", "add", "origin", "https://github.com/acme/clinica-norte.git"], project)
+    _git(
+        ["remote", "add", "origin", "https://github.com/acme/clinica-norte.git"],
+        project,
+    )
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
@@ -1774,11 +1847,11 @@ def test_generated_initial_preview_validation_checks_expected_apk_sha256(
     fake_curl = fake_bin / "curl"
     fake_curl.write_text(
         "#!/usr/bin/env bash\n"
-        "args=\"$*\"\n"
+        'args="$*"\n'
         "if [[ \"$args\" == *'https://bridge.test/apk'* ]]; then\n"
         "  out=/tmp/project-factory-preview.apk\n"
         "  while [[ $# -gt 0 ]]; do\n"
-        "    if [[ \"$1\" == '-o' ]]; then out=\"$2\"; shift 2; else shift; fi\n"
+        '    if [[ "$1" == \'-o\' ]]; then out="$2"; shift 2; else shift; fi\n'
         "  done\n"
         "  printf 'real-apk-bytes' > \"$out\"\n"
         "  exit 0\n"
@@ -1790,7 +1863,9 @@ def test_generated_initial_preview_validation_checks_expected_apk_sha256(
         '"previewUrl":"https://preview.nienfos.com/clinica-norte",'
         '"runtimeProfile":"preview","productionReady":false,'
         '"mockOrDemo":false,"apkUrl":"https://bridge.test/apk",'
-        '"sha256":"' + ("0" * 64) + '","latestBuild":{"releaseTag":"android-preview-v0.1.0-build.1"}}\n'
+        '"sha256":"'
+        + ("0" * 64)
+        + '","latestBuild":{"releaseTag":"android-preview-v0.1.0-build.1"}}\n'
         "JSON\n",
         encoding="utf-8",
     )
@@ -1891,7 +1966,9 @@ def test_generated_android_release_workflow_defaults_to_real_runtime(
     assert "|| 'real'" in workflow
     assert "android-mock-v*" in workflow
     assert 'LOCAL_DATA_MODE: "false"' in workflow
-    assert 'args+=(--dart-define=APP_RUNTIME_PROFILE="$APP_RUNTIME_PROFILE")' in workflow
+    assert (
+        'args+=(--dart-define=APP_RUNTIME_PROFILE="$APP_RUNTIME_PROFILE")' in workflow
+    )
     assert 'args+=(--dart-define=API_BASE_URL="$API_BASE_URL")' in workflow
     assert '"android-preview-v*"' in preview_workflow
     assert "APP_RUNTIME_PROFILE: preview" in preview_workflow
@@ -1916,9 +1993,7 @@ def test_generated_contract_docs_have_coherent_minimum_content(
     ProjectFactoryGeneratorService().generate(manifest_plan)
 
     project = tmp_path / "clinica-norte"
-    contracts = (project / "release/release-contracts.yaml").read_text(
-        encoding="utf-8"
-    )
+    contracts = (project / "release/release-contracts.yaml").read_text(encoding="utf-8")
     preview_runtime = json.loads(
         (project / "release/preview-runtime.json").read_text(encoding="utf-8")
     )
@@ -1929,13 +2004,9 @@ def test_generated_contract_docs_have_coherent_minimum_content(
         (project / "release/cloudflare-cost-posture.json").read_text(encoding="utf-8")
     )
     signing_policy = json.loads(
-        (project / "release/preview-signing-policy.json").read_text(
-            encoding="utf-8"
-        )
+        (project / "release/preview-signing-policy.json").read_text(encoding="utf-8")
     )
-    runtime_doc = (project / "release/runtime-profiles.md").read_text(
-        encoding="utf-8"
-    )
+    runtime_doc = (project / "release/runtime-profiles.md").read_text(encoding="utf-8")
     promotion_doc = (project / "release/promotion-runbook.md").read_text(
         encoding="utf-8"
     )
@@ -2132,7 +2203,10 @@ def test_generated_business_records_d1_migration_is_app_scoped_and_idempotent(
     assert "CREATE TABLE IF NOT EXISTS preview_business_record_events" in sql
     assert "source_app TEXT NOT NULL" in sql
     assert "app_slug TEXT NOT NULL" in sql
-    assert "CREATE INDEX IF NOT EXISTS idx_preview_business_record_events_app_record" in sql
+    assert (
+        "CREATE INDEX IF NOT EXISTS idx_preview_business_record_events_app_record"
+        in sql
+    )
     assert "preview_domain_" not in sql
 
 
@@ -2179,9 +2253,7 @@ def test_generated_project_has_no_stale_domain_contract(
     assert "preview_business_records" in generated_text
     assert "business_records" in generated_text
     assert "business-records" in generated_text
-    components = (project / "architecture/components.mmd").read_text(
-        encoding="utf-8"
-    )
+    components = (project / "architecture/components.mmd").read_text(encoding="utf-8")
     assert "businessRecords[Business Records]" in components
     assert "api --> businessRecords" in components
     assert "businessRecords --> db" in components
@@ -2222,7 +2294,7 @@ def test_generated_apply_preview_d1_migrations_blocks_and_reapplies_safely(
     fake_wrangler = fake_bin / "wrangler"
     fake_wrangler.write_text(
         "#!/usr/bin/env bash\n"
-        "printf '%s\\n' \"$*\" >> \"$WRANGLER_CALLS\"\n"
+        'printf \'%s\\n\' "$*" >> "$WRANGLER_CALLS"\n'
         "if [[ \"$*\" == *'--json'* ]]; then printf '[]\\n'; fi\n"
         "exit 0\n",
         encoding="utf-8",
@@ -2258,8 +2330,12 @@ def test_generated_apply_preview_d1_migrations_blocks_and_reapplies_safely(
     assert second.returncode == 0, second.stdout + second.stderr
     lines = calls.read_text(encoding="utf-8").splitlines()
     assert any("--command PRAGMA table_info(preview_invites)" in line for line in lines)
-    assert any("ALTER TABLE preview_invites ADD COLUMN email TEXT" in line for line in lines)
-    assert any(line.startswith("d1 execute preview-db --remote --file") for line in lines)
+    assert any(
+        "ALTER TABLE preview_invites ADD COLUMN email TEXT" in line for line in lines
+    )
+    assert any(
+        line.startswith("d1 execute preview-db --remote --file") for line in lines
+    )
     assert any("0001_preview_invites.sql" in line for line in lines)
     assert any("0002_business_records.sql" in line for line in lines)
     assert not any("0002_domain_entities.sql" in line for line in lines)
@@ -2281,9 +2357,7 @@ def test_generated_preview_signing_policy_blocks_debug_without_metadata(
 
     project = tmp_path / "clinica-norte"
     policy = json.loads(
-        (project / "release/preview-signing-policy.json").read_text(
-            encoding="utf-8"
-        )
+        (project / "release/preview-signing-policy.json").read_text(encoding="utf-8")
     )
     assert policy["defaultSigningMode"] == "preview"
     assert "debugPreview" not in policy
@@ -2376,7 +2450,7 @@ def test_generated_project_registers_installable_app_contract(
     assert script.is_file()
     assert script.stat().st_mode & stat.S_IXUSR
     content = script.read_text(encoding="utf-8")
-    assert "RUNTIME_CONTRACT=\"$ROOT_DIR/release/preview-runtime.json\"" in content
+    assert 'RUNTIME_CONTRACT="$ROOT_DIR/release/preview-runtime.json"' in content
     assert "RT_SOURCE_APP" in content
     assert 'SOURCE_APP="${SOURCE_APP:-${RT_SOURCE_APP:-clinica-norte}}"' in content
     assert (
@@ -2387,21 +2461,24 @@ def test_generated_project_registers_installable_app_contract(
     assert 'BRIDGE_PUBLIC_URL="${BRIDGE_PUBLIC_URL:-}"' in content
     assert 'BRIDGE_PUBLIC_URL="${BRIDGE_PUBLIC_URL:-$BRIDGE_URL}"' in content
     assert 'bridge_detail_headers+=(-H "Host: $public_host")' in content
-    assert (
-        'bridge_detail_headers+=(-H "X-Forwarded-Proto: $public_scheme")'
-        in content
-    )
+    assert 'bridge_detail_headers+=(-H "X-Forwarded-Proto: $public_scheme")' in content
     assert "BRIDGE_REGISTRATION_TOKEN" in content
     assert (
         'RELEASE_TAG_PATTERN="${RELEASE_TAG_PATTERN:-${RT_RELEASE_TAG_PATTERN:-android-preview-v*}}"'
         in content
     )
-    assert 'RELEASE_CHANNEL="${RELEASE_CHANNEL:-${RT_RELEASE_CHANNEL:-prerelease}}"' in content
+    assert (
+        'RELEASE_CHANNEL="${RELEASE_CHANNEL:-${RT_RELEASE_CHANNEL:-prerelease}}"'
+        in content
+    )
     assert (
         'PREVIEW_URL="${PREVIEW_URL:-${RT_PREVIEW_URL:-https://preview.nienfos.com/clinica-norte}}"'
         in content
     )
-    assert 'RUNTIME_PROFILE="${RUNTIME_PROFILE:-${RT_RUNTIME_PROFILE:-preview}}"' in content
+    assert (
+        'RUNTIME_PROFILE="${RUNTIME_PROFILE:-${RT_RUNTIME_PROFILE:-preview}}"'
+        in content
+    )
     assert (
         'PRODUCTION_READY="${PRODUCTION_READY:-${RT_PRODUCTION_READY:-false}}"'
         in content
@@ -2413,8 +2490,8 @@ def test_generated_project_registers_installable_app_contract(
     assert "--dry-run" in content
     assert "gh release view" in content
     assert 'POST "$BRIDGE_URL/installable-apps"' in content
-    assert 'Authorization: Bearer $BRIDGE_REGISTRATION_TOKEN' in content
-    assert 'installable-apps/$SOURCE_APP' in content
+    assert "Authorization: Bearer $BRIDGE_REGISTRATION_TOKEN" in content
+    assert "installable-apps/$SOURCE_APP" in content
     assert "curl -fsSI" in content
     assert "apk_proxy_deadline" in content
     assert 'local_apk_url="$BRIDGE_URL${apk_url#"$BRIDGE_PUBLIC_URL"}"' in content
@@ -2455,11 +2532,11 @@ def test_generated_register_installable_app_script_dry_run_uses_release_asset(
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
             "BRIDGE_URL": "http://bridge.test",
             "BRIDGE_REGISTRATION_TOKEN": "token",
-                "GITHUB_REPO": "brunojaime/clinica-norte",
-                "APP_RELEASE_TAG": "android-preview-v0.1.0-build.1",
-                "LATEST_ASSET_NAME": "clinica-norte.apk",
-                "CODEX_MOBILE_BRIDGE_ROOT": str(tmp_path / "empty-bridge-root"),
-            },
+            "GITHUB_REPO": "brunojaime/clinica-norte",
+            "APP_RELEASE_TAG": "android-preview-v0.1.0-build.1",
+            "LATEST_ASSET_NAME": "clinica-norte.apk",
+            "CODEX_MOBILE_BRIDGE_ROOT": str(tmp_path / "empty-bridge-root"),
+        },
         text=True,
         capture_output=True,
         check=False,
@@ -2499,8 +2576,8 @@ def test_generated_register_installable_app_script_posts_preview_metadata(
     fake_curl = fake_bin / "curl"
     fake_curl.write_text(
         "#!/usr/bin/env bash\n"
-        "printf '%s\\n' \"$*\" >> \"$CURL_CALLS_FILE\"\n"
-        "args=\"$*\"\n"
+        'printf \'%s\\n\' "$*" >> "$CURL_CALLS_FILE"\n'
+        'args="$*"\n'
         "if [[ \"$args\" == *'https://bridge.test/apk'* ]]; then\n"
         "  echo 'Could not resolve host: bridge.test' >&2\n"
         "  exit 6\n"
@@ -2518,7 +2595,9 @@ def test_generated_register_installable_app_script_posts_preview_metadata(
         '"previewUrl":"https://preview.nienfos.com/clinica-norte",'
         '"runtimeProfile":"preview","productionReady":false,'
         '"mockOrDemo":false,"apkUrl":"https://bridge.test/apk",'
-        '"sha256":"' + ("0" * 64) + '","latestBuild":{"releaseTag":"android-preview-v0.1.0-build.1"},'
+        '"sha256":"'
+        + ("0" * 64)
+        + '","latestBuild":{"releaseTag":"android-preview-v0.1.0-build.1"},'
         '"installStatusHint":"available"}\n'
         "JSON\n"
         "  exit 0\n"
@@ -2537,13 +2616,13 @@ def test_generated_register_installable_app_script_posts_preview_metadata(
             **os.environ,
             "PATH": f"{fake_bin}:{os.environ['PATH']}",
             "BRIDGE_URL": "http://localhost:8000",
-                "BRIDGE_PUBLIC_URL": "https://bridge.test",
-                "BRIDGE_REGISTRATION_TOKEN": "token",
-                "GITHUB_REPO": "brunojaime/clinica-norte",
-                "APP_RELEASE_TAG": "android-preview-v0.1.0-build.1",
-                "CODEX_MOBILE_BRIDGE_ROOT": str(tmp_path / "empty-bridge-root"),
-                "CURL_CALLS_FILE": str(curl_calls),
-            },
+            "BRIDGE_PUBLIC_URL": "https://bridge.test",
+            "BRIDGE_REGISTRATION_TOKEN": "token",
+            "GITHUB_REPO": "brunojaime/clinica-norte",
+            "APP_RELEASE_TAG": "android-preview-v0.1.0-build.1",
+            "CODEX_MOBILE_BRIDGE_ROOT": str(tmp_path / "empty-bridge-root"),
+            "CURL_CALLS_FILE": str(curl_calls),
+        },
         text=True,
         capture_output=True,
         check=False,
@@ -2632,18 +2711,18 @@ def test_generated_register_installable_app_script_retries_apk_proxy_fallback(
     fake_curl = fake_bin / "curl"
     fake_curl.write_text(
         "#!/usr/bin/env bash\n"
-        "printf '%s\\n' \"$*\" >> \"$CURL_CALLS_FILE\"\n"
-        "args=\"$*\"\n"
+        'printf \'%s\\n\' "$*" >> "$CURL_CALLS_FILE"\n'
+        'args="$*"\n'
         "if [[ \"$args\" == *'https://bridge.test/apk'* ]]; then\n"
         "  echo 'Could not resolve host: bridge.test' >&2\n"
         "  exit 6\n"
         "fi\n"
         "if [[ \"$args\" == *'http://localhost:8000/apk'* ]]; then\n"
         "  count=0\n"
-        "  [[ -f \"$FALLBACK_ATTEMPTS_FILE\" ]] && count=\"$(cat \"$FALLBACK_ATTEMPTS_FILE\")\"\n"
+        '  [[ -f "$FALLBACK_ATTEMPTS_FILE" ]] && count="$(cat "$FALLBACK_ATTEMPTS_FILE")"\n'
         "  count=$((count + 1))\n"
-        "  printf '%s' \"$count\" > \"$FALLBACK_ATTEMPTS_FILE\"\n"
-        "  if [[ \"$count\" -lt 2 ]]; then\n"
+        '  printf \'%s\' "$count" > "$FALLBACK_ATTEMPTS_FILE"\n'
+        '  if [[ "$count" -lt 2 ]]; then\n'
         "    echo 'The requested URL returned error: 404' >&2\n"
         "    exit 22\n"
         "  fi\n"
@@ -2659,7 +2738,9 @@ def test_generated_register_installable_app_script_retries_apk_proxy_fallback(
         '"previewUrl":"https://preview.nienfos.com/clinica-norte",'
         '"runtimeProfile":"preview","productionReady":false,'
         '"mockOrDemo":false,"apkUrl":"https://bridge.test/apk",'
-        '"sha256":"' + ("1" * 64) + '","latestBuild":{"releaseTag":"android-preview-v0.1.0-build.1"},'
+        '"sha256":"'
+        + ("1" * 64)
+        + '","latestBuild":{"releaseTag":"android-preview-v0.1.0-build.1"},'
         '"installStatusHint":"available"}\n'
         "JSON\n"
         "  exit 0\n"
@@ -2719,9 +2800,7 @@ def test_generated_flutter_mock_seed_selector_is_mock_profile_only(
     mobile = tmp_path / "clinica-norte/apps/mobile"
     main = (mobile / "lib/main.dart").read_text(encoding="utf-8")
     config = (mobile / "lib/src/config.dart").read_text(encoding="utf-8")
-    session = (mobile / "lib/src/session_controller.dart").read_text(
-        encoding="utf-8"
-    )
+    session = (mobile / "lib/src/session_controller.dart").read_text(encoding="utf-8")
     screens = (mobile / "lib/src/screens.dart").read_text(encoding="utf-8")
 
     assert "defaultValue: 'preview'" in main
@@ -2776,16 +2855,18 @@ def test_generator_writes_flutter_mobile_v1_template(tmp_path: Path) -> None:
     assert "codex_app_updater:" in pubspec
     assert "ref: 374f0e3180dc8d80214dcaa4374073d8e4ab1340" in pubspec
     assert "codex_bridge_workbench:" in pubspec
-    android_manifest = (
-        mobile / "android/app/src/main/AndroidManifest.xml"
-    ).read_text(encoding="utf-8")
+    android_manifest = (mobile / "android/app/src/main/AndroidManifest.xml").read_text(
+        encoding="utf-8"
+    )
     assert 'android:label="Clinica Norte"' in android_manifest
     assert 'android:networkSecurityConfig="@xml/network_security_config"' in (
         android_manifest
     )
     android_gitignore = (mobile / "android/.gitignore").read_text(encoding="utf-8")
     assert ".kotlin/" in android_gitignore
-    assert (mobile / "android/app/src/main/res/xml/network_security_config.xml").is_file()
+    assert (
+        mobile / "android/app/src/main/res/xml/network_security_config.xml"
+    ).is_file()
     readme = (mobile / "README.md").read_text(encoding="utf-8")
     assert "--dart-define=API_BASE_URL=" in readme
     main = (mobile / "lib/main.dart").read_text(encoding="utf-8")
@@ -2951,7 +3032,10 @@ def test_generated_web_preview_bundle_is_validable_locally(tmp_path: Path) -> No
     assert "CREATE INDEX IF NOT EXISTS idx_preview_builds_app_created" in migration_text
     assert "CREATE INDEX IF NOT EXISTS idx_preview_tenants_app" in migration_text
     assert "CREATE INDEX IF NOT EXISTS idx_preview_roles_app_name" in migration_text
-    assert "CREATE INDEX IF NOT EXISTS idx_preview_admin_invites_app_email" in migration_text
+    assert (
+        "CREATE INDEX IF NOT EXISTS idx_preview_admin_invites_app_email"
+        in migration_text
+    )
     assert "CREATE INDEX IF NOT EXISTS idx_preview_assets_app_type" in migration_text
     assert "CREATE INDEX IF NOT EXISTS idx_preview_events_app_type" in migration_text
     assert "token_sha256" in migration_text
@@ -2987,9 +3071,7 @@ def test_generated_web_preview_bundle_is_validable_locally(tmp_path: Path) -> No
     assert payload["access"]["single_use"] is True
     assert payload["access"]["d1_binding"] == "PREVIEW_DB"
     assert payload["access"]["migrations_dir"] == "deploy/web-preview/d1/migrations"
-    assert payload["access"]["required_worker_secrets"] == [
-        "WEB_PREVIEW_INVITE_SECRET"
-    ]
+    assert payload["access"]["required_worker_secrets"] == ["WEB_PREVIEW_INVITE_SECRET"]
     assert payload["access"]["access_path"] == "/__preview/access"
     assert payload["build"]["asset_entrypoint"] == "index.html"
     assert "flutter_bootstrap.js" in payload["build"]["required_files"]
@@ -3156,9 +3238,9 @@ def _write_fake_github_access_tools(
     fake_gh = fake_bin / "gh"
     fake_gh.write_text(
         "#!/usr/bin/env bash\n"
-        "if [[ \"$1 $2\" == \"repo view\" ]]; then exit 0; fi\n"
-        "if [[ \"$1 $2\" == \"workflow view\" ]]; then exit 0; fi\n"
-        "if [[ \"$1 $2\" == \"release view\" ]]; then\n"
+        'if [[ "$1 $2" == "repo view" ]]; then exit 0; fi\n'
+        'if [[ "$1 $2" == "workflow view" ]]; then exit 0; fi\n'
+        'if [[ "$1 $2" == "release view" ]]; then\n'
         f"  printf '{release_asset}\\n'\n"
         "  exit 0\n"
         "fi\n"
@@ -3170,8 +3252,8 @@ def _write_fake_github_access_tools(
     fake_git = fake_bin / "git"
     fake_git.write_text(
         "#!/usr/bin/env bash\n"
-        "if [[ \"$1\" == \"ls-remote\" ]]; then printf 'abc123\\tHEAD\\n'; exit 0; fi\n"
-        f"exec {real_git} \"$@\"\n",
+        'if [[ "$1" == "ls-remote" ]]; then printf \'abc123\\tHEAD\\n\'; exit 0; fi\n'
+        f'exec {real_git} "$@"\n',
         encoding="utf-8",
     )
     fake_git.chmod(0o755)
@@ -3217,7 +3299,7 @@ def _write_initial_preview_gate_fakes(
         "  cat >/dev/null\n"
         "  exit 0\n"
         "fi\n"
-        f"exec {real_python} \"$@\"\n",
+        f'exec {real_python} "$@"\n',
         encoding="utf-8",
     )
     fake_python.chmod(0o755)
@@ -3225,7 +3307,7 @@ def _write_initial_preview_gate_fakes(
     fake_flutter = fake_bin / "flutter"
     fake_flutter.write_text(
         "#!/usr/bin/env bash\n"
-        "printf 'flutter %s\\n' \"$*\" >> \"$COMMAND_LOG\"\n"
+        'printf \'flutter %s\\n\' "$*" >> "$COMMAND_LOG"\n'
         "if [[ \"$1\" == 'analyze' && \"${FAIL_FLUTTER_ANALYZE:-false}\" == 'true' ]]; then\n"
         "  printf 'flutter analyze failed by test\\n' >&2\n"
         "  exit 7\n"
@@ -3248,7 +3330,7 @@ def _write_initial_preview_gate_fakes(
     fake_apksigner = fake_bin / "apksigner"
     fake_apksigner.write_text(
         "#!/usr/bin/env bash\n"
-        "printf 'apksigner %s\\n' \"$*\" >> \"$COMMAND_LOG\"\n"
+        'printf \'apksigner %s\\n\' "$*" >> "$COMMAND_LOG"\n'
         "if [[ \"${FAIL_APKSIGNER:-false}\" == 'true' ]]; then\n"
         "  printf 'apksigner failed by test\\n' >&2\n"
         "  exit 9\n"
@@ -3265,7 +3347,7 @@ def _write_initial_preview_gate_fakes(
     fake_wrangler = fake_bin / "wrangler"
     fake_wrangler.write_text(
         "#!/usr/bin/env bash\n"
-        "printf 'wrangler %s\\n' \"$*\" >> \"$COMMAND_LOG\"\n"
+        'printf \'wrangler %s\\n\' "$*" >> "$COMMAND_LOG"\n'
         "if [[ \"$*\" == *'PRAGMA table_info'* ]]; then\n"
         "  cat <<'JSON'\n"
         '{"result":[{"results":[{"name":"id"},{"name":"email"},{"name":"role"},{"name":"sha256"},{"name":"used_at"}]}]}\n'
@@ -3279,11 +3361,11 @@ def _write_initial_preview_gate_fakes(
     fake_curl = fake_bin / "curl"
     fake_curl.write_text(
         "#!/usr/bin/env bash\n"
-        "printf 'curl %s\\n' \"$*\" >> \"$COMMAND_LOG\"\n"
+        'printf \'curl %s\\n\' "$*" >> "$COMMAND_LOG"\n'
         "if [[ \"$*\" == *'https://bridge.test/apk'* ]]; then\n"
         "  out=/tmp/project-factory-preview.apk\n"
         "  while [[ $# -gt 0 ]]; do\n"
-        "    if [[ \"$1\" == '-o' ]]; then out=\"$2\"; shift 2; else shift; fi\n"
+        '    if [[ "$1" == \'-o\' ]]; then out="$2"; shift 2; else shift; fi\n'
         "  done\n"
         "  printf 'preview-apk' > \"$out\"\n"
         "  exit 0\n"

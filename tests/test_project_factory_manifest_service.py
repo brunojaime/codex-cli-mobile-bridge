@@ -42,7 +42,9 @@ def test_valid_manifest_includes_required_product_defaults(tmp_path: Path) -> No
     )
     assert manifest["runtime_profiles"]["env"] == "APP_RUNTIME_PROFILE"
     assert manifest["runtime_profiles"]["default_profile"] == "preview"
-    assert manifest["runtime_profiles"]["preview"]["default_for_initial_release"] is True
+    assert (
+        manifest["runtime_profiles"]["preview"]["default_for_initial_release"] is True
+    )
     assert manifest["runtime_profiles"]["preview"]["api_runtime"] == (
         "cloudflare_preview"
     )
@@ -50,7 +52,9 @@ def test_valid_manifest_includes_required_product_defaults(tmp_path: Path) -> No
         "https://preview.nienfos.com/clinica-norte/api"
     )
     assert manifest["runtime_profiles"]["mock"]["opt_in"] is True
-    assert manifest["runtime_profiles"]["real"]["default_for_productive_release"] is True
+    assert (
+        manifest["runtime_profiles"]["real"]["default_for_productive_release"] is True
+    )
     assert manifest["runtime_profiles"]["real"]["mock_or_demo"] is False
     assert manifest["release"]["initial_preview_release_required"] is True
     assert manifest["release"]["mock_or_demo_release_required"] is False
@@ -69,9 +73,12 @@ def test_valid_manifest_includes_required_product_defaults(tmp_path: Path) -> No
         ]
         is True
     )
-    assert "screen_structure" in manifest["visual_references"][
-        "strong_reference_contract"
-    ]["required_analysis_per_image"]
+    assert (
+        "screen_structure"
+        in manifest["visual_references"]["strong_reference_contract"][
+            "required_analysis_per_image"
+        ]
+    )
     assert manifest["sdd"]["required_artifacts"] == [
         "spec.md",
         "plan.md",
@@ -170,7 +177,7 @@ def test_invalid_values_are_blocked_without_manifest(tmp_path: Path) -> None:
         "missing_name",
         "missing_business_type",
         "missing_primary_goal",
-            "invalid_slug",
+        "invalid_slug",
         "unsupported_platform",
         "unsupported_backend",
         "unsupported_logo_mode",
@@ -199,7 +206,12 @@ def test_existing_project_folder_is_blocked_by_default(tmp_path: Path) -> None:
 def test_allow_existing_supports_future_regeneration_validation(
     tmp_path: Path,
 ) -> None:
-    (tmp_path / "clinica-norte").mkdir()
+    project = tmp_path / "clinica-norte"
+    (project / ".codex").mkdir(parents=True)
+    (project / ".codex/project.yaml").write_text(
+        'name: "Clinica Norte"\nslug: clinica-norte\n',
+        encoding="utf-8",
+    )
     service = ProjectFactoryManifestService(projects_root=tmp_path)
 
     result = service.plan_manifest(
@@ -213,6 +225,30 @@ def test_allow_existing_supports_future_regeneration_validation(
 
     assert result.ok is True
     assert result.target_path == str(tmp_path / "clinica-norte")
+
+
+def test_allow_existing_rejects_unrelated_existing_project(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "clinica-norte"
+    (project / ".codex").mkdir(parents=True)
+    (project / ".codex/project.yaml").write_text(
+        'name: "Otro Proyecto"\nslug: otro-proyecto\n',
+        encoding="utf-8",
+    )
+    service = ProjectFactoryManifestService(projects_root=tmp_path)
+
+    result = service.plan_manifest(
+        ProjectFactoryManifestInput(
+            name="Clinica Norte",
+            business_type="medical",
+            primary_goal="Reservar turnos",
+        ),
+        allow_existing=True,
+    )
+
+    assert result.ok is False
+    assert [error.code for error in result.errors] == ["project_already_exists"]
 
 
 def test_svelte_frontend_strategy_is_web_first(tmp_path: Path) -> None:
@@ -233,12 +269,14 @@ def test_svelte_frontend_strategy_is_web_first(tmp_path: Path) -> None:
     assert manifest["frontend_strategy"] == "svelte"
     assert manifest["frontend"]["framework"] == "svelte"
     assert manifest["frontend"]["source_root"] == "apps/web"
-    assert manifest["frontend"]["strategy_capabilities"][
-        "supports_android_preview_apk"
-    ] is False
-    assert manifest["frontend"]["strategy_capabilities"][
-        "supports_bridge_installable_app"
-    ] is False
+    assert (
+        manifest["frontend"]["strategy_capabilities"]["supports_android_preview_apk"]
+        is False
+    )
+    assert (
+        manifest["frontend"]["strategy_capabilities"]["supports_bridge_installable_app"]
+        is False
+    )
     assert manifest["runtime_profiles"]["env"] == "VITE_APP_RUNTIME_PROFILE"
     assert manifest["runtime_profiles"]["api_runtime_env"] == "VITE_API_RUNTIME"
     assert manifest["runtime_profiles"]["preview_api_env"] == "VITE_API_BASE_URL"
@@ -246,8 +284,7 @@ def test_svelte_frontend_strategy_is_web_first(tmp_path: Path) -> None:
     assert manifest["runtime_profiles"]["mock"]["release_tag_patterns"] == []
     assert manifest["runtime_profiles"]["real"]["release_tag_patterns"] == []
     assert all(
-        "android-" not in contract
-        for contract in manifest["release"]["ci_contracts"]
+        "android-" not in contract for contract in manifest["release"]["ci_contracts"]
     )
     assert result.to_payload()["frontend_strategy"] == "svelte"
 
@@ -287,7 +324,5 @@ def test_unknown_frontend_strategy_blocks_with_supported_list(
     )
 
     assert result.ok is False
-    assert [error.code for error in result.errors] == [
-        "unsupported_frontend_strategy"
-    ]
+    assert [error.code for error in result.errors] == ["unsupported_frontend_strategy"]
     assert "flutter, svelte" in result.errors[0].message

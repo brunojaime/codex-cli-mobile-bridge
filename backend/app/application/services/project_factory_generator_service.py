@@ -80,18 +80,31 @@ class ProjectFactoryGeneratorService:
             )
         target = Path(manifest_plan.target_path).expanduser().resolve()
         if target.exists():
-            raise ProjectFactoryGeneratorError(
-                f"Target project already exists: {target}"
+            if not _existing_project_matches_manifest(target, manifest_plan.manifest):
+                raise ProjectFactoryGeneratorError(
+                    f"Target project already exists: {target}"
+                )
+            if _git_has_uncommitted_changes(target):
+                raise ProjectFactoryGeneratorError(
+                    f"Target project already exists with uncommitted changes: {target}"
+                )
+            return self.refresh_managed_files(
+                manifest_plan,
+                relative_paths=tuple(_project_files(manifest_plan.manifest)),
             )
 
         written: list[ProjectFactoryGeneratedFile] = []
         try:
             target.mkdir(parents=False)
-            for relative_path, content in _project_files(manifest_plan.manifest).items():
+            for relative_path, content in _project_files(
+                manifest_plan.manifest
+            ).items():
                 path = target / relative_path
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(content, encoding="utf-8")
-                if relative_path.startswith("scripts/") and relative_path.endswith(".sh"):
+                if relative_path.startswith("scripts/") and relative_path.endswith(
+                    ".sh"
+                ):
                     path.chmod(0o755)
                 written.append(
                     ProjectFactoryGeneratedFile(
@@ -216,6 +229,47 @@ class ProjectFactoryGeneratorService:
             git_status={},
             message="Managed Project Factory files refreshed.",
         )
+
+
+def _existing_project_matches_manifest(target: Path, manifest: dict[str, Any]) -> bool:
+    identity = _read_existing_project_identity(target / ".codex" / "project.yaml")
+    return identity.get("name") == str(manifest.get("name") or "") and identity.get(
+        "slug"
+    ) == str(manifest.get("slug") or "")
+
+
+def _read_existing_project_identity(path: Path) -> dict[str, str]:
+    if not path.is_file():
+        return {}
+    values: dict[str, str] = {}
+    try:
+        for raw_line in path.read_text(encoding="utf-8").splitlines():
+            if raw_line.startswith((" ", "\t")) or ":" not in raw_line:
+                continue
+            key, value = raw_line.split(":", 1)
+            key = key.strip()
+            if key in {"name", "slug"}:
+                values[key] = value.strip().strip("\"'")
+    except OSError:
+        return {}
+    return values
+
+
+def _git_has_uncommitted_changes(target: Path) -> bool:
+    if not (target / ".git").exists():
+        return False
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=target,
+            text=True,
+            capture_output=True,
+            check=False,
+            shell=False,
+        )
+    except OSError:
+        return True
+    return result.returncode != 0 or bool(result.stdout.strip())
 
 
 def _project_files(manifest: dict[str, Any]) -> dict[str, str]:
@@ -445,7 +499,9 @@ def _project_files(manifest: dict[str, Any]) -> dict[str, str]:
             frontend_strategy,
         ),
     }
-    files.update(_baseline_diagram_files(name, business_type, primary_goal, frontend_strategy))
+    files.update(
+        _baseline_diagram_files(name, business_type, primary_goal, frontend_strategy)
+    )
     files.update(_initial_task_node_files(frontend_strategy))
     files.update(_backend_files(slug))
     if frontend_strategy == "svelte":
@@ -2539,10 +2595,15 @@ export default {
   },
 };
 """
-    return template.replace("__SOURCE_APP__", slug).replace(
-        "__DISPLAY_NAME__",
-        repr(name),
-    ).replace("{{", "{").replace("}}", "}")
+    return (
+        template.replace("__SOURCE_APP__", slug)
+        .replace(
+            "__DISPLAY_NAME__",
+            repr(name),
+        )
+        .replace("{{", "{")
+        .replace("}}", "}")
+    )
 
 
 def _web_preview_worker_harness_js(slug: str) -> str:
@@ -3107,12 +3168,14 @@ assert.equal((await missingAsset.json()).error.code, 'asset_not_found');
 
 console.log('worker local preview harness passed');
 """
-    return template.replace("__SOURCE_APP__", slug).replace("{{", "{").replace("}}", "}")
+    return (
+        template.replace("__SOURCE_APP__", slug).replace("{{", "{").replace("}}", "}")
+    )
 
 
 def _build_web_preview_script(slug: str, frontend_strategy: str = "flutter") -> str:
     if frontend_strategy == "svelte":
-        return f'''#!/usr/bin/env bash
+        return f"""#!/usr/bin/env bash
 set -euo pipefail
 
 fail() {{
@@ -3154,8 +3217,8 @@ mkdir -p "$(dirname "$WEB_PREVIEW_BUILD_DIR")"
 cp -R dist "$WEB_PREVIEW_BUILD_DIR"
 
 printf 'web preview build completed: %s\\n' "$WEB_PREVIEW_BUILD_DIR"
-'''
-    return f'''#!/usr/bin/env bash
+"""
+    return f"""#!/usr/bin/env bash
 set -euo pipefail
 
 fail() {{
@@ -3210,11 +3273,11 @@ flutter build web --release \\
   --output "$WEB_PREVIEW_BUILD_DIR"
 
 printf 'web preview build completed: %s\\n' "$WEB_PREVIEW_BUILD_DIR"
-'''
+"""
 
 
 def _deploy_web_preview_script(slug: str) -> str:
-    return f'''#!/usr/bin/env bash
+    return f"""#!/usr/bin/env bash
 set -euo pipefail
 
 fail() {{
@@ -3273,7 +3336,7 @@ except urllib.error.HTTPError as exc:
     body = exc.read().decode()
     raise SystemExit(f"Bridge returned {{exc.code}}: {{body}}")
 PY
-'''
+"""
 
 
 def _validate_web_preview_script(slug: str, frontend_strategy: str = "flutter") -> str:
@@ -3484,7 +3547,7 @@ printf 'web preview validation completed: profile=%s api_runtime=%s url=%s\\n' "
 
 
 def _validation_script(frontend_strategy: str = "flutter") -> str:
-    return r'''#!/usr/bin/env bash
+    return r"""#!/usr/bin/env bash
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -3670,11 +3733,11 @@ API_BASE_URL=https://preview.nienfos.com/${APP_SLUG:-$(basename "$ROOT_DIR")}/ap
 scripts/validate_web_preview.sh
 
 echo "generated project validation completed"
-'''.replace("__FRONTEND_STRATEGY__", frontend_strategy)
+""".replace("__FRONTEND_STRATEGY__", frontend_strategy)
 
 
 def _publish_script() -> str:
-    return r'''#!/usr/bin/env bash
+    return r"""#!/usr/bin/env bash
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -3746,10 +3809,11 @@ fi
 gh variable set API_BASE_URL --repo "$REPO" --body "$PREVIEW_API_BASE_URL" >/dev/null
 
 echo "published: https://github.com/$REPO"
-'''
+"""
+
 
 def _register_installable_app_script(slug: str, name: str) -> str:
-    return f'''#!/usr/bin/env bash
+    return f"""#!/usr/bin/env bash
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")/.." && pwd)"
@@ -4071,11 +4135,11 @@ if [[ -n "$apk_url" ]]; then
     exit 2
   fi
 fi
-'''
+"""
 
 
 def _finalize_local_commit_script() -> str:
-    return r'''#!/usr/bin/env bash
+    return r"""#!/usr/bin/env bash
 set -euo pipefail
 
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -4090,11 +4154,11 @@ if ! git diff --cached --quiet; then
 fi
 
 printf 'local git commit ready\n'
-'''
+"""
 
 
 def _bridge_env_loader_script() -> str:
-    return r'''#!/usr/bin/env bash
+    return r"""#!/usr/bin/env bash
 # Official Project Factory loader for real Bridge-owned Initial Preview Release
 # secrets. It intentionally prints only file presence and missing variable names,
 # never variable values.
@@ -4191,11 +4255,11 @@ bridge_env_load_preview_signing() {
 }
 
 bridge_env_load
-'''
+"""
 
 
 def _github_repo_access_helper_script() -> str:
-    return r'''#!/usr/bin/env bash
+    return r"""#!/usr/bin/env bash
 # Reusable GitHub repository access checks for private repos. GitHub may return
 # 404 for unauthenticated API/web requests; these helpers force authenticated
 # host checks before any script concludes that a repo/release/variable is
@@ -4241,11 +4305,11 @@ github_require_repo_access() {
   esac
   return "$status"
 }
-'''
+"""
 
 
 def _final_readiness_audit_script() -> str:
-    return r'''#!/usr/bin/env bash
+    return r"""#!/usr/bin/env bash
 set -euo pipefail
 
 fail() {
@@ -4325,11 +4389,11 @@ grep -q 'validated_source_commit:' release/release-output-template.md || fail "r
 grep -q 'report_generated_from_commit:' release/release-output-template.md || fail "release output missing report_generated_from_commit"
 
 printf 'final readiness audit passed\n'
-'''
+"""
 
 
 def _apply_cloudflare_preview_script(slug: str) -> str:
-    return f'''#!/usr/bin/env bash
+    return f"""#!/usr/bin/env bash
 set -euo pipefail
 
 fail() {{
@@ -4402,11 +4466,11 @@ PY
 
 scripts/smoke_web_preview.sh
 scripts/smoke_preview_api.sh
-'''
+"""
 
 
 def _apply_preview_d1_migrations_script() -> str:
-    return r'''#!/usr/bin/env bash
+    return r"""#!/usr/bin/env bash
 set -euo pipefail
 
 fail() {
@@ -4513,11 +4577,11 @@ PY
 done
 
 printf 'preview D1 migrations applied: %s\n' "$DATABASE"
-'''
+"""
 
 
 def _smoke_preview_api_script(slug: str) -> str:
-    return f'''#!/usr/bin/env bash
+    return f"""#!/usr/bin/env bash
 set -euo pipefail
 
 fail() {{
@@ -4659,11 +4723,11 @@ if status != 200 or updates.get("releaseChannel") != "prerelease" or updates.get
 
 print(f"preview api smoke passed: {{base_url}}")
 PY
-'''
+"""
 
 
 def _smoke_web_preview_script(slug: str) -> str:
-    return f'''#!/usr/bin/env bash
+    return f"""#!/usr/bin/env bash
 set -euo pipefail
 
 fail() {{
@@ -4743,11 +4807,11 @@ if api_health.get("assets_bound") is not True:
 
 print(f"web preview smoke passed: {{preview_url}}")
 PY
-'''
+"""
 
 
 def _publish_android_preview_release_script(slug: str) -> str:
-    return f'''#!/usr/bin/env bash
+    return f"""#!/usr/bin/env bash
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${{BASH_SOURCE[0]}}")/.." && pwd)"
@@ -5094,11 +5158,11 @@ while (( SECONDS <= deadline )); do
 done
 
 fail_blocked "GitHub release $tag did not expose $SOURCE_APP.apk within ${{timeout}}s"
-'''
+"""
 
 
 def _publish_android_release_script() -> str:
-    return r'''#!/usr/bin/env bash
+    return r"""#!/usr/bin/env bash
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -5211,11 +5275,11 @@ while (( SECONDS <= deadline )); do
 done
 
 fail_blocked "GitHub release $tag did not expose an APK asset within ${timeout}s"
-'''
+"""
 
 
 def _publication_validation_script() -> str:
-    return r'''#!/usr/bin/env bash
+    return r"""#!/usr/bin/env bash
 set -euo pipefail
 
 fail() {
@@ -5290,7 +5354,7 @@ if [[ -f apps/mobile/pubspec.yaml ]]; then
 fi
 
 printf 'publication validation completed\n'
-'''
+"""
 
 
 def _preview_release_profile_validation_script(
@@ -6208,7 +6272,7 @@ finish_checks
 
 
 def _release_profile_validation_script() -> str:
-    return r'''#!/usr/bin/env bash
+    return r"""#!/usr/bin/env bash
 set -euo pipefail
 
 fail() {
@@ -6280,7 +6344,7 @@ grep -q 'workbench-sdd/v1' "$ROOT_DIR/codex-bridge.yaml" || fail "codex-bridge.y
 [[ -f "$ROOT_DIR/docs/workbench.md" ]] || fail "docs/workbench.md must document Workbench usage or blocking command"
 
 printf 'release profile validation completed: profile=%s tag=%s\n' "$PROFILE" "${TAG:-unset}"
-'''
+"""
 
 
 def _generated_android_release_workflow(slug: str) -> str:
@@ -6600,7 +6664,9 @@ def _release_contracts_yaml(slug: str, frontend_strategy: str = "flutter") -> st
             "runtime_profiles": {
                 "default": "preview",
                 "allowed": ["mock", "preview", "real", "staging"],
-                "env": "VITE_APP_RUNTIME_PROFILE" if is_svelte else "APP_RUNTIME_PROFILE",
+                "env": "VITE_APP_RUNTIME_PROFILE"
+                if is_svelte
+                else "APP_RUNTIME_PROFILE",
                 "api_runtime_env": "VITE_API_RUNTIME" if is_svelte else "API_RUNTIME",
                 "preview_api_env": "VITE_API_BASE_URL" if is_svelte else "API_BASE_URL",
             },
@@ -6628,7 +6694,9 @@ def _release_contracts_yaml(slug: str, frontend_strategy: str = "flutter") -> st
                 ),
             },
             "mock_release": {
-                "tag_patterns": [] if is_svelte else ["android-mock-v*", "android-local-v*"],
+                "tag_patterns": []
+                if is_svelte
+                else ["android-mock-v*", "android-local-v*"],
                 "runtime_profile": "mock",
                 "mock_or_demo": True,
                 "backend_required": False,
@@ -6666,7 +6734,9 @@ def _release_contracts_yaml(slug: str, frontend_strategy: str = "flutter") -> st
                 "initial_preview_is_production": False,
                 "preview_tag_pattern": None if is_svelte else "android-preview-v*",
                 "production_tag_pattern": None if is_svelte else "android-v*",
-                "mock_tag_patterns": [] if is_svelte else ["android-mock-v*", "android-local-v*"],
+                "mock_tag_patterns": []
+                if is_svelte
+                else ["android-mock-v*", "android-local-v*"],
             },
             "cloudflare_cost_posture": {
                 "artifact": "release/cloudflare-cost-posture.json",
@@ -6692,7 +6762,9 @@ def _release_contracts_yaml(slug: str, frontend_strategy: str = "flutter") -> st
             },
             "codex_mobile_catalog": {
                 "required": not is_svelte,
-                "registration_script": None if is_svelte else "scripts/register_installable_app.sh",
+                "registration_script": None
+                if is_svelte
+                else "scripts/register_installable_app.sh",
                 "bridge_endpoint": "/installable-apps",
                 "verification_endpoint": "/installable-apps/{sourceApp}",
                 "requires_apk_url": not is_svelte,
@@ -6728,7 +6800,11 @@ def _cloudflare_cost_posture_json(slug: str) -> str:
                 "operatorConfirmationRequiredForPaid": True,
                 "operatorConfirmationEnv": "CLOUDFLARE_PAID_RESOURCES_CONFIRMED",
                 "resources": [
-                    {"type": "worker", "name": "nienfos-preview-runtime", "paid": False},
+                    {
+                        "type": "worker",
+                        "name": "nienfos-preview-runtime",
+                        "paid": False,
+                    },
                     {"type": "d1", "name": f"{slug}-preview", "paid": False},
                     {"type": "pages", "name": "nienfos-preview-web", "paid": False},
                 ],
@@ -6902,7 +6978,7 @@ def _preview_signing_policy_json(
 
 
 def _cloudflare_cost_posture_check_script() -> str:
-    return r'''#!/usr/bin/env bash
+    return r"""#!/usr/bin/env bash
 set -euo pipefail
 
 fail() {
@@ -6947,7 +7023,7 @@ if paid and not reason:
 
 print("cloudflare cost posture ok")
 PY
-'''
+"""
 
 
 def _preview_runtime_json(
@@ -7078,7 +7154,7 @@ def _svelte_package_json(package_name: str) -> str:
 
 
 def _svelte_package_lock_json(package_name: str) -> str:
-    template = r'''{
+    template = r"""{
   "name": "__PACKAGE_NAME__",
   "version": "0.1.0",
   "lockfileVersion": 3,
@@ -8214,7 +8290,7 @@ def _svelte_package_lock_json(package_name: str) -> str:
     }
   }
 }
-'''
+"""
     return template.replace("__PACKAGE_NAME__", package_name)
 
 
@@ -9240,6 +9316,8 @@ def _mobile_android_manifest(display_name: str) -> str:
     </application>
 </manifest>
 """
+
+
 def _mobile_android_network_security_config() -> str:
     return """<?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
@@ -10944,7 +11022,7 @@ pytest
 
 
 def _backend_config_py() -> str:
-    return '''from __future__ import annotations
+    return """from __future__ import annotations
 
 import os
 from dataclasses import dataclass
@@ -10991,7 +11069,7 @@ def get_settings() -> Settings:
         google_client_id=os.getenv("GOOGLE_CLIENT_ID") or None,
         google_client_secret=os.getenv("GOOGLE_CLIENT_SECRET") or None,
     )
-'''
+"""
 
 
 def _backend_db_py() -> str:
@@ -11092,7 +11170,7 @@ def seed_admin() -> None:
 
 
 def _backend_security_py() -> str:
-    return '''from __future__ import annotations
+    return """from __future__ import annotations
 
 import base64
 import hashlib
@@ -11192,11 +11270,11 @@ def _unb64(data: str) -> str:
 def _sign(data: str, secret: str) -> str:
     digest = hmac.new(secret.encode(), data.encode(), hashlib.sha256).digest()
     return base64.urlsafe_b64encode(digest).decode().rstrip("=")
-'''
+"""
 
 
 def _backend_main_py() -> str:
-    return '''from __future__ import annotations
+    return """from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
@@ -11237,11 +11315,11 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
-'''
+"""
 
 
 def _backend_auth_router_py() -> str:
-    return '''from __future__ import annotations
+    return """from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -11297,11 +11375,11 @@ def me(user=Depends(current_user)):
 @router.post("/logout")
 def logout():
     return {"status": "ok"}
-'''
+"""
 
 
 def _backend_admin_router_py() -> str:
-    return '''from __future__ import annotations
+    return """from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -11345,11 +11423,11 @@ def create_business_record(payload: BusinessRecordCreate, _user=Depends(require_
             (payload.name,),
         )
     return {"id": int(cursor.lastrowid), "name": payload.name, "is_active": True}
-'''
+"""
 
 
 def _backend_notifications_router_py() -> str:
-    return '''from __future__ import annotations
+    return """from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -11392,11 +11470,11 @@ def mark_read(notification_id: int, user=Depends(current_user)):
             (notification_id,),
         )
     return {"status": "read", "id": notification_id}
-'''
+"""
 
 
 def _backend_google_router_py() -> str:
-    return '''from __future__ import annotations
+    return """from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
@@ -11414,11 +11492,11 @@ def google_login():
             detail="Google auth credentials are pending. Configure GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.",
         )
     raise HTTPException(status_code=501, detail="Google auth exchange is not implemented in backend v1.")
-'''
+"""
 
 
 def _backend_app_updates_router_py() -> str:
-    return '''from __future__ import annotations
+    return """from __future__ import annotations
 
 from fastapi import APIRouter
 
@@ -11441,11 +11519,11 @@ def current_update():
         "mock_or_demo": mock_or_demo,
         "backend_required": not mock_or_demo,
     }
-'''
+"""
 
 
 def _backend_tests_py() -> str:
-    return '''from __future__ import annotations
+    return """from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
@@ -11533,7 +11611,7 @@ def test_mock_runtime_update_metadata(monkeypatch, tmp_path):
     assert update["runtime_profile"] == "mock"
     assert update["mock_or_demo"] is True
     assert update["backend_required"] is False
-'''
+"""
 
 
 def _agents(name: str) -> str:
@@ -11931,7 +12009,9 @@ def _copy_project_assets_to_project(
         asset = asset_depot_service.get_asset(asset_id)
         if asset is None:
             raise ProjectFactoryGeneratorError(f"Promoted asset not found: {asset_id}")
-        destinations = _asset_destinations_for_role(role, asset.id, asset.original_filename)
+        destinations = _asset_destinations_for_role(
+            role, asset.id, asset.original_filename
+        )
         copied_paths: list[str] = []
         for destination in destinations:
             copied = asset_depot_service.copy_asset_to(
@@ -11963,7 +12043,11 @@ def _copy_project_assets_to_project(
     written.append(str(metadata_path.relative_to(target_project)))
     if reference_lines:
         reference_path = target_project / "references" / "reference-assets.md"
-        existing = reference_path.read_text(encoding="utf-8") if reference_path.exists() else "# Reference Assets\n"
+        existing = (
+            reference_path.read_text(encoding="utf-8")
+            if reference_path.exists()
+            else "# Reference Assets\n"
+        )
         reference_path.write_text(
             existing.rstrip()
             + "\n\n## Asset Depot Visual References\n\n"
@@ -11973,7 +12057,9 @@ def _copy_project_assets_to_project(
         )
         written.append(str(reference_path.relative_to(target_project)))
     if document_lines:
-        document_path = target_project / "references" / "documents" / "document-assets.md"
+        document_path = (
+            target_project / "references" / "documents" / "document-assets.md"
+        )
         document_path.write_text(
             "# Document Context Assets\n\n" + "\n".join(document_lines) + "\n",
             encoding="utf-8",
@@ -12165,7 +12251,9 @@ Create the foundation for `{name}` in incremental validated slices:
 """
 
 
-def _initial_task_items(frontend_strategy: str = "flutter") -> tuple[dict[str, str], ...]:
+def _initial_task_items(
+    frontend_strategy: str = "flutter",
+) -> tuple[dict[str, str], ...]:
     if frontend_strategy == "svelte":
         return (
             {
@@ -12734,7 +12822,9 @@ def _init_git(target: Path) -> str:
 def _cleanup_created_target(target: Path) -> None:
     if not target.exists():
         return
-    for child in sorted(target.rglob("*"), key=lambda item: len(item.parts), reverse=True):
+    for child in sorted(
+        target.rglob("*"), key=lambda item: len(item.parts), reverse=True
+    ):
         if child.is_file() or child.is_symlink():
             child.unlink(missing_ok=True)
         elif child.is_dir():

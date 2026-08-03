@@ -20,7 +20,9 @@ ALLOWED_PLATFORMS = frozenset({"ios", "android", "web"})
 ALLOWED_BACKENDS = frozenset({"fastapi", "go", "none"})
 ALLOWED_LOGO_MODES = frozenset({"upload", "generate", "placeholder"})
 ALLOWED_FIRST_RELEASE_MODES = frozenset({"preview", "mock"})
-BLOCKED_INITIAL_RELEASE_MODES = frozenset({"production", "promote", "promotion", "real"})
+BLOCKED_INITIAL_RELEASE_MODES = frozenset(
+    {"production", "promote", "promotion", "real"}
+)
 SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{0,78}[a-z0-9]$")
 
 FRONTEND_STRATEGIES: dict[str, dict[str, Any]] = {
@@ -140,7 +142,9 @@ class ProjectFactoryManifestService:
         name = request.name.strip()
         business_type = _normalize_business_type(request.business_type)
         primary_goal = request.primary_goal.strip()
-        slug = request.slug.strip() if request.slug is not None else _normalize_slug(name)
+        slug = (
+            request.slug.strip() if request.slug is not None else _normalize_slug(name)
+        )
 
         self._validate_name(name, errors)
         self._validate_business_type(business_type, errors)
@@ -175,7 +179,14 @@ class ProjectFactoryManifestService:
                         message="Project target must resolve under PROJECTS_ROOT.",
                     )
                 )
-            elif target_path.exists() and not allow_existing:
+            elif target_path.exists() and (
+                not allow_existing
+                or not _existing_project_matches_request(
+                    target_path,
+                    name=name,
+                    slug=slug,
+                )
+            ):
                 errors.append(
                     ProjectFactoryValidationError(
                         code="project_already_exists",
@@ -406,7 +417,9 @@ def _build_manifest(
         "slug": slug,
         "business_type": business_type,
         "primary_goal": primary_goal,
-        "platforms": {platform: platform in platforms for platform in DEFAULT_PLATFORMS},
+        "platforms": {
+            platform: platform in platforms for platform in DEFAULT_PLATFORMS
+        },
         "frontend_strategy": frontend_strategy,
         "frontend": {
             "framework": strategy["framework"],
@@ -636,6 +649,33 @@ def _normalize_business_type(value: str) -> str:
     return _normalize_slug(value.strip()).replace("-", "_")
 
 
+def _existing_project_matches_request(
+    target_path: Path,
+    *,
+    name: str,
+    slug: str,
+) -> bool:
+    identity = _read_existing_project_identity(target_path / ".codex" / "project.yaml")
+    return identity.get("name") == name and identity.get("slug") == slug
+
+
+def _read_existing_project_identity(path: Path) -> dict[str, str]:
+    if not path.is_file():
+        return {}
+    values: dict[str, str] = {}
+    try:
+        for raw_line in path.read_text(encoding="utf-8").splitlines():
+            if raw_line.startswith((" ", "\t")) or ":" not in raw_line:
+                continue
+            key, value = raw_line.split(":", 1)
+            key = key.strip()
+            if key in {"name", "slug"}:
+                values[key] = value.strip().strip("\"'")
+    except OSError:
+        return {}
+    return values
+
+
 def normalize_first_release_mode(
     value: str | None,
     errors: list[ProjectFactoryValidationError] | None = None,
@@ -661,7 +701,9 @@ def normalize_first_release_mode(
             if mode in BLOCKED_INITIAL_RELEASE_MODES
             else "unsupported_first_release_mode"
         )
-        errors.append(ProjectFactoryValidationError(code, "first_release_mode", message))
+        errors.append(
+            ProjectFactoryValidationError(code, "first_release_mode", message)
+        )
     return DEFAULT_FIRST_RELEASE_MODE
 
 

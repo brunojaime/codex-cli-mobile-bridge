@@ -116,7 +116,9 @@ class ProjectFactoryGuidedIntake:
             "assumptions": [dict(item) for item in self.assumptions],
             "blockers": [dict(item) for item in self.blockers],
             "contractPreview": (
-                dict(self.contract_preview) if self.contract_preview is not None else None
+                dict(self.contract_preview)
+                if self.contract_preview is not None
+                else None
             ),
             "updatedAt": self.updated_at,
             "confirmedAt": self.confirmed_at,
@@ -293,7 +295,9 @@ class ProjectFactoryService:
             "default_backend": DEFAULT_BACKEND,
             "backends": ["fastapi", "go", "none"],
             "default_frontend_strategy": DEFAULT_FRONTEND_STRATEGY,
-            "frontend_strategies": [dict(FRONTEND_STRATEGIES[key]) for key in sorted(FRONTEND_STRATEGIES)],
+            "frontend_strategies": [
+                dict(FRONTEND_STRATEGIES[key]) for key in sorted(FRONTEND_STRATEGIES)
+            ],
             "logo_modes": ["generate", "upload", "placeholder"],
             "business_types": [
                 "restaurant",
@@ -602,16 +606,23 @@ class ProjectFactoryService:
             if draft is None:
                 return None
             refreshed = self._refresh_guided_intake(draft)
-            preview = refreshed.guided_intake.contract_preview or _guided_contract_preview(
-                request=refreshed.request,
-                manifest_plan=refreshed.manifest_plan,
-                draft_assets=tuple(self._draft_assets.get(draft_id, [])),
-                intake=refreshed.guided_intake,
+            preview = (
+                refreshed.guided_intake.contract_preview
+                or _guided_contract_preview(
+                    request=refreshed.request,
+                    manifest_plan=refreshed.manifest_plan,
+                    draft_assets=tuple(self._draft_assets.get(draft_id, [])),
+                    intake=refreshed.guided_intake,
+                )
             )
-            if refreshed.guided_intake.missing_fields or _has_local_intake_blockers(refreshed.guided_intake):
+            if refreshed.guided_intake.missing_fields or _has_local_intake_blockers(
+                refreshed.guided_intake
+            ):
                 intake = replace(
                     refreshed.guided_intake,
-                    status="blocked" if _has_local_intake_blockers(refreshed.guided_intake) else "collecting",
+                    status="blocked"
+                    if _has_local_intake_blockers(refreshed.guided_intake)
+                    else "collecting",
                     contract_preview=preview,
                     updated_at=_now_iso(),
                 )
@@ -680,7 +691,7 @@ class ProjectFactoryService:
                     f"Project generation already exists for draft {draft_id}: "
                     f"{existing.id} is {existing.status}."
                 )
-        manifest_plan = self._manifest_plan_for_draft(draft)
+        manifest_plan = self._manifest_plan_for_draft(draft, allow_existing=True)
         now = _now_iso()
         if not manifest_plan.ok:
             job = ProjectFactoryJob(
@@ -805,9 +816,7 @@ class ProjectFactoryService:
             return
         with self._lock:
             ready_job_ids = [
-                job.id
-                for job in self._jobs.values()
-                if job.status == "ready"
+                job.id for job in self._jobs.values() if job.status == "ready"
             ]
         for job_id in ready_job_ids:
             self._audit_ready_job_publication(job_id)
@@ -921,7 +930,7 @@ class ProjectFactoryService:
         draft = self.get_draft(draft_id)
         if draft is None:
             return
-        manifest_plan = self._manifest_plan_for_draft(draft)
+        manifest_plan = self._manifest_plan_for_draft(draft, allow_existing=True)
         reference_assets = self._reference_asset_service.list_assets(draft.id)
         project_assets = tuple(self._draft_assets.get(draft.id, []))
         workflow = manifest_plan.manifest.get("codex", {}).get("creation_workflow", {})
@@ -1063,6 +1072,8 @@ class ProjectFactoryService:
     def _manifest_plan_for_draft(
         self,
         draft: ProjectFactoryDraft,
+        *,
+        allow_existing: bool = False,
     ) -> ProjectFactoryManifestPlan:
         assets = self._reference_asset_service.list_assets(draft.id)
         project_assets = tuple(self._draft_assets.get(draft.id, []))
@@ -1078,13 +1089,14 @@ class ProjectFactoryService:
             first_release_mode=draft.request.first_release_mode,
             initial_admin_emails=draft.request.initial_admin_emails,
             visual_reference_paths=draft.request.visual_reference_paths,
-            visual_reference_assets=tuple(
-                asset.to_manifest_item() for asset in assets
-            ),
+            visual_reference_assets=tuple(asset.to_manifest_item() for asset in assets),
             project_assets=tuple(asset.to_manifest_item() for asset in project_assets),
             guided_intake_enabled=draft.request.guided_intake_enabled,
         )
-        return self._manifest_service.plan_manifest(request)
+        return self._manifest_service.plan_manifest(
+            request,
+            allow_existing=allow_existing,
+        )
 
     def _refresh_guided_intake(
         self,
@@ -1370,11 +1382,17 @@ def _guided_missing_fields(
     if not request.name.strip():
         missing.append(_missing_field("name", "Project name is required.", "local"))
     if not request.business_type.strip():
-        missing.append(_missing_field("business_type", "Business type is required.", "local"))
+        missing.append(
+            _missing_field("business_type", "Business type is required.", "local")
+        )
     if not request.primary_goal.strip():
-        missing.append(_missing_field("primary_goal", "Primary goal is required.", "local"))
+        missing.append(
+            _missing_field("primary_goal", "Primary goal is required.", "local")
+        )
     if not request.platforms:
-        missing.append(_missing_field("platforms", "At least one platform is required.", "local"))
+        missing.append(
+            _missing_field("platforms", "At least one platform is required.", "local")
+        )
     if request.first_release_mode == "preview" and not request.initial_admin_emails:
         missing.append(
             _missing_field(
@@ -1551,7 +1569,9 @@ def _guided_contract_preview(
     manifest = manifest_plan.manifest
     slug = manifest.get("slug") or request.slug
     return {
-        "status": "blocked" if _has_local_intake_blockers(intake) else "ready_for_review",
+        "status": "blocked"
+        if _has_local_intake_blockers(intake)
+        else "ready_for_review",
         "decisions": {
             "name": request.name,
             "slug": slug,
@@ -1585,12 +1605,16 @@ def _apply_guided_answer_to_request(
 ) -> ProjectFactoryManifestInput:
     if question_id == "initial_admin_emails":
         emails = _coerce_string_list(value)
-        return replace(request, initial_admin_emails=tuple(emails), guided_intake_enabled=True)
+        return replace(
+            request, initial_admin_emails=tuple(emails), guided_intake_enabled=True
+        )
     if question_id == "platforms":
         platforms = _coerce_string_list(value)
         return replace(request, platforms=tuple(platforms), guided_intake_enabled=True)
     if question_id == "frontend_strategy":
-        return replace(request, frontend_strategy=str(value), guided_intake_enabled=True)
+        return replace(
+            request, frontend_strategy=str(value), guided_intake_enabled=True
+        )
     if question_id == "primary_goal":
         return replace(request, primary_goal=str(value), guided_intake_enabled=True)
     if question_id == "business_type":
@@ -1612,7 +1636,11 @@ def _coerce_string_list(value: object) -> list[str]:
 
 def _normalize_answer_source(source: str) -> str:
     normalized = source.strip().lower()
-    return normalized if normalized in {"user", "inference", "default", "asset", "system"} else "user"
+    return (
+        normalized
+        if normalized in {"user", "inference", "default", "asset", "system"}
+        else "user"
+    )
 
 
 def _has_local_intake_blockers(intake: ProjectFactoryGuidedIntake) -> bool:
@@ -1674,12 +1702,14 @@ def _initial_preview_release_status(
     step_logs: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     slug = str(manifest.get("slug") or "")
-    frontend_strategy = str(manifest.get("frontend_strategy") or DEFAULT_FRONTEND_STRATEGY)
-    frontend = manifest.get("frontend") if isinstance(manifest.get("frontend"), dict) else {}
+    frontend_strategy = str(
+        manifest.get("frontend_strategy") or DEFAULT_FRONTEND_STRATEGY
+    )
+    frontend = (
+        manifest.get("frontend") if isinstance(manifest.get("frontend"), dict) else {}
+    )
     capabilities = (
-        frontend.get("strategy_capabilities")
-        if isinstance(frontend, dict)
-        else {}
+        frontend.get("strategy_capabilities") if isinstance(frontend, dict) else {}
     )
     supports_android_installable = bool(
         isinstance(capabilities, dict)
@@ -1731,13 +1761,17 @@ def _initial_preview_release_status(
         "previewUrl": preview_url,
         "apiBaseUrl": api_url,
         "frontendStrategy": frontend_strategy,
-        "strategyCapabilities": dict(capabilities) if isinstance(capabilities, dict) else {},
+        "strategyCapabilities": dict(capabilities)
+        if isinstance(capabilities, dict)
+        else {},
         "installableAndroid": supports_android_installable,
         "bridgeRegistrationRequired": supports_android_installable,
         "runtimeProfile": "preview",
         "apiRuntime": "cloudflare_preview",
         "releaseChannel": "prerelease",
-        "releaseTagPattern": "android-preview-v*" if supports_android_installable else None,
+        "releaseTagPattern": "android-preview-v*"
+        if supports_android_installable
+        else None,
         "productionReady": False,
         "mockOrDemo": False,
         "status": status or "draft",
@@ -1996,7 +2030,9 @@ def _guided_intake_from_payload(
             value=item.get("value"),
             source=str(item.get("source") or "user"),
             confidence=float(item.get("confidence") or 1.0),
-            updated_at=str(item.get("updatedAt") or item.get("updated_at") or _now_iso()),
+            updated_at=str(
+                item.get("updatedAt") or item.get("updated_at") or _now_iso()
+            ),
         )
         for item in value.get("answers", [])
         if isinstance(item, dict)
@@ -2011,11 +2047,15 @@ def _guided_intake_from_payload(
         answers=answers,
         missing_fields=tuple(
             dict(item)
-            for item in (value.get("missingFields") or value.get("missing_fields") or [])
+            for item in (
+                value.get("missingFields") or value.get("missing_fields") or []
+            )
             if isinstance(item, dict)
         ),
         assumptions=tuple(
-            dict(item) for item in value.get("assumptions", []) if isinstance(item, dict)
+            dict(item)
+            for item in value.get("assumptions", [])
+            if isinstance(item, dict)
         ),
         blockers=tuple(
             dict(item) for item in value.get("blockers", []) if isinstance(item, dict)
@@ -2029,12 +2069,16 @@ def _guided_intake_from_payload(
                 else None
             )
         ),
-        confirmed_at=_optional_str(value.get("confirmedAt") or value.get("confirmed_at")),
+        confirmed_at=_optional_str(
+            value.get("confirmedAt") or value.get("confirmed_at")
+        ),
         updated_at=str(value.get("updatedAt") or value.get("updated_at") or _now_iso()),
     )
 
 
-def _manifest_plan_from_payload(payload: dict[str, object]) -> ProjectFactoryManifestPlan:
+def _manifest_plan_from_payload(
+    payload: dict[str, object],
+) -> ProjectFactoryManifestPlan:
     return ProjectFactoryManifestPlan(
         ok=bool(payload["ok"]),
         status=str(payload["status"]),
@@ -2051,7 +2095,9 @@ def _manifest_plan_from_payload(payload: dict[str, object]) -> ProjectFactoryMan
             if isinstance(error, dict)
         ),
         next_actions=tuple(
-            str(item) for item in payload.get("next_actions", []) if isinstance(item, str)
+            str(item)
+            for item in payload.get("next_actions", [])
+            if isinstance(item, str)
         ),
     )
 
