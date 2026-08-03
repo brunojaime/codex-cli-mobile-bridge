@@ -389,9 +389,13 @@ class ProjectFactoryInitService:
             job = self._require_job(init_job_id)
             generator_phase = job.phase(ProjectFactoryInitPhaseName.UX_GENERATOR)
             reviewer_phase = job.phase(ProjectFactoryInitPhaseName.UX_REVIEWER)
+            terminal_ux_statuses = {
+                ProjectFactoryInitPhaseStatus.COMPLETED,
+                ProjectFactoryInitPhaseStatus.SKIPPED,
+            }
             if (
-                generator_phase.status == ProjectFactoryInitPhaseStatus.COMPLETED
-                and reviewer_phase.status == ProjectFactoryInitPhaseStatus.COMPLETED
+                generator_phase.status in terminal_ux_statuses
+                and reviewer_phase.status in terminal_ux_statuses
             ):
                 return job
 
@@ -657,7 +661,55 @@ class ProjectFactoryInitService:
     def queue_retry(self, init_job_id: str) -> ProjectFactoryInitJob:
         """Prepare a blocked or failed deterministic init job for another pass."""
 
+        self._skip_added_ux_waiting_after_later_progress(init_job_id)
         return self._reset_blocked_or_failed_phase_for_retry(init_job_id)
+
+    def _skip_added_ux_waiting_after_later_progress(
+        self,
+        init_job_id: str,
+    ) -> ProjectFactoryInitJob:
+        with self._lock:
+            job = self._require_job(init_job_id)
+            ux_reviewer_index = INIT_PHASE_ORDER.index(
+                ProjectFactoryInitPhaseName.UX_REVIEWER
+            )
+            later_phase_started = any(
+                phase.status
+                not in {
+                    ProjectFactoryInitPhaseStatus.QUEUED,
+                    ProjectFactoryInitPhaseStatus.QUEUED_WAITING_FOR_DOMAIN_BRIEF,
+                }
+                for phase in job.phases[ux_reviewer_index + 1 :]
+            )
+            if not later_phase_started:
+                return job
+
+            updated = job
+            for phase_name in (
+                ProjectFactoryInitPhaseName.UX_GENERATOR,
+                ProjectFactoryInitPhaseName.UX_REVIEWER,
+            ):
+                phase = updated.phase(phase_name)
+                if phase.status not in {
+                    ProjectFactoryInitPhaseStatus.QUEUED,
+                    ProjectFactoryInitPhaseStatus.QUEUED_WAITING_FOR_DOMAIN_BRIEF,
+                }:
+                    continue
+                updated = updated.with_phase(
+                    replace(
+                        phase,
+                        status=ProjectFactoryInitPhaseStatus.SKIPPED,
+                        message="Phase added after this init job had already advanced.",
+                        started_at=None,
+                        completed_at=_now_iso(),
+                        blockers=(),
+                    )
+                )
+            if updated == job:
+                return job
+            self._jobs[updated.id] = updated
+            self._persist_job(updated)
+            return updated
 
     def wait_for_domain_brief_phase(self, init_job_id: str) -> ProjectFactoryInitJob:
         """Mark automatic UX as visible but gated on the first domain brief."""
@@ -1129,6 +1181,16 @@ class ProjectFactoryInitService:
                     blocker=runtime_blocker,
                     evidence=(),
                 )
+            android_phase = job.phase(ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE)
+            if android_phase.status not in {
+                ProjectFactoryInitPhaseStatus.COMPLETED,
+                ProjectFactoryInitPhaseStatus.SKIPPED,
+            }:
+                job = self.begin_phase(
+                    job.id,
+                    ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE.value,
+                    message="Publishing Android preview APK prerelease.",
+                )
             version = _read_flutter_version(target / "apps/mobile/pubspec.yaml")
             if not version:
                 return self._block_android_phase(
@@ -1366,6 +1428,18 @@ class ProjectFactoryInitService:
                 evidence=tuple(release_evidence),
             )
 
+            installable_phase = released.phase(
+                ProjectFactoryInitPhaseName.BRIDGE_INSTALLABLE_REGISTRATION
+            )
+            if installable_phase.status not in {
+                ProjectFactoryInitPhaseStatus.COMPLETED,
+                ProjectFactoryInitPhaseStatus.SKIPPED,
+            }:
+                released = self.begin_phase(
+                    released.id,
+                    ProjectFactoryInitPhaseName.BRIDGE_INSTALLABLE_REGISTRATION.value,
+                    message="Verifying Bridge installable app registration.",
+                )
             lookup = self._run_env(
                 _bridge_installable_lookup_command(
                     bridge_registration_url,

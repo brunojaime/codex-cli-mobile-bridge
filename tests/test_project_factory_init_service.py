@@ -911,6 +911,51 @@ def test_init_service_queues_retry_for_failed_phase(tmp_path: Path) -> None:
     assert service.to_response_payload(queued)["retryAvailable"] is True
 
 
+def test_automatic_ux_skipped_phases_are_terminal_for_resume(tmp_path: Path) -> None:
+    service = ProjectFactoryInitService(state_root=tmp_path)
+    job = service.start_or_resume(draft_id="draft-1")
+    skipped = service._skip_future_phase(
+        job,
+        ProjectFactoryInitPhaseName.UX_GENERATOR,
+        message="Phase added after this init job had already advanced.",
+    )
+    skipped = service._skip_future_phase(
+        skipped,
+        ProjectFactoryInitPhaseName.UX_REVIEWER,
+        message="Phase added after this init job had already advanced.",
+    )
+
+    resumed = service.run_automatic_ux_phases(skipped.id)
+
+    assert resumed.phase(ProjectFactoryInitPhaseName.UX_GENERATOR).status == (
+        ProjectFactoryInitPhaseStatus.SKIPPED
+    )
+    assert resumed.phase(ProjectFactoryInitPhaseName.UX_REVIEWER).status == (
+        ProjectFactoryInitPhaseStatus.SKIPPED
+    )
+
+
+def test_retry_skips_added_ux_waiting_after_later_progress(tmp_path: Path) -> None:
+    service = ProjectFactoryInitService(state_root=tmp_path)
+    job = service.start_or_resume(draft_id="draft-1")
+    waiting = service.wait_for_domain_brief_phase(job.id)
+    progressed = service.complete_phase(
+        waiting.id,
+        ProjectFactoryInitPhaseName.PREVIEW_SMOKE.value,
+        message="Preview smoke passed before UX lane existed.",
+    )
+
+    queued = service.queue_retry(progressed.id)
+
+    assert queued.phase(ProjectFactoryInitPhaseName.UX_GENERATOR).status == (
+        ProjectFactoryInitPhaseStatus.SKIPPED
+    )
+    assert queued.phase(ProjectFactoryInitPhaseName.UX_REVIEWER).status == (
+        ProjectFactoryInitPhaseStatus.SKIPPED
+    )
+    assert service.to_response_payload(queued)["currentPhase"] == "init_preflight"
+
+
 def test_init_service_recovers_running_job_as_resumable(tmp_path: Path) -> None:
     service = ProjectFactoryInitService(state_root=tmp_path)
     job = service.start_or_resume(draft_id="draft-1")

@@ -79,6 +79,28 @@
       "android-v1.0.0-build.14": "com.ludmilo.gestion"
     }
   },
+  "operaciones-puerto-4": {
+    "apkAssetPattern": "operaciones-puerto-4*.apk",
+    "displayName": "operaciones puerto 4 Preview",
+    "enabled": true,
+    "expectedPackageId": null,
+    "latestAssetName": "operaciones-puerto-4.apk",
+    "mockOrDemo": false,
+    "previewUrl": "https://preview.nienfos.com/operaciones-puerto-4",
+    "productionReady": false,
+    "releaseChannel": "prerelease",
+    "releaseMetadata": {
+      "initialPreviewRelease": true,
+      "latestAssetName": "operaciones-puerto-4.apk",
+      "releaseTag": "android-preview-v0.1.0-build.1",
+      "releaseTagPattern": "android-preview-v*"
+    },
+    "releaseTagPattern": "android-preview-v*",
+    "repo": "brunojaime/operaciones-puerto-4",
+    "requiredMinimumBuild": null,
+    "runtimeProfile": "preview",
+    "verifiedPackageIds": {}
+  },
   "receta-comida": {
     "apkAssetPattern": "receta-comida*.apk",
     "displayName": "receta-comida Preview",

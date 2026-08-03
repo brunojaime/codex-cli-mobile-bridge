@@ -214,6 +214,48 @@ def test_android_release_creates_prerelease_registers_bridge_and_persists(
     assert "secret-token" not in json.dumps(persisted.to_payload())
 
 
+def test_android_release_marks_phase_running_while_publishing(tmp_path: Path) -> None:
+    release_tag = "android-preview-v0.1.0-build.1"
+    service_holder: dict[str, ProjectFactoryInitService] = {}
+    job_id_holder: dict[str, str] = {}
+
+    def assert_android_running(cwd: Path) -> None:
+        _write_apk(cwd)
+        current = service_holder["service"].get_job(job_id_holder["job_id"])
+        assert current is not None
+        assert current.phase(ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE).status == (
+            ProjectFactoryInitPhaseStatus.RUNNING
+        )
+
+    runner = _FakeRunner(
+        [
+            (
+                _release_view_cmd(release_tag),
+                _FakeResponse(exit_code=1, stderr="not found"),
+            ),
+            (
+                _publish_cmd(),
+                _FakeResponse(stdout="built", on_run=assert_android_running),
+            ),
+            (
+                _release_view_cmd(release_tag),
+                _FakeResponse(stdout=json.dumps(_release(release_tag))),
+            ),
+            (_lookup_cmd(), _FakeResponse(stdout=json.dumps(_installable(release_tag)))),
+        ]
+    )
+    service = _service(tmp_path, runner)
+    service_holder["service"] = service
+    job = _generated_job(service)
+    job_id_holder["job_id"] = job.id
+
+    completed = service.run_android_preview_release_phases(job.id)
+
+    assert completed.phase(ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE).status == (
+        ProjectFactoryInitPhaseStatus.COMPLETED
+    )
+
+
 def test_android_release_uses_public_bridge_url_when_transport_is_local(
     tmp_path: Path,
 ) -> None:

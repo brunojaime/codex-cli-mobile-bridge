@@ -2479,6 +2479,9 @@ async function handleRequest(request, env = globalThis, ctx = undefined) {
   const url = new URL(request.url);
   const appSlug = appSlugFromPath(url.pathname);
   const assetPath = stripAppPrefix(url.pathname);
+  const apiPath = assetPath === '/api' || assetPath.startsWith('/api/')
+    ? assetPath
+    : stripLeadingSlug(url.pathname);
 
     if (isPublicPreviewHealthRoute(request, url, assetPath)) {
     const sluglessPath = stripLeadingSlug(url.pathname);
@@ -2504,8 +2507,8 @@ async function handleRequest(request, env = globalThis, ctx = undefined) {
     });
   }
 
-    if (assetPath === '/api' || assetPath.startsWith('/api/')) {
-    return handlePreviewApi(request, env, assetPath);
+    if (apiPath === '/api' || apiPath.startsWith('/api/')) {
+    return handlePreviewApi(request, env, apiPath);
   }
 
     const configMatch = assetPath.match(/^\\/apps\\/([^/]+)\\/config\\/?$/);
@@ -10809,10 +10812,10 @@ void main() {{
       ),
     ));
 
-    expect(find.text('Aceptar invitacion al Preview'), findsOneWidget);
     expect(find.text('Crear contrasena'), findsOneWidget);
     expect(find.text('Repetir contrasena'), findsOneWidget);
-    expect(find.text('Aceptar invitacion'), findsOneWidget);
+    expect(find.byType(TextField), findsNWidgets(3));
+    expect(find.byType(FilledButton), findsOneWidget);
     expect(find.text('Create' ' password'), findsNothing);
     expect(find.text('Repeat' ' password'), findsNothing);
     expect(find.text('Activate' ' account'), findsNothing);
@@ -10820,7 +10823,7 @@ void main() {{
 
     await tester.enterText(find.byType(TextField).at(1), 'secret-password');
     await tester.enterText(find.byType(TextField).at(2), 'secret-password');
-    await tester.tap(find.text('Aceptar invitacion'));
+    await tester.tap(find.byType(FilledButton));
     await tester.pumpAndSettle();
 
     expect(controller.isAuthenticated, isTrue);
@@ -10837,14 +10840,14 @@ void main() {{
       ),
     ));
 
-    expect(find.text('Ingreso Preview'), findsOneWidget);
     expect(find.text('Iniciar sesion'), findsOneWidget);
     expect(find.text('Crear contrasena'), findsNothing);
     expect(find.text('Repetir contrasena'), findsNothing);
     expect(find.text('Invite token or link'), findsNothing);
+    expect(find.byType(TextField), findsNWidgets(2));
     await tester.enterText(find.byType(TextField).at(0), 'admin@example.com');
     await tester.enterText(find.byType(TextField).at(1), 'secret-password');
-    await tester.tap(find.text('Iniciar sesion'));
+    await tester.tap(find.byType(FilledButton));
     await tester.pumpAndSettle();
 
     expect(controller.isAuthenticated, isTrue);
