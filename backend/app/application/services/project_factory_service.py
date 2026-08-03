@@ -508,7 +508,7 @@ class ProjectFactoryService:
             draft = self._drafts.get(draft_id)
             if draft is None:
                 return None
-            refreshed = self._refresh_guided_intake(draft)
+            refreshed = self._refresh_guided_intake(draft, allow_existing=True)
             return refreshed.guided_intake.to_payload()
 
     def answer_guided_intake_question(
@@ -669,28 +669,25 @@ class ProjectFactoryService:
                 self._jobs[job.id] = job
                 self._persist_job(job)
                 return job
-            existing = self._job_for_draft(draft_id)
-            if existing is not None:
-                if (
-                    existing.status == "blocked"
-                    and existing.current_phase == "guided_intake_confirmation"
-                ):
+            while True:
+                existing = self._job_for_draft(draft_id)
+                if existing is None:
+                    break
+                if existing.status == "blocked" and existing.current_phase in {
+                    "guided_intake_confirmation",
+                    "validation",
+                }:
                     self._jobs.pop(existing.id, None)
                     try:
                         (self._job_state_dir / f"{existing.id}.json").unlink()
                     except FileNotFoundError:
                         pass
+                    continue
                 else:
                     raise ProjectFactoryGenerationConflictError(
                         f"Project generation already exists for draft {draft_id}: "
                         f"{existing.id} is {existing.status}."
                     )
-            existing = self._job_for_draft(draft_id)
-            if existing is not None:
-                raise ProjectFactoryGenerationConflictError(
-                    f"Project generation already exists for draft {draft_id}: "
-                    f"{existing.id} is {existing.status}."
-                )
         manifest_plan = self._manifest_plan_for_draft(draft, allow_existing=True)
         now = _now_iso()
         if not manifest_plan.ok:
@@ -1101,8 +1098,13 @@ class ProjectFactoryService:
     def _refresh_guided_intake(
         self,
         draft: ProjectFactoryDraft,
+        *,
+        allow_existing: bool = False,
     ) -> ProjectFactoryDraft:
-        manifest_plan = self._manifest_plan_for_draft(draft)
+        manifest_plan = self._manifest_plan_for_draft(
+            draft,
+            allow_existing=allow_existing,
+        )
         intake = _build_guided_intake(
             request=draft.request,
             manifest_plan=manifest_plan,
