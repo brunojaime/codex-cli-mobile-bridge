@@ -629,12 +629,13 @@ class ProjectFactoryInitJob {
   final bool retryAvailable;
 
   bool get isReady => status == 'ready';
+  bool get isResumable => status == 'resumable';
   bool get isBlockedWithContext => status == 'blocked_with_context';
   bool get isBlocked =>
       isBlockedWithContext || phases.any((phase) => phase.isBlocked);
   bool get isRunning =>
       status == 'running' || phases.any((phase) => phase.isRunning);
-  bool get hasRetryAction => retryAvailable && isBlocked;
+  bool get hasRetryAction => retryAvailable && (isBlocked || isResumable);
 
   factory ProjectFactoryInitJob.fromJson(Map<String, dynamic> json) {
     return ProjectFactoryInitJob(

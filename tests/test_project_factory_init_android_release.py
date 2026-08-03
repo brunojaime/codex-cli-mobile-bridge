@@ -262,6 +262,66 @@ def test_android_release_uses_public_bridge_url_when_transport_is_local(
     )
 
 
+def test_android_release_uses_local_bridge_url_for_generated_scripts(
+    tmp_path: Path,
+) -> None:
+    release_tag = "android-preview-v0.1.0-build.1"
+    public_bridge = "http://batata-default-string.tail0302c4.ts.net:8118"
+    local_lookup = (
+        "curl",
+        "-fsS",
+        "-H",
+        "Host: batata-default-string.tail0302c4.ts.net:8118",
+        "-H",
+        "X-Forwarded-Proto: http",
+        "http://127.0.0.1:8118/installable-apps/clinica-norte",
+    )
+    runner = _FakeRunner(
+        [
+            (
+                _release_view_cmd(release_tag),
+                _FakeResponse(stdout=json.dumps(_release(release_tag))),
+            ),
+            (local_lookup, _FakeResponse(exit_code=22, stderr="not found")),
+            (_register_cmd(), _FakeResponse(stdout="registered")),
+            (
+                local_lookup,
+                _FakeResponse(
+                    stdout=json.dumps(
+                        _installable(
+                            release_tag,
+                            apk_url=(
+                                f"{public_bridge}/app-updates/clinica-norte/apk/"
+                                f"{release_tag}/clinica-norte.apk"
+                            ),
+                        )
+                    )
+                ),
+            ),
+        ]
+    )
+    service = _service(
+        tmp_path,
+        runner,
+        api_base_url=public_bridge,
+        app_update_public_base_url=public_bridge,
+    )
+    job = _generated_job(service)
+
+    completed = service.run_android_preview_release_phases(job.id)
+
+    phase = completed.phase(ProjectFactoryInitPhaseName.BRIDGE_INSTALLABLE_REGISTRATION)
+    assert phase.status == ProjectFactoryInitPhaseStatus.COMPLETED
+    assert local_lookup in runner.calls
+    register_env = runner.envs[runner.calls.index(_register_cmd())] or {}
+    assert register_env["BRIDGE_URL"] == "http://127.0.0.1:8118"
+    assert register_env["BRIDGE_PUBLIC_URL"] == public_bridge
+    assert register_env["BRIDGE_REGISTRATION_URL"] == "http://127.0.0.1:8118"
+    assert public_bridge in json.dumps(
+        [resource.to_payload() for resource in completed.remote_resources]
+    )
+
+
 def test_bridge_public_url_ignores_app_preview_api_base_url(tmp_path: Path) -> None:
     settings = _settings(
         tmp_path,
@@ -1248,7 +1308,11 @@ def _release(
     }
 
 
-def _installable(release_tag: str) -> dict[str, object]:
+def _installable(
+    release_tag: str,
+    *,
+    apk_url: str = "https://bridge.test/app-updates/clinica-norte/apk/clinica-norte.apk",
+) -> dict[str, object]:
     return {
         "sourceApp": "clinica-norte",
         "displayName": "Clinica Norte Preview",
@@ -1259,7 +1323,7 @@ def _installable(release_tag: str) -> dict[str, object]:
         "latestAssetName": "clinica-norte.apk",
         "releaseTag": release_tag,
         "available": True,
-        "apkUrl": "https://bridge.test/app-updates/clinica-norte/apk/clinica-norte.apk",
+        "apkUrl": apk_url,
         "sha256": "a" * 64,
         "previewUrl": "https://preview.nienfos.com/clinica-norte",
         "runtimeProfile": "preview",

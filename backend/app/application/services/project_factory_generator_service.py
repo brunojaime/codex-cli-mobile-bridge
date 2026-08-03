@@ -9678,13 +9678,21 @@ class _PreviewHomeState extends State<PreviewHome> {{
             ),
         ],
       ),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 520),
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: user == null ? _authForm(context) : _signedIn(context, user),
-          ),
+      body: SafeArea(
+        child: LayoutBuilder(
+          builder: (context, constraints) {{
+            final minHeight =
+                constraints.maxHeight > 40 ? constraints.maxHeight - 40 : 0.0;
+            return SingleChildScrollView(
+              padding: const EdgeInsets.all(20),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: 520, minHeight: minHeight),
+                  child: user == null ? _authForm(context) : _signedIn(context, user),
+                ),
+              ),
+            );
+          }},
         ),
       ),
     );

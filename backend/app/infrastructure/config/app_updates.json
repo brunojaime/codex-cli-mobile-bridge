@@ -13,6 +13,28 @@
       "android-prod-feedback-v*": "com.ambientando.calendar"
     }
   },
+  "auditoria-android-preview-20260803": {
+    "apkAssetPattern": "auditoria-android-preview-20260803*.apk",
+    "displayName": "Auditoria Android Preview 20260803 Preview",
+    "enabled": true,
+    "expectedPackageId": null,
+    "latestAssetName": "auditoria-android-preview-20260803.apk",
+    "mockOrDemo": false,
+    "previewUrl": "https://preview.nienfos.com/auditoria-android-preview-20260803",
+    "productionReady": false,
+    "releaseChannel": "prerelease",
+    "releaseMetadata": {
+      "initialPreviewRelease": true,
+      "latestAssetName": "auditoria-android-preview-20260803.apk",
+      "releaseTag": "android-preview-v0.1.0-build.1",
+      "releaseTagPattern": "android-preview-v*"
+    },
+    "releaseTagPattern": "android-preview-v*",
+    "repo": "brunojaime/auditoria-android-preview-20260803",
+    "requiredMinimumBuild": null,
+    "runtimeProfile": "preview",
+    "verifiedPackageIds": {}
+  },
   "codex-mobile": {
     "apkAssetPattern": "codex-mobile-*.apk",
     "displayName": "Codex Mobile Bridge",
@@ -56,6 +78,28 @@
     "verifiedPackageIds": {
       "android-v1.0.0-build.14": "com.ludmilo.gestion"
     }
+  },
+  "receta-comida": {
+    "apkAssetPattern": "receta-comida*.apk",
+    "displayName": "receta-comida Preview",
+    "enabled": true,
+    "expectedPackageId": null,
+    "latestAssetName": "receta-comida.apk",
+    "mockOrDemo": false,
+    "previewUrl": "https://preview.nienfos.com/receta-comida",
+    "productionReady": false,
+    "releaseChannel": "prerelease",
+    "releaseMetadata": {
+      "initialPreviewRelease": true,
+      "latestAssetName": "receta-comida.apk",
+      "releaseTag": "android-preview-v0.1.0-build.2",
+      "releaseTagPattern": "android-preview-v*"
+    },
+    "releaseTagPattern": "android-preview-v*",
+    "repo": "brunojaime/receta-comida",
+    "requiredMinimumBuild": null,
+    "runtimeProfile": "preview",
+    "verifiedPackageIds": {}
   },
   "rentid": {
     "apkAssetPattern": "rentid*.apk",

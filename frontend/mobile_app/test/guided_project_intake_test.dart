@@ -520,6 +520,85 @@ void main() {
     );
   });
 
+  testWidgets('resumable init exposes continue action', (tester) async {
+    final apiClient = _GuidedProjectApiClient()
+      ..initPollJobs = <ProjectFactoryInitJob>[
+        _initJob(
+          status: 'resumable',
+          currentPhase: 'android_preview_release',
+          retryAvailable: true,
+          phases: const <ProjectFactoryInitPhase>[
+            ProjectFactoryInitPhase(
+              name: 'preview_smoke',
+              status: 'completed',
+              message: 'Preview smoke passed.',
+              blockers: <Map<String, dynamic>>[],
+              commandEvidence: <Map<String, dynamic>>[],
+              artifacts: <Map<String, dynamic>>[],
+            ),
+            ProjectFactoryInitPhase(
+              name: 'android_preview_release',
+              status: 'queued',
+              message: '',
+              blockers: <Map<String, dynamic>>[],
+              commandEvidence: <Map<String, dynamic>>[],
+              artifacts: <Map<String, dynamic>>[],
+            ),
+          ],
+        ),
+      ];
+    apiClient.seedProjectFactorySession(
+      id: 'resumable-session',
+      title: 'receta-comida',
+      agentConfiguration: kDefaultAgentConfiguration,
+      messages: <ChatMessage>[
+        ChatMessage(
+          id: 'pf-init-context-pf-init-1',
+          text: '# Deterministic Init Context\n\n'
+              'Project: receta-comida (`receta-comida`)\n'
+              'Init job id: `pf-init-1`\n\n'
+              '## Pending Deterministic Work\n'
+              '- `android_preview_release`: queued',
+          isUser: false,
+          authorType: ChatMessageAuthorType.assistant,
+          agentId: AgentId.generator,
+          status: ChatMessageStatus.completed,
+          createdAt: _GuidedProjectApiClient._timestamp,
+          updatedAt: _GuidedProjectApiClient._timestamp,
+        ),
+      ],
+    );
+    final controller = ChatController(
+      apiClient: apiClient,
+      notificationService: const NoopChatNotificationService(),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ChatScreen(
+          initialApiBaseUrl: 'http://localhost:8000',
+          notificationService: const NoopChatNotificationService(),
+          controllerOverride: controller,
+          enableServerBootstrap: false,
+          projectFactoryClientOverride: apiClient,
+        ),
+      ),
+    );
+
+    await controller.selectSession('resumable-session');
+    await tester.pumpAndSettle();
+
+    expect(find.text('Resumable'), findsOneWidget);
+    expect(find.text('Continue'), findsOneWidget);
+
+    final continueButton = tester.widget<FilledButton>(find
+        .byKey(const ValueKey<String>('project-factory-init-retry-button')));
+    continueButton.onPressed?.call();
+    await tester.pump();
+
+    expect(apiClient.retryInitCalls, 1);
+  });
+
   testWidgets('Ok dale CTA is consumed as a technical event before init',
       (tester) async {
     final apiClient = _GuidedProjectApiClient()

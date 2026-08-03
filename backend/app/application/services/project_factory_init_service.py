@@ -1169,7 +1169,7 @@ class ProjectFactoryInitService:
                 "APP_RELEASE_TAG": release_tag,
                 "APP_ANDROID_PREVIEW_RELEASE_TAG": release_tag,
                 "ANDROID_PREVIEW_RELEASE_MODE": "bridge_local",
-                "BRIDGE_URL": bridge_base_url,
+                "BRIDGE_URL": bridge_registration_url,
                 "BRIDGE_PUBLIC_URL": bridge_public_url,
                 "BRIDGE_REGISTRATION_URL": bridge_registration_url,
                 "CODEX_MOBILE_BRIDGE_ROOT": str(
@@ -2236,7 +2236,7 @@ class ProjectFactoryInitService:
         blockers = [
             blocker.to_payload() for phase in job.phases for blocker in phase.blockers
         ]
-        retry_available = any(
+        retry_available = status == ProjectFactoryInitCompletionState.RESUMABLE.value or any(
             blocker.recoverable
             for phase in job.phases
             if phase.status == ProjectFactoryInitPhaseStatus.BLOCKED
@@ -6958,13 +6958,13 @@ def _resolve_bridge_registration_url(
     ).strip().rstrip("/")
     if explicit:
         return explicit
+    parsed = urlparse((bridge_base_url or "").strip())
+    if not _is_local_bridge_url(bridge_base_url) and parsed.port:
+        return f"http://127.0.0.1:{parsed.port}"
     if settings is not None and getattr(settings, "api_port", None):
         return f"http://127.0.0.1:{settings.api_port}"
     if _is_local_bridge_url(bridge_base_url):
         return bridge_base_url.rstrip("/")
-    parsed = urlparse((bridge_base_url or "").strip())
-    if parsed.port:
-        return f"http://127.0.0.1:{parsed.port}"
     return bridge_base_url.rstrip("/")
 
 

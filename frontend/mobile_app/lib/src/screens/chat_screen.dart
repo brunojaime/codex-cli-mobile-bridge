@@ -6118,6 +6118,7 @@ class ProjectFactoryInitCard extends StatelessWidget {
     final blockers = job?.blockers ?? const <Map<String, dynamic>>[];
     final phases = job?.phases ?? const <ProjectFactoryInitPhase>[];
     final canRetry = job?.hasRetryAction ?? false;
+    final retryLabel = job?.isResumable ?? false ? 'Continue' : 'Retry';
     final controlsBusy = isLoading && (job?.isRunning ?? true);
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -6230,7 +6231,7 @@ class ProjectFactoryInitCard extends StatelessWidget {
                         ),
                       ),
                       icon: const Icon(Icons.replay_rounded, size: 18),
-                      label: const Text('Retry'),
+                      label: Text(retryLabel),
                     ),
                   if (onRefresh != null)
                     OutlinedButton.icon(

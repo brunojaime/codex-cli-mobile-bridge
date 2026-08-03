@@ -884,7 +884,7 @@ def test_init_service_queues_retry_for_any_blocked_phase(tmp_path: Path) -> None
     assert retry_phase.status == ProjectFactoryInitPhaseStatus.QUEUED
     assert retry_phase.blockers == ()
     assert service.to_response_payload(queued)["status"] == "resumable"
-    assert service.to_response_payload(queued)["retryAvailable"] is False
+    assert service.to_response_payload(queued)["retryAvailable"] is True
 
 
 def test_init_service_queues_retry_for_failed_phase(tmp_path: Path) -> None:
@@ -908,7 +908,7 @@ def test_init_service_queues_retry_for_failed_phase(tmp_path: Path) -> None:
     assert retry_phase.status == ProjectFactoryInitPhaseStatus.QUEUED
     assert retry_phase.message == ""
     assert service.to_response_payload(queued)["status"] == "resumable"
-    assert service.to_response_payload(queued)["retryAvailable"] is False
+    assert service.to_response_payload(queued)["retryAvailable"] is True
 
 
 def test_init_service_recovers_running_job_as_resumable(tmp_path: Path) -> None:
