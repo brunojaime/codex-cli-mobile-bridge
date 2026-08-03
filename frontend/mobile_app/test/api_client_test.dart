@@ -1577,6 +1577,35 @@ void main() {
     );
   });
 
+  test('sendAttachmentsMessage infers MP4 video content type', () async {
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8000',
+      client: MockClient((request) async {
+        expect(request.method, 'POST');
+        expect(request.url.path, '/message/attachments');
+        final body = String.fromCharCodes(request.bodyBytes).toLowerCase();
+        expect(body, contains('filename="screen-recording.mp4"'));
+        expect(body, contains('content-type: video/mp4'));
+        return http.Response(
+          '{"job_id":"job-1","session_id":"session-1","status":"pending","elapsed_seconds":0}',
+          202,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    await client.sendAttachmentsMessage(
+      <XFile>[
+        XFile.fromData(
+          Uint8List.fromList(<int>[0, 0, 0, 24]),
+          name: 'screen-recording.mp4',
+          path: 'screen-recording.mp4',
+        ),
+      ],
+      message: 'Can you inspect this recording?',
+    );
+  });
+
   test('sendAttachmentsMessage sends text, edited PNG image, and audio',
       () async {
     final client = ApiClient(

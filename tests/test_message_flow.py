@@ -9398,6 +9398,47 @@ def test_attachment_batch_flow_accepts_images() -> None:
     assert "diagram.png" in job["response"]
 
 
+def test_attachment_batch_flow_accepts_video_reference() -> None:
+    client = build_test_client()
+
+    create_response = client.post(
+        "/message/attachments",
+        data={"message": "Revisa esta grabacion de pantalla"},
+        files=[
+            (
+                "attachments",
+                (
+                    "screen-recording.mp4",
+                    b"fake video bytes",
+                    "video/mp4",
+                ),
+            )
+        ],
+    )
+
+    assert create_response.status_code == 202
+    payload = create_response.json()
+
+    job = wait_for_job(client, payload["job_id"])
+
+    assert job["status"] == "completed"
+    assert job["message"] == (
+        "Revisa esta grabacion de pantalla\n\n"
+        "[Attached files]\n"
+        "- video: screen-recording.mp4"
+    )
+    assert "Document name: screen-recording.mp4" in job["response"]
+    assert "Document kind: video" in job["response"]
+    assert "Video local path: " in job["response"]
+    video_path = (
+        job["response"]
+        .split("Video local path: ", maxsplit=1)[1]
+        .split("\n", maxsplit=1)[0]
+    )
+    assert Path(video_path).is_file()
+    assert Path(video_path).suffix == ".mp4"
+
+
 def test_attachment_batch_flow_accepts_standard_documents() -> None:
     client = build_test_client()
     pptx_bytes = build_pptx_bytes(("Market overview", "Total addressable market"))

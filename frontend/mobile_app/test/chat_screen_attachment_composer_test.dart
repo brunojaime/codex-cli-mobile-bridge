@@ -28,6 +28,31 @@ void main() {
     );
   });
 
+  test('video attachment detection accepts video MIME types and MP4 files', () {
+    expect(
+      isVideoAttachmentDraftInput(
+        fileName: 'upload.bin',
+        mimeType: 'video/mp4',
+      ),
+      isTrue,
+    );
+    expect(
+      isVideoAttachmentDraftInput(fileName: 'screen-recording.mp4'),
+      isTrue,
+    );
+    expect(
+      isAudioAttachmentDraftInput(fileName: 'screen-recording.mp4'),
+      isFalse,
+    );
+    expect(
+      isAudioAttachmentDraftInput(
+        fileName: 'upload.mp4',
+        mimeType: 'audio/mp4',
+      ),
+      isTrue,
+    );
+  });
+
   testWidgets('image editor can be cancelled without returning an edit', (
     tester,
   ) async {

@@ -8281,6 +8281,9 @@ class _ComposerState extends State<_Composer> {
     if (_pendingAttachments.length == 1 && _pendingAttachments.first.isAudio) {
       return 'Add text for this voice note';
     }
+    if (_pendingAttachments.length == 1 && _pendingAttachments.first.isVideo) {
+      return 'Add text for this video';
+    }
     if (_pendingAttachments.length == 1 && _pendingAttachments.first.isImage) {
       return 'Add text for this image';
     }
@@ -8291,8 +8294,12 @@ class _ComposerState extends State<_Composer> {
     required String fileName,
     String? mimeType,
   }) {
-    if (mimeType != null && mimeType.toLowerCase().startsWith('image/')) {
+    final normalizedMimeType = mimeType?.trim().toLowerCase();
+    if (normalizedMimeType != null && normalizedMimeType.startsWith('image/')) {
       return _AttachmentDraftKind.image;
+    }
+    if (isVideoAttachmentDraftInput(fileName: fileName, mimeType: mimeType)) {
+      return _AttachmentDraftKind.video;
     }
     if (isAudioAttachmentDraftInput(fileName: fileName, mimeType: mimeType)) {
       return _AttachmentDraftKind.audio;
@@ -8329,7 +8336,7 @@ class _ComposerState extends State<_Composer> {
   }
 }
 
-enum _AttachmentDraftKind { image, audio, file }
+enum _AttachmentDraftKind { image, audio, video, file }
 
 enum _AttachmentSourceAction { image, file }
 
@@ -8354,12 +8361,17 @@ class _PendingAttachmentDraft {
 
   bool get isAudio => kind == _AttachmentDraftKind.audio;
 
+  bool get isVideo => kind == _AttachmentDraftKind.video;
+
   String get badgeLabel {
     if (isImage) {
       return 'Image';
     }
     if (isAudio) {
       return 'Audio';
+    }
+    if (isVideo) {
+      return 'Video';
     }
     return 'File';
   }
@@ -12874,6 +12886,22 @@ bool isAudioAttachmentDraftInput({required String fileName, String? mimeType}) {
 }
 
 @visibleForTesting
+bool isVideoAttachmentDraftInput({required String fileName, String? mimeType}) {
+  final normalizedMimeType = (mimeType ?? '').trim().toLowerCase();
+  if (normalizedMimeType.startsWith('video/')) {
+    return true;
+  }
+  final normalizedName = fileName.trim().toLowerCase();
+  return normalizedName.endsWith('.avi') ||
+      normalizedName.endsWith('.m4v') ||
+      normalizedName.endsWith('.mkv') ||
+      normalizedName.endsWith('.mov') ||
+      normalizedName.endsWith('.mp4') ||
+      normalizedName.endsWith('.mpeg') ||
+      normalizedName.endsWith('.mpg');
+}
+
+@visibleForTesting
 Widget buildImageEditorForTest({
   required Uint8List imageBytes,
   required String fileName,
@@ -13047,7 +13075,9 @@ class _PendingAttachmentTray extends StatelessWidget {
         attachments.where((attachment) => attachment.isImage).length;
     final audioCount =
         attachments.where((attachment) => attachment.isAudio).length;
-    final fileCount = attachments.length - imageCount - audioCount;
+    final videoCount =
+        attachments.where((attachment) => attachment.isVideo).length;
+    final fileCount = attachments.length - imageCount - audioCount - videoCount;
 
     return Container(
       padding: const EdgeInsets.all(10),
@@ -13144,6 +13174,7 @@ class _PendingAttachmentTray extends StatelessWidget {
                 totalCount: attachments.length,
                 imageCount: imageCount,
                 audioCount: audioCount,
+                videoCount: videoCount,
                 fileCount: fileCount,
               ),
               style: const TextStyle(color: Color(0xFF8B97B5), height: 1.4),
@@ -13214,12 +13245,16 @@ class _PendingAttachmentRow extends StatelessWidget {
                         ? const Color(0xFF11352E)
                         : attachment.isAudio
                             ? const Color(0xFF3B1521)
-                            : const Color(0xFF1E2944),
+                            : attachment.isVideo
+                                ? const Color(0xFF2E245F)
+                                : const Color(0xFF1E2944),
                     foregroundColor: attachment.isImage
                         ? const Color(0xFF9FF0DC)
                         : attachment.isAudio
                             ? const Color(0xFFFFB3B3)
-                            : const Color(0xFFB8C8EA),
+                            : attachment.isVideo
+                                ? const Color(0xFFC9C0FF)
+                                : const Color(0xFFB8C8EA),
                   ),
                   if (attachment.sizeBytes != null) ...<Widget>[
                     Text(
@@ -13325,7 +13360,9 @@ class _AttachmentPreview extends StatelessWidget {
     return _AttachmentFallbackIcon(
       icon: attachment.isAudio
           ? Icons.graphic_eq_rounded
-          : Icons.insert_drive_file_outlined,
+          : attachment.isVideo
+              ? Icons.movie_outlined
+              : Icons.insert_drive_file_outlined,
     );
   }
 }
@@ -13364,6 +13401,7 @@ String _buildAttachmentTraySummary({
   required int totalCount,
   required int imageCount,
   required int audioCount,
+  required int videoCount,
   required int fileCount,
 }) {
   if (totalCount == 1 && imageCount == 1) {
@@ -13371,6 +13409,9 @@ String _buildAttachmentTraySummary({
   }
   if (totalCount == 1 && audioCount == 1) {
     return 'One voice note is ready. Add optional instructions or send it as-is.';
+  }
+  if (totalCount == 1 && videoCount == 1) {
+    return 'One video is ready. Tell Codex what to inspect.';
   }
   if (totalCount == 1 && fileCount == 1) {
     return 'One file is ready. Tell Codex what you want from it.';
@@ -13382,6 +13423,9 @@ String _buildAttachmentTraySummary({
   }
   if (audioCount > 0) {
     parts.add('$audioCount voice note${audioCount == 1 ? '' : 's'}');
+  }
+  if (videoCount > 0) {
+    parts.add('$videoCount video${videoCount == 1 ? '' : 's'}');
   }
   if (fileCount > 0) {
     parts.add('$fileCount file${fileCount == 1 ? '' : 's'}');
