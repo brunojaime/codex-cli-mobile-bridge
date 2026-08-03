@@ -156,6 +156,48 @@ def test_start_domain_factory_configures_current_session_and_writes_sdd(
         assert (spec_root / "diagrams" / diagram).exists()
 
 
+def test_start_domain_factory_reuses_approved_new_project_brief_and_implements(
+    tmp_path: Path,
+) -> None:
+    workspace = _baseline_workspace(tmp_path)
+    brief_path = workspace / ".codex/ux/domain-brief.md"
+    brief_path.parent.mkdir(parents=True, exist_ok=True)
+    brief_path.write_text(
+        "# Approved domain brief\n\nManage real port movements and operators.\n",
+        encoding="utf-8",
+    )
+    repository = _repository(tmp_path)
+    session = _session(workspace)
+    repository.save_session(session)
+    service = DomainFactoryService(
+        projects_root=tmp_path / "projects",
+        chat_repository=repository,
+    )
+
+    result = service.start(session_id=session.id)
+
+    assert result.status == "ready"
+    spec_root = workspace / str(result.spec_root)
+    original_brief = (spec_root / "intake/original-brief.md").read_text(
+        encoding="utf-8"
+    )
+    assert "Manage real port movements and operators." in original_brief
+    assert (spec_root / "contract-preview.json").is_file()
+    assert (spec_root / "workflow-evidence.json").is_file()
+    state = json.loads(
+        (workspace / ".codex/factory/domain-factory-state.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert state["modeStatus"] == "implementing"
+    assert state["intakeStatus"] == "contract_preview_ready"
+    messages = repository.list_messages(session.id)
+    assert any("implementation mode is active" in item.content for item in messages)
+    assert not any(
+        "Send the business/domain brief here" in item.content for item in messages
+    )
+
+
 def test_start_domain_factory_accepts_block_empty_lists_in_project_yaml(
     tmp_path: Path,
 ) -> None:
@@ -681,11 +723,17 @@ def test_domain_factory_completion_evidence_blocks_until_required_files_exist(
     blocked = service.validate_completion_evidence(session_id=session.id)
 
     assert blocked["canCompleteTasks"] is False
-    assert blocked["missingEvidence"] == ["implementation", "validation", "release"]
+    assert blocked["missingEvidence"] == [
+        "implementation",
+        "validation",
+        "finalUx",
+        "release",
+    ]
     spec_root = workspace / start.spec_root
     for filename in (
         "implementation-evidence.json",
         "validation-evidence.json",
+        "final-ux-evidence.json",
         "release-evidence.json",
     ):
         (spec_root / filename).write_text('{"ok": true}\n', encoding="utf-8")
@@ -810,7 +858,11 @@ def test_domain_factory_persists_valid_release_evidence_and_state(
     assert state["modeStatus"] == "release_evidence_ready"
     assert state["releaseEvidencePath"] == result["releaseEvidencePath"]
     completion = service.validate_completion_evidence(session_id=session.id)
-    assert completion["missingEvidence"] == ["implementation", "validation"]
+    assert completion["missingEvidence"] == [
+        "implementation",
+        "validation",
+        "finalUx",
+    ]
 
 
 def _repository(tmp_path: Path) -> InMemoryChatRepository:

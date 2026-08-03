@@ -2,7 +2,6 @@ import 'package:codex_mobile_frontend/src/models/agent_configuration.dart';
 import 'package:codex_mobile_frontend/src/models/chat_message.dart';
 import 'package:codex_mobile_frontend/src/models/chat_session_summary.dart';
 import 'package:codex_mobile_frontend/src/models/codex_tooling.dart';
-import 'package:codex_mobile_frontend/src/models/domain_factory.dart';
 import 'package:codex_mobile_frontend/src/models/job_status_response.dart';
 import 'package:codex_mobile_frontend/src/models/project_factory.dart';
 import 'package:codex_mobile_frontend/src/models/session_detail.dart';
@@ -614,7 +613,7 @@ void main() {
     expect(apiClient.createDraftCalls, 1);
     expect(apiClient.startInitCalls, 0);
     expect(apiClient.lastInitWorkspacePath, isNull);
-    expect(apiClient.domainFactoryStarts, 0);
+    expect(apiClient.fullGenerationCalls, 0);
     expect(apiClient.sentMessages, isEmpty);
     expect(find.text('Deterministic baseline init'), findsNothing);
 
@@ -668,7 +667,7 @@ void main() {
   });
 
   testWidgets(
-      'init polling starts Domain Factory once with generated workspace when ready',
+      'init polling starts full Generator Reviewer workflow once when ready',
       (tester) async {
     final apiClient = _GuidedProjectApiClient()
       ..includeGeneratorReadyMessage = true
@@ -692,27 +691,26 @@ void main() {
     await _tapOkDaleProjectFactoryButton(tester);
 
     expect(apiClient.startInitCalls, 1);
-    expect(apiClient.domainFactoryStarts, 0);
+    expect(apiClient.fullGenerationCalls, 0);
     await _sendComposerMessage(tester, 'ok');
     expect(apiClient.startInitCalls, 1);
 
     await tester.pump(const Duration(seconds: 2));
     await tester.pump();
     expect(apiClient.getInitJobCalls, 1);
-    expect(apiClient.domainFactoryStarts, 0);
+    expect(apiClient.fullGenerationCalls, 0);
 
     await tester.pump(const Duration(seconds: 2));
-    await _pumpDeferredDomainFactoryStart(tester);
+    await _pumpDeferredFullGenerationStart(tester);
 
     expect(apiClient.getInitJobCalls, 2);
     expect(apiClient.startInitCalls, 1);
-    expect(apiClient.domainFactoryStarts, 1);
-    expect(apiClient.domainFactoryWorkspacePaths,
-        <String?>['/projects/generated/clinica-norte']);
+    expect(apiClient.fullGenerationCalls, 1);
+    expect(apiClient.generatedDraftIds, <String>['pf-draft-1']);
   });
 
   testWidgets(
-      'blocked-with-context init can start Domain Factory with generated workspace',
+      'blocked-with-context init can start full Generator Reviewer workflow',
       (tester) async {
     final apiClient = _GuidedProjectApiClient()
       ..includeGeneratorReadyMessage = true
@@ -734,12 +732,11 @@ void main() {
     await _tapOkDaleProjectFactoryButton(tester);
 
     await tester.pump(const Duration(seconds: 2));
-    await _pumpDeferredDomainFactoryStart(tester);
+    await _pumpDeferredFullGenerationStart(tester);
 
     expect(apiClient.getInitJobCalls, 1);
-    expect(apiClient.domainFactoryStarts, 1);
-    expect(apiClient.domainFactoryWorkspacePaths,
-        <String?>['/projects/generated/blocked']);
+    expect(apiClient.fullGenerationCalls, 1);
+    expect(apiClient.generatedDraftIds, <String>['pf-draft-1']);
   });
 
   testWidgets('blocked init shows phases and can be retried', (tester) async {
@@ -810,7 +807,7 @@ void main() {
     await _tapOkDaleProjectFactoryButton(tester);
 
     await tester.pump(const Duration(seconds: 2));
-    await _pumpDeferredDomainFactoryStart(tester);
+    await _pumpDeferredFullGenerationStart(tester);
 
     expect(find.text('Preview smoke'), findsWidgets);
     expect(find.text('Invite secret missing.'), findsWidgets);
@@ -823,13 +820,13 @@ void main() {
     retryButton.onPressed?.call();
     await tester.pump();
     await tester.pump(const Duration(seconds: 2));
-    await _pumpDeferredDomainFactoryStart(tester);
+    await _pumpDeferredFullGenerationStart(tester);
 
     expect(apiClient.retryInitCalls, 1);
-    expect(apiClient.domainFactoryStarts, 1);
+    expect(apiClient.fullGenerationCalls, 1);
   });
 
-  testWidgets('cancelled init does not start Domain Factory', (tester) async {
+  testWidgets('cancelled init does not start full generation', (tester) async {
     final apiClient = _GuidedProjectApiClient()
       ..includeGeneratorReadyMessage = true
       ..initPollJobs = <ProjectFactoryInitJob>[
@@ -849,10 +846,10 @@ void main() {
     await _tapOkDaleProjectFactoryButton(tester);
 
     await tester.pump(const Duration(seconds: 2));
-    await _pumpDeferredDomainFactoryStart(tester);
+    await _pumpDeferredFullGenerationStart(tester);
 
     expect(apiClient.getInitJobCalls, 1);
-    expect(apiClient.domainFactoryStarts, 0);
+    expect(apiClient.fullGenerationCalls, 0);
     expect(tester.takeException(), isNull);
 
     apiClient
@@ -863,7 +860,7 @@ void main() {
     await tester.pump();
 
     expect(apiClient.startInitCalls, 1);
-    expect(apiClient.domainFactoryStarts, 0);
+    expect(apiClient.fullGenerationCalls, 0);
     expect(apiClient.sentMessages, isEmpty);
     expect(tester.takeException(), isNull);
   });
@@ -887,7 +884,7 @@ void main() {
 
     expect(apiClient.startInitCalls, 1);
     expect(apiClient.getInitJobCalls, 1);
-    expect(apiClient.domainFactoryStarts, 0);
+    expect(apiClient.fullGenerationCalls, 0);
     expect(find.textContaining('Could not refresh deterministic init.'),
         findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -911,7 +908,7 @@ void main() {
     await tester.pump(const Duration(seconds: 3));
 
     expect(apiClient.getInitJobCalls, 0);
-    expect(apiClient.domainFactoryStarts, 0);
+    expect(apiClient.fullGenerationCalls, 0);
     expect(tester.takeException(), isNull);
   });
 }
@@ -991,7 +988,7 @@ Future<void> _tapOkDaleProjectFactoryButton(
   await tester.pumpAndSettle();
 }
 
-Future<void> _pumpDeferredDomainFactoryStart(WidgetTester tester) async {
+Future<void> _pumpDeferredFullGenerationStart(WidgetTester tester) async {
   await tester.pumpAndSettle(const Duration(milliseconds: 10));
 }
 
@@ -1052,8 +1049,9 @@ class _GuidedProjectApiClient extends ApiClient {
   int startInitCalls = 0;
   int getInitJobCalls = 0;
   int retryInitCalls = 0;
+  int fullGenerationCalls = 0;
   int sendMessageCalls = 0;
-  int domainFactoryStarts = 0;
+  final List<String> generatedDraftIds = <String>[];
   bool includeGeneratorReadyMessage = false;
   bool exposePersistedDraftSummary = false;
   String persistedDraftName = 'Untitled project';
@@ -1064,7 +1062,6 @@ class _GuidedProjectApiClient extends ApiClient {
       <ProjectFactoryInitJob>[];
   List<ProjectFactoryInitJob> persistedInitJobs = <ProjectFactoryInitJob>[];
   final List<String> sentMessages = <String>[];
-  final List<String?> domainFactoryWorkspacePaths = <String?>[];
   final List<String> createdDraftNames = <String>[];
   final Map<String, SessionDetail> _sessions = <String, SessionDetail>{};
   ProjectFactoryGuidedIntake _intake = _intakeFromJson(
@@ -1247,6 +1244,23 @@ class _GuidedProjectApiClient extends ApiClient {
   }
 
   @override
+  Future<ProjectFactoryJob> generateProjectFactoryDraft(String draftId) async {
+    fullGenerationCalls += 1;
+    generatedDraftIds.add(draftId);
+    return ProjectFactoryJob.fromJson(<String, dynamic>{
+      'job_id': 'pf-job-$fullGenerationCalls',
+      'draft_id': draftId,
+      'status': 'queued',
+      'current_step': 'scaffold',
+      'current_phase': 'scaffold',
+      'progress': 0,
+      'message': 'Full Project Factory generation queued.',
+      'manifest_plan': <String, dynamic>{},
+      'step_logs': <Map<String, dynamic>>[],
+    });
+  }
+
+  @override
   Future<ProjectFactoryInitJob> getProjectFactoryInitJob(
       String initJobId) async {
     getInitJobCalls += 1;
@@ -1377,23 +1391,6 @@ class _GuidedProjectApiClient extends ApiClient {
       sessionId: sessionId ?? 'created-session',
       status: 'completed',
       elapsedSeconds: 0,
-    );
-  }
-
-  @override
-  Future<DomainFactoryStart> startDomainFactoryMode(
-    String sessionId, {
-    String? workspacePath,
-  }) async {
-    domainFactoryStarts += 1;
-    domainFactoryWorkspacePaths.add(workspacePath);
-    final current = _sessions[sessionId]!;
-    return DomainFactoryStart(
-      status: 'ready',
-      session: current,
-      firstMessageId: 'domain-factory-start',
-      statePath: '.codex/factory/domain-factory-state.json',
-      specRoot: 'specs/019-domain-factory-session-a',
     );
   }
 

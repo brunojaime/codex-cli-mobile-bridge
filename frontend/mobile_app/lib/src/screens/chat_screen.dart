@@ -582,8 +582,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final Set<String> _hydratedProjectFactoryInitSessions = <String>{};
   final Set<String> _retryingProjectFactoryInitSessions = <String>{};
   final Map<String, Timer> _projectFactoryInitPollTimers = <String, Timer>{};
-  final Set<String> _startingDomainFactoryAfterInitSessions = <String>{};
-  final Set<String> _startedDomainFactoryAfterInitSessions = <String>{};
+  final Set<String> _startingFullGenerationAfterInitSessions = <String>{};
+  final Set<String> _startedFullGenerationAfterInitSessions = <String>{};
   String? _projectFactoryInitErrorText;
   final Map<String, Set<String>> _collapsedMessageIdsBySession =
       <String, Set<String>>{};
@@ -2389,63 +2389,6 @@ When you create the Project Factory draft, link each asset with POST /project-fa
     );
   }
 
-  Future<void> _openDomainFactoryMode({
-    String? workspacePathOverride,
-    bool showSnackbars = true,
-  }) async {
-    final currentSession = _chatController.currentSession;
-    if (currentSession == null) {
-      if (showSnackbars) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content:
-                Text('Open a project chat before starting Domain Factory.'),
-          ),
-        );
-      }
-      return;
-    }
-    final capabilities = _activeServerCapabilities;
-    if (capabilities != null && !capabilities.supportsDomainFactory) {
-      if (showSnackbars) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Domain Factory needs an updated bridge backend. Restart or update the backend, then try again.',
-            ),
-          ),
-        );
-      }
-      return;
-    }
-
-    if (showSnackbars) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Starting Domain Factory mode...')),
-      );
-    }
-    final started = await _chatController.startDomainFactoryMode(
-      workspacePathOverride: workspacePathOverride,
-    );
-    if (!mounted) {
-      return;
-    }
-    _updateStickToBottom(true);
-    _scrollToBottom();
-    if (showSnackbars) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            started
-                ? 'Domain Factory mode is ready for implementation.'
-                : _chatController.errorText ??
-                    'Domain Factory is blocked. Check the chat message for details.',
-          ),
-        ),
-      );
-    }
-  }
-
   Future<_NewProjectBasics?> _promptNewProjectBasics() async {
     return showDialog<_NewProjectBasics>(
       context: context,
@@ -2734,7 +2677,7 @@ When you create the Project Factory draft, link each asset with POST /project-fa
   }) {
     _projectFactoryInitPollTimers.remove(sessionId)?.cancel();
     if (!_shouldPollProjectFactoryInit(initJob) || attempt >= 120) {
-      _deferDomainFactoryStartAfterInit(sessionId, initJob);
+      _deferFullGenerationStartAfterInit(sessionId, initJob);
       return;
     }
     _projectFactoryInitPollTimers[sessionId] = Timer(
@@ -2761,7 +2704,7 @@ When you create the Project Factory draft, link each asset with POST /project-fa
             );
             return;
           }
-          unawaited(_maybeStartDomainFactoryAfterInit(sessionId, latest));
+          unawaited(_maybeStartFullGenerationAfterInit(sessionId, latest));
         } catch (error) {
           if (!mounted) {
             return;
@@ -2800,7 +2743,7 @@ When you create the Project Factory draft, link each asset with POST /project-fa
           initJob: latest,
         );
       } else {
-        unawaited(_maybeStartDomainFactoryAfterInit(sessionId, latest));
+        unawaited(_maybeStartFullGenerationAfterInit(sessionId, latest));
       }
     } catch (error) {
       if (!mounted) {
@@ -2850,14 +2793,14 @@ When you create the Project Factory draft, link each asset with POST /project-fa
     }
   }
 
-  void _deferDomainFactoryStartAfterInit(
+  void _deferFullGenerationStartAfterInit(
     String sessionId,
     ProjectFactoryInitJob initJob,
   ) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
-          unawaited(_maybeStartDomainFactoryAfterInit(sessionId, initJob));
+          unawaited(_maybeStartFullGenerationAfterInit(sessionId, initJob));
         }
       });
     });
@@ -2870,7 +2813,7 @@ When you create the Project Factory draft, link each asset with POST /project-fa
         job.status != 'cancelled';
   }
 
-  Future<void> _maybeStartDomainFactoryAfterInit(
+  Future<void> _maybeStartFullGenerationAfterInit(
     String sessionId,
     ProjectFactoryInitJob initJob,
   ) async {
@@ -2881,35 +2824,39 @@ When you create the Project Factory draft, link each asset with POST /project-fa
     if (!canStartImplementation) {
       return;
     }
-    if (_startingDomainFactoryAfterInitSessions.contains(sessionId) ||
-        _startedDomainFactoryAfterInitSessions.contains(sessionId)) {
+    if (_startingFullGenerationAfterInitSessions.contains(sessionId) ||
+        _startedFullGenerationAfterInitSessions.contains(sessionId)) {
       return;
     }
-    final workspacePath = initJob.generatedWorkspacePath ??
-        initJob.workspacePath ??
-        initJob.projectPath;
-    if (workspacePath == null || workspacePath.isEmpty) {
+    final draftId =
+        _projectFactoryDraftIdBySession[sessionId] ?? initJob.draftId;
+    if (draftId.isEmpty) {
       return;
     }
-    _startingDomainFactoryAfterInitSessions.add(sessionId);
+    _startingFullGenerationAfterInitSessions.add(sessionId);
     try {
-      await _openDomainFactoryMode(
-        workspacePathOverride: workspacePath,
-        showSnackbars: false,
-      );
-      _startedDomainFactoryAfterInitSessions.add(sessionId);
+      final generation =
+          await _projectFactoryClient().generateProjectFactoryDraft(draftId);
+      if (generation.status == 'failed' || generation.status == 'blocked') {
+        _projectFactoryInitErrorText = generation.error ?? generation.message;
+        return;
+      }
+      _startedFullGenerationAfterInitSessions.add(sessionId);
       if (!mounted) {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'Baseline ready. Domain Factory implementation mode started.',
+            'Baseline ready. Full Generator/Reviewer workflow started.',
           ),
         ),
       );
+    } catch (error) {
+      _projectFactoryInitErrorText =
+          'Could not start full project generation. $error';
     } finally {
-      _startingDomainFactoryAfterInitSessions.remove(sessionId);
+      _startingFullGenerationAfterInitSessions.remove(sessionId);
     }
   }
 

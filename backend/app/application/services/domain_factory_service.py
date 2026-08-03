@@ -608,9 +608,19 @@ class DomainFactoryService:
 
         spec_root = self._ensure_sdd_spec(context)
         state_path = self._write_state(context, spec_root=spec_root)
-        first_message_id = self._attach_first_message(
-            session, context, spec_root=spec_root
-        )
+        approved_brief = self._approved_project_factory_brief(context)
+        if approved_brief:
+            self.submit_intake(
+                session_id=session.id,
+                brief=approved_brief,
+                emit_chat_message=False,
+            )
+            implementation = self.confirm_implementation(session_id=session.id)
+            first_message_id = implementation.message_id
+        else:
+            first_message_id = self._attach_first_message(
+                session, context, spec_root=spec_root
+            )
         return DomainFactoryStartResult(
             status="ready",
             context=context,
@@ -619,6 +629,26 @@ class DomainFactoryService:
             state_path=state_path,
             spec_root=spec_root,
         )
+
+    def _approved_project_factory_brief(
+        self,
+        context: DomainFactoryContext,
+    ) -> str:
+        """Reuse the approved New Project brief instead of asking for it again."""
+
+        workspace = Path(context.workspace_path)
+        candidates = (
+            workspace / ".codex/ux/domain-brief.md",
+            workspace / "specs/019-domain-factory/intake/original-brief.md",
+        )
+        for path in candidates:
+            try:
+                content = path.read_text(encoding="utf-8").strip()
+            except OSError:
+                continue
+            if content:
+                return content
+        return ""
 
     def submit_intake(
         self,
@@ -799,6 +829,7 @@ class DomainFactoryService:
         required = {
             "implementation": spec_path / "implementation-evidence.json",
             "validation": spec_path / "validation-evidence.json",
+            "finalUx": spec_path / "final-ux-evidence.json",
             "release": spec_path / "release-evidence.json",
         }
         blocked_release = spec_path / "blocked-release.json"
@@ -1240,6 +1271,12 @@ Rules:
 - Keep preview runtime real: APP_RUNTIME_PROFILE=preview, API_RUNTIME=cloudflare_preview, API URL {context.api_url or "https://preview.nienfos.com/<slug>/api"}.
 - Before implementation, produce a domain contract preview with roles, permissions, entities, workflows, screens, visual direction, backend scope, tests, SDD/diagram requirements, and release target.
 - Once implementation starts, finish by preparing a new real preview release after the initial build. Do not overwrite build 1.
+- After the functional implementation and validation pass, run the final UX polish
+  against the real implemented screens. Use the visual-ux-polish skill, inspect the
+  rendered mobile UI when tooling permits, fix visible problems, and write
+  `specs/019-domain-factory/final-ux-evidence.json`.
+- Do not publish the next preview/APK release until implementation, validation,
+  and final UX evidence all exist. The baseline shell is never product-ready.
 - Remote destructive operations need explicit approval: {", ".join(DESTRUCTIVE_OPERATION_APPROVAL_REQUIRED)}.
 - Update SDD evidence before claiming readiness: spec, plan, tasks, traceability, DER/ERD, class, sequence, component, and deployment diagrams.
 """.strip()
@@ -1265,6 +1302,9 @@ Verify:
 - Backend domain behavior, persistence, migrations, and seed data are real preview paths, not mock/demo/local defaults.
 - SDD spec, plan, tasks, traceability, DER/ERD, class, sequence, component, and deployment diagrams are updated.
 - Relevant tests pass and release evidence exists for the new preview release.
+- Final UX polish ran after the real domain screens existed, and
+  `final-ux-evidence.json` records the reviewed screens, findings, fixes, and
+  validation. UX notes written before implementation do not satisfy this gate.
 - The release increments after the initial preview build and Bridge/app updater metadata points at the new build.
 
 If anything is missing, produce an actionable next generator prompt with exact files, tests, and evidence to fix.
