@@ -4554,10 +4554,10 @@ class MessageService:
 
         if normalized_content_type.startswith("image/") or suffix in _IMAGE_SUFFIXES:
             return "image"
-        if normalized_content_type.startswith("audio/"):
-            return "audio"
         if normalized_content_type.startswith("video/") or suffix in _VIDEO_SUFFIXES:
             return "video"
+        if normalized_content_type.startswith("audio/"):
+            return "audio"
         if suffix in _AUDIO_SUFFIXES:
             return "audio"
         if suffix == ".docx" or normalized_content_type in {

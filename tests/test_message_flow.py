@@ -9172,6 +9172,38 @@ def test_attachment_batch_flow_accepts_video_reference() -> None:
     assert Path(video_path).suffix == ".mp4"
 
 
+def test_attachment_batch_flow_treats_mislabeled_mp4_as_video() -> None:
+    client = build_test_client()
+
+    create_response = client.post(
+        "/message/attachments",
+        data={"message": "Mira el video"},
+        files=[
+            (
+                "attachments",
+                (
+                    "VID-20260802-WA0019.mp4",
+                    b"fake video bytes",
+                    "audio/mp4",
+                ),
+            )
+        ],
+    )
+
+    assert create_response.status_code == 202
+    payload = create_response.json()
+
+    job = wait_for_job(client, payload["job_id"])
+
+    assert job["status"] == "completed"
+    assert job["message"] == (
+        "Mira el video\n\n[Attached files]\n- video: VID-20260802-WA0019.mp4"
+    )
+    assert "Document kind: video" in job["response"]
+    assert "Content type: audio/mp4" in job["response"]
+    assert "Transcript:" not in job["response"]
+
+
 def test_attachment_batch_flow_accepts_standard_documents() -> None:
     client = build_test_client()
     pptx_bytes = build_pptx_bytes(("Market overview", "Total addressable market"))

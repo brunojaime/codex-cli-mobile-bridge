@@ -1660,6 +1660,38 @@ void main() {
     );
   });
 
+  test('sendAttachmentsMessage corrects mislabeled MP4 video MIME type',
+      () async {
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8000',
+      client: MockClient((request) async {
+        expect(request.method, 'POST');
+        expect(request.url.path, '/message/attachments');
+        final body = String.fromCharCodes(request.bodyBytes).toLowerCase();
+        expect(body, contains('filename="vid-20260802-wa0019.mp4"'));
+        expect(body, contains('content-type: video/mp4'));
+        expect(body, isNot(contains('content-type: audio/mp4')));
+        return http.Response(
+          '{"job_id":"job-1","session_id":"session-1","status":"pending","elapsed_seconds":0}',
+          202,
+          headers: <String, String>{'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    await client.sendAttachmentsMessage(
+      <XFile>[
+        XFile.fromData(
+          Uint8List.fromList(<int>[0, 0, 0, 24]),
+          name: 'VID-20260802-WA0019.mp4',
+          mimeType: 'audio/mp4',
+          path: 'VID-20260802-WA0019.mp4',
+        ),
+      ],
+      message: 'Can you inspect this recording?',
+    );
+  });
+
   test('sendAttachmentsMessage sends text, edited PNG image, and audio',
       () async {
     final client = ApiClient(
