@@ -1790,17 +1790,29 @@ class ApiClient {
   ) async {
     final mimeType = file.mimeType?.trim();
     final filename = _filenameFromXFile(file);
-    final resolvedMimeType = mimeType == null || mimeType.isEmpty
-        ? _mimeTypeFromFilename(filename)
-        : mimeType;
-    return http.MultipartFile.fromBytes(
-      field,
-      await file.readAsBytes(),
+    final resolvedMimeType = _resolveMultipartMimeType(
       filename: filename,
-      contentType: resolvedMimeType == null || resolvedMimeType.isEmpty
-          ? null
-          : MediaType.parse(resolvedMimeType),
+      mimeType: mimeType,
     );
+    final contentType = resolvedMimeType == null || resolvedMimeType.isEmpty
+        ? null
+        : MediaType.parse(resolvedMimeType);
+    try {
+      return http.MultipartFile(
+        field,
+        file.openRead(),
+        await file.length(),
+        filename: filename,
+        contentType: contentType,
+      );
+    } catch (_) {
+      return http.MultipartFile.fromBytes(
+        field,
+        await file.readAsBytes(),
+        filename: filename,
+        contentType: contentType,
+      );
+    }
   }
 
   String? _filenameFromXFile(XFile file) {
@@ -1850,5 +1862,21 @@ class ApiClient {
       'json' => 'application/json',
       _ => null,
     };
+  }
+
+  String? _resolveMultipartMimeType({
+    required String? filename,
+    required String? mimeType,
+  }) {
+    final normalizedMimeType = mimeType?.trim().toLowerCase();
+    final inferredMimeType = _mimeTypeFromFilename(filename);
+    if (normalizedMimeType == null || normalizedMimeType.isEmpty) {
+      return inferredMimeType;
+    }
+    final suffix = filename?.trim().toLowerCase().split('.').last;
+    if (normalizedMimeType == 'audio/mp4' && suffix == 'mp4') {
+      return 'video/mp4';
+    }
+    return mimeType;
   }
 }
