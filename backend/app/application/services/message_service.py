@@ -74,7 +74,17 @@ from backend.app.infrastructure.transcription.base import (
 )
 
 
-DocumentKind = Literal["audio", "docx", "image", "pdf", "pptx", "text", "xlsx", "zip"]
+DocumentKind = Literal[
+    "audio",
+    "docx",
+    "image",
+    "pdf",
+    "pptx",
+    "text",
+    "video",
+    "xlsx",
+    "zip",
+]
 _TURN_SUMMARY_TRIGGER_MESSAGE_COUNT = 3
 _TURN_SUMMARY_COMPLETION_TIMEOUT_SECONDS = 15.0
 _TITLE_REFRESH_USER_TURN_INTERVAL = 2
@@ -105,7 +115,6 @@ _AUDIO_SUFFIXES = {
     ".flac",
     ".m4a",
     ".mp3",
-    ".mp4",
     ".mpeg",
     ".mpga",
     ".ogg",
@@ -122,6 +131,15 @@ _IMAGE_SUFFIXES = {
     ".tif",
     ".tiff",
     ".webp",
+}
+_VIDEO_SUFFIXES = {
+    ".avi",
+    ".m4v",
+    ".mkv",
+    ".mov",
+    ".mp4",
+    ".mpeg",
+    ".mpg",
 }
 _TEXT_SUFFIXES = {
     ".c",
@@ -1429,6 +1447,37 @@ class MessageService:
                 extracted_text_preview=self._build_text_preview(transcript),
             )
 
+        if document_kind == "video":
+            video_path = self._persist_retryable_attachment_path(
+                resolved_path,
+                fallback_suffix=".mp4",
+            )
+            video_reference = self._build_video_file_reference(
+                video_path=video_path,
+                content_type=content_type,
+            )
+            prompt = self._build_document_execution_message(
+                message=message,
+                document_kind=document_kind,
+                document_name=attached_document_name,
+                content_label="Video file reference",
+                content=video_reference,
+            )
+            job = self.submit_message(
+                display_message,
+                session_id=session_id,
+                workspace_path=workspace_path,
+                cleanup_paths=cleanup_paths,
+                execution_message=prompt,
+                codex_options=codex_options,
+            )
+            return DocumentSubmission(
+                job=job,
+                document_kind=document_kind,
+                attached_document_name=attached_document_name,
+                extracted_text_preview=self._build_text_preview(video_reference),
+            )
+
         extracted_text = self._extract_document_text(
             document_path=resolved_path,
             document_kind=document_kind,
@@ -1581,6 +1630,25 @@ class MessageService:
                         document_name=attached_name,
                         content_label="Transcript",
                         content=transcript,
+                    )
+                )
+                continue
+
+            if document_kind == "video":
+                video_path = self._persist_retryable_attachment_path(
+                    resolved_path,
+                    fallback_suffix=".mp4",
+                )
+                attachment_details.append(
+                    self._build_attachment_detail_section(
+                        index=index,
+                        document_kind=document_kind,
+                        document_name=attached_name,
+                        content_label="Video file reference",
+                        content=self._build_video_file_reference(
+                            video_path=video_path,
+                            content_type=attachment.content_type,
+                        ),
                     )
                 )
                 continue
@@ -1994,6 +2062,20 @@ class MessageService:
             _ZIP_ARCHIVE_GUIDANCE,
         ]
         return "\n\n".join(part for part in parts if part)
+
+    @staticmethod
+    def _build_video_file_reference(
+        *,
+        video_path: str,
+        content_type: str | None,
+    ) -> str:
+        parts = [
+            f"Video local path: {video_path}",
+            f"Content type: {content_type or 'unknown'}",
+            "Use local tools such as ffmpeg/ffprobe to inspect frames, duration, "
+            "metadata, or audio when needed.",
+        ]
+        return "\n".join(parts)
 
     def _resolve_session(
         self,
@@ -4472,7 +4554,11 @@ class MessageService:
 
         if normalized_content_type.startswith("image/") or suffix in _IMAGE_SUFFIXES:
             return "image"
-        if normalized_content_type.startswith("audio/") or suffix in _AUDIO_SUFFIXES:
+        if normalized_content_type.startswith("audio/"):
+            return "audio"
+        if normalized_content_type.startswith("video/") or suffix in _VIDEO_SUFFIXES:
+            return "video"
+        if suffix in _AUDIO_SUFFIXES:
             return "audio"
         if suffix == ".docx" or normalized_content_type in {
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -4496,8 +4582,8 @@ class MessageService:
             return "text"
 
         raise UnsupportedDocumentError(
-            "Unsupported document type. Supported uploads are audio, images, PDFs, "
-            "text/code files, ZIP archives, and .docx/.pptx/.xlsx documents."
+            "Unsupported document type. Supported uploads are audio, video, images, "
+            "PDFs, text/code files, ZIP archives, and .docx/.pptx/.xlsx documents."
         )
 
     def _looks_like_text_document(
