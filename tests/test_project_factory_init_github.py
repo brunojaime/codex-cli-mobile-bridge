@@ -120,6 +120,58 @@ def test_github_init_verifies_existing_repo_without_duplicate_create(
     assert ("git", "remote", "add", "origin", "https://github.com/owner/clinica-norte") not in runner.calls
 
 
+def test_github_init_blocks_non_private_visibility_before_github_calls(
+    tmp_path: Path,
+) -> None:
+    runner = _FakeRunner([])
+    service = ProjectFactoryInitService(
+        state_root=tmp_path / "state",
+        command_runner=runner,
+        github_owner="owner",
+    )
+    job = service.start_or_resume(
+        draft_id="draft-1",
+        project_name="Clinica Norte",
+        slug="clinica-norte",
+        workspace_path=str(tmp_path / "clinica-norte"),
+    )
+
+    blocked = service.run_github_repository_phase(job.id, visibility="public")
+
+    phase = blocked.phase(ProjectFactoryInitPhaseName.GITHUB_REPOSITORY)
+    assert phase.status == ProjectFactoryInitPhaseStatus.BLOCKED
+    assert phase.blockers[0].code == "github_repo_visibility_not_private"
+    assert runner.calls == []
+
+
+def test_github_init_blocks_existing_public_repository(tmp_path: Path) -> None:
+    public_repo = _repo_json().replace('"PRIVATE"', '"PUBLIC"')
+    runner = _FakeRunner(
+        [
+            (("gh", "--version"), _FakeResponse(stdout="gh version 2\n")),
+            (("gh", "auth", "status"), _FakeResponse(stdout="ok\n")),
+            (_view_cmd(), _FakeResponse(stdout=public_repo)),
+        ]
+    )
+    service = ProjectFactoryInitService(
+        state_root=tmp_path / "state",
+        command_runner=runner,
+        github_owner="owner",
+    )
+    job = service.start_or_resume(
+        draft_id="draft-1",
+        project_name="Clinica Norte",
+        slug="clinica-norte",
+        workspace_path=str(tmp_path / "clinica-norte"),
+    )
+
+    blocked = service.run_github_repository_phase(job.id)
+
+    phase = blocked.phase(ProjectFactoryInitPhaseName.GITHUB_REPOSITORY)
+    assert phase.status == ProjectFactoryInitPhaseStatus.BLOCKED
+    assert phase.blockers[0].code == "github_repo_not_private"
+
+
 def test_github_init_repeated_run_does_not_create_duplicate_repo(
     tmp_path: Path,
 ) -> None:

@@ -500,17 +500,18 @@ This repository can publish the Android APK to GitHub Releases so you can instal
 
 What is included:
 
-- A GitHub Actions workflow at `.github/workflows/android-release.yml`
-- A local helper command at `scripts/publish_android_release.sh`
+- A manually dispatched fallback workflow at `.github/workflows/android-release.yml`
+- A local build and publication command at `scripts/publish_android_release_local.sh`
 - A stable release asset name: `codex-mobile.apk`
 
 Recommended flow:
 
 1. Update `frontend/mobile_app/pubspec.yaml` and bump the Flutter version.
 2. Commit and push your code changes.
-3. Run `./scripts/publish_android_release.sh --push`.
-4. GitHub Actions builds the APK and publishes a release for that tag.
-5. Download it from:
+3. Configure the local release keystore and real channel API URL.
+4. Run `./scripts/publish_android_release_local.sh --channel prod --publish`.
+5. The local command validates, signs, builds, verifies, tags, and publishes both APK assets.
+6. Download it from:
    `https://github.com/<owner>/<repo>/releases/latest/download/codex-mobile.apk`
 
 The release helper is protected by `scripts/environment_guard.py`. Local shells

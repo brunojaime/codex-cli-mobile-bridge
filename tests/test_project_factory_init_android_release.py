@@ -153,24 +153,13 @@ def test_android_release_creates_prerelease_registers_bridge_and_persists(
     assert publish_env["API_BASE_URL"] == (
         "https://preview.nienfos.com/clinica-norte/api"
     )
-    assert publish_env["ANDROID_PREVIEW_RELEASE_MODE"] == "bridge_local"
+    assert "ANDROID_PREVIEW_RELEASE_MODE" not in publish_env
     assert publish_env["APP_RELEASE_TAG"] == release_tag
     assert publish_env["BRIDGE_REGISTRATION_TOKEN"] == "secret-token"
     assert publish_env["BRIDGE_PUBLIC_URL"] == "https://bridge.test"
     assert publish_env["BRIDGE_REGISTRATION_URL"] == "http://127.0.0.1:8000"
-    variable_sets = {
-        call[3]: call[5]
-        for call in runner.calls
-        if call[:3] == ("gh", "variable", "set")
-    }
-    assert variable_sets["API_BASE_URL"] == (
-        "https://preview.nienfos.com/clinica-norte/api"
-    )
-    assert variable_sets["CODEX_BRIDGE_DEV_MODE"] == "true"
-    assert variable_sets["CODEX_BRIDGE_WORKBENCH_URL"] == "https://bridge.test"
-    assert variable_sets["CODEX_FEEDBACK_ENABLED"] == "true"
-    assert variable_sets["CODEX_FEEDBACK_BRIDGE_URL"] == "https://bridge.test"
-    assert variable_sets["CODEX_APP_UPDATER_BRIDGE_URL"] == "https://bridge.test"
+    assert not [call for call in runner.calls if call[:3] == ("gh", "variable", "set")]
+    assert not [call for call in runner.calls if call[:3] == ("gh", "secret", "set")]
     mobile = tmp_path / "projects/clinica-norte/apps/mobile"
     android_manifest = (mobile / "android/app/src/main/AndroidManifest.xml").read_text(
         encoding="utf-8"

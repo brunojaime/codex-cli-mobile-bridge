@@ -3759,7 +3759,6 @@ PY
 )"
 BRANCH="${PUBLISH_BRANCH:-main}"
 OWNER="${GITHUB_OWNER:-}"
-VISIBILITY="${GITHUB_VISIBILITY:-private}"
 
 if ! command -v git >/dev/null 2>&1; then
   echo "git is required to publish this project." >&2
@@ -3795,8 +3794,13 @@ git branch -M "$BRANCH"
 REPO="$OWNER/$PROJECT_SLUG"
 source "$ROOT_DIR/scripts/github_repo_access.sh"
 if ! github_repo_accessible "$REPO"; then
-  gh repo create "$REPO" "--$VISIBILITY" --source . --remote origin --push
+  gh repo create "$REPO" --private --source . --remote origin --push
 else
+  existing_visibility="$(gh repo view "$REPO" --json visibility --jq '.visibility | ascii_downcase')"
+  [[ "$existing_visibility" == "private" ]] || {
+    echo "Existing Project Factory repository must be private: $REPO" >&2
+    exit 2
+  }
   if ! git remote get-url origin >/dev/null 2>&1; then
     git remote add origin "https://github.com/$REPO.git"
   fi
@@ -4828,27 +4832,18 @@ fail_blocked() {{
   exit 2
 }}
 
-ANDROID_PREVIEW_RELEASE_MODE="${{ANDROID_PREVIEW_RELEASE_MODE:-bridge_local}}"
-
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --bridge-local)
-      ANDROID_PREVIEW_RELEASE_MODE=bridge_local
-      shift
-      ;;
-    --github-actions)
-      ANDROID_PREVIEW_RELEASE_MODE=github_actions
       shift
       ;;
     --push)
       shift
       ;;
     --watch)
-      WAIT_FOR_ANDROID_RELEASE=true
       shift
       ;;
     --no-watch)
-      WAIT_FOR_ANDROID_RELEASE=false
       shift
       ;;
     *)
@@ -4856,14 +4851,6 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
-
-case "$ANDROID_PREVIEW_RELEASE_MODE" in
-  bridge_local|github_actions)
-    ;;
-  *)
-    fail_blocked "ANDROID_PREVIEW_RELEASE_MODE must be bridge_local or github_actions"
-    ;;
-esac
 
 SOURCE_APP="${{SOURCE_APP:-{slug}}}"
 PREVIEW_API_BASE_URL="${{PREVIEW_API_BASE_URL:-${{API_BASE_URL:-https://preview.nienfos.com/$SOURCE_APP/api}}}}"
@@ -4991,15 +4978,6 @@ repo_ref="${{repo_ref%.git}}"
 [[ "$repo_ref" == */* ]] || fail_blocked "origin remote must point to a GitHub owner/repo"
 github_require_repo_access "$repo_ref" || fail_blocked "GitHub repository is not accessible with authenticated tools"
 
-if command -v gh >/dev/null 2>&1 && [[ "$ANDROID_PREVIEW_RELEASE_MODE" == "github_actions" && "${{SKIP_GITHUB_API_BASE_URL_VAR_CHECK:-false}}" != "true" ]]; then
-  workflow_api_base_url="$(
-    gh variable list --repo "$repo_ref" --json name,value --jq '.[] | select(.name == "API_BASE_URL") | .value' 2>/dev/null || true
-  )"
-  [[ -n "$workflow_api_base_url" ]] || fail_blocked "GitHub Actions variable API_BASE_URL is not configured for $repo_ref"
-  [[ "${{workflow_api_base_url%/}}" == "$PREVIEW_API_BASE_URL" ]] || \\
-    fail_blocked "GitHub Actions variable API_BASE_URL does not match the preview API"
-fi
-
 branch="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
 [[ -n "$branch" ]] || fail_blocked "HEAD is detached; release from a named branch"
 upstream="$(git rev-parse --abbrev-ref --symbolic-full-name '@{{u}}' 2>/dev/null || true)"
@@ -5019,10 +4997,9 @@ APP_SLUG="$SOURCE_APP" \\
 API_BASE_URL="$PREVIEW_API_BASE_URL" \\
 scripts/validate_preview_release_profiles.sh
 
-if [[ "$ANDROID_PREVIEW_RELEASE_MODE" == "bridge_local" ]]; then
-  command -v flutter >/dev/null 2>&1 || fail_blocked "flutter is required on the bridge host for bridge-local Android preview release"
-  command -v gh >/dev/null 2>&1 || fail_blocked "gh is required on the bridge host for bridge-local Android preview release"
-  command -v sha256sum >/dev/null 2>&1 || fail_blocked "sha256sum is required on the bridge host"
+command -v flutter >/dev/null 2>&1 || fail_blocked "flutter is required on the bridge host for local Android preview release"
+command -v gh >/dev/null 2>&1 || fail_blocked "gh is required on the bridge host for local Android preview release"
+command -v sha256sum >/dev/null 2>&1 || fail_blocked "sha256sum is required on the bridge host"
 
   flutter_args=(
     --release
@@ -5114,53 +5091,7 @@ EOF
   scripts/register_installable_app.sh
   printf 'android preview release completed: %s\\n' "$tag"
   printf '%s\\n' "$assets"
-  exit 0
-fi
-
-if git rev-parse --verify "refs/tags/$tag" >/dev/null 2>&1; then
-  tag_commit="$(git rev-list -n 1 "$tag")"
-  [[ "$tag_commit" == "$local_head" ]] || fail_blocked "existing tag $tag does not point at HEAD"
-else
-  git tag "$tag"
-fi
-
-git push origin "$tag"
-
-if [[ "${{WAIT_FOR_ANDROID_RELEASE:-true}}" != "true" ]]; then
-  printf 'android preview release tag pushed: %s\\n' "$tag"
-  exit 0
-fi
-
-command -v gh >/dev/null 2>&1 || fail_blocked "gh is required to verify GitHub release assets"
-timeout="${{ANDROID_RELEASE_TIMEOUT_SECONDS:-1800}}"
-poll="${{ANDROID_RELEASE_POLL_SECONDS:-15}}"
-deadline=$((SECONDS + timeout))
-while (( SECONDS <= deadline )); do
-  assets="$(gh release view "$tag" --repo "$repo_ref" --json assets --jq '.assets[].name' 2>/dev/null || true)"
-  if printf '%s\\n' "$assets" | grep -Fx "${{SOURCE_APP}}.apk" >/dev/null; then
-    bridge_registration_url="${{BRIDGE_REGISTRATION_URL:-${{BRIDGE_URL:-}}}}"
-    [[ -n "$bridge_registration_url" ]] || fail_blocked "BRIDGE_REGISTRATION_URL or BRIDGE_URL is required for installable app registration"
-    bridge_env_require INSTALLABLE_APPS_REGISTRATION_TOKEN
-    APP_RELEASE_TAG="$tag" \\
-    BRIDGE_URL="$bridge_registration_url" \\
-    BRIDGE_REGISTRATION_TOKEN="$INSTALLABLE_APPS_REGISTRATION_TOKEN" \\
-    scripts/register_installable_app.sh
-    printf 'android preview release completed: %s\\n' "$tag"
-    printf '%s\\n' "$assets"
-    exit 0
-  fi
-  run_status="$(
-    gh run list --repo "$repo_ref" --workflow "Android Preview Release" --branch "$tag" --limit 1 \\
-      --json databaseId,status,conclusion,url \\
-      --jq '.[0] | select(.status == "completed" and (.conclusion != "success")) | "run=\\(.databaseId) conclusion=\\(.conclusion) url=\\(.url)"' 2>/dev/null || true
-  )"
-  if [[ -n "$run_status" ]]; then
-    fail_blocked "GitHub Actions Android preview workflow failed before producing $SOURCE_APP.apk: $run_status"
-  fi
-  sleep "$poll"
-done
-
-fail_blocked "GitHub release $tag did not expose $SOURCE_APP.apk within ${{timeout}}s"
+exit 0
 """
 
 
@@ -6433,9 +6364,6 @@ def _generated_android_preview_release_workflow(slug: str) -> str:
     return f"""name: Android Preview Release
 
 on:
-  push:
-    tags:
-      - "android-preview-v*"
   workflow_dispatch:
 
 permissions:

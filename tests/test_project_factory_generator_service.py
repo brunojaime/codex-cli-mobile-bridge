@@ -686,6 +686,9 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
     assert script.stat().st_mode & stat.S_IXUSR
     content = script.read_text(encoding="utf-8")
     assert "gh repo create" in content
+    assert 'gh repo create "$REPO" --private' in content
+    assert "GITHUB_VISIBILITY" not in content
+    assert "Existing Project Factory repository must be private" in content
     assert "git push -u origin" in content
     assert "gh variable set API_BASE_URL" in content
     assert "https://preview.nienfos.com/$PROJECT_SLUG/api" in content
@@ -760,11 +763,8 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
     assert "scripts/github_repo_access.sh" in android_preview_content
     assert "bridge_env_load_preview_signing" in android_preview_content
     assert "APP_RUNTIME_PROFILE=preview" in android_preview_content
-    assert (
-        'ANDROID_PREVIEW_RELEASE_MODE="${ANDROID_PREVIEW_RELEASE_MODE:-bridge_local}"'
-        in android_preview_content
-    )
-    assert "--github-actions" in android_preview_content
+    assert "ANDROID_PREVIEW_RELEASE_MODE" not in android_preview_content
+    assert "--github-actions" not in android_preview_content
     assert "flutter build apk" in android_preview_content
     assert "--target=lib/main_preview.dart" in android_preview_content
     assert "ensure_flutter_android_platform" in android_preview_content
@@ -782,7 +782,6 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
     assert '"?? specs/"*"-domain-factory-"*) continue' in android_preview_content
     assert "gh release create" in android_preview_content
     assert "gh release upload" in android_preview_content
-    assert "gh run list" in android_preview_content
     assert "DEBUG_PREVIEW_SIGNING" not in android_preview_content
     assert "https://preview.nienfos.com/$SOURCE_APP/api" in android_preview_content
     assert "--dart-define=CODEX_APP_UPDATER_ENABLED=true" in android_preview_content
@@ -803,9 +802,7 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
     assert android_preview_content.index(
         '"$apksigner" verify'
     ) < android_preview_content.index('git push origin "$tag"')
-    assert "GitHub Actions Android preview workflow failed before producing" in (
-        android_preview_content
-    )
+    assert "GitHub Actions Android preview workflow failed" not in android_preview_content
     register_script_content = (
         tmp_path / "clinica-norte/scripts/register_installable_app.sh"
     ).read_text(encoding="utf-8")
@@ -1970,7 +1967,8 @@ def test_generated_android_release_workflow_defaults_to_real_runtime(
         'args+=(--dart-define=APP_RUNTIME_PROFILE="$APP_RUNTIME_PROFILE")' in workflow
     )
     assert 'args+=(--dart-define=API_BASE_URL="$API_BASE_URL")' in workflow
-    assert '"android-preview-v*"' in preview_workflow
+    assert "push:" not in preview_workflow
+    assert "workflow_dispatch:" in preview_workflow
     assert "APP_RUNTIME_PROFILE: preview" in preview_workflow
     assert "API_RUNTIME: cloudflare_preview" in preview_workflow
     assert '--dart-define=API_BASE_URL="$API_BASE_URL"' in preview_workflow

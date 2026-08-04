@@ -1230,7 +1230,6 @@ class ProjectFactoryInitService:
                 "SOURCE_APP": job.slug,
                 "APP_RELEASE_TAG": release_tag,
                 "APP_ANDROID_PREVIEW_RELEASE_TAG": release_tag,
-                "ANDROID_PREVIEW_RELEASE_MODE": "bridge_local",
                 "BRIDGE_URL": bridge_registration_url,
                 "BRIDGE_PUBLIC_URL": bridge_public_url,
                 "BRIDGE_REGISTRATION_URL": bridge_registration_url,
@@ -1263,21 +1262,6 @@ class ProjectFactoryInitService:
                     blocker=signing_blocker,
                     evidence=signing_evidence,
                 )
-            actions_evidence, actions_blocker = (
-                self._ensure_android_github_actions_config(
-                    job.slug,
-                    cwd=target,
-                    preview_api=preview_api,
-                    bridge_public_url=bridge_public_url,
-                )
-            )
-            if actions_blocker is not None:
-                return self._block_android_phase(
-                    job,
-                    phase_name=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
-                    blocker=actions_blocker,
-                    evidence=(*signing_evidence, *actions_evidence),
-                )
             release_view = self._run_env(
                 (
                     "gh",
@@ -1292,7 +1276,6 @@ class ProjectFactoryInitService:
             )
             release_evidence = [
                 *signing_evidence,
-                *actions_evidence,
                 self._evidence(release_view),
             ]
             release_payload = _parse_json_object(release_view.stdout)
@@ -1859,6 +1842,17 @@ class ProjectFactoryInitService:
             name = _optional_clean(repo_name) or job.slug
             repo_visibility = visibility or self._github_visibility
             branch = default_branch or self._github_default_branch
+            if repo_visibility != _DEFAULT_GITHUB_VISIBILITY:
+                return self._block_github(
+                    job,
+                    blocker=_github_blocker(
+                        code="github_repo_visibility_not_private",
+                        message="Project Factory repositories must be private.",
+                        next_action="Use private visibility and rerun the GitHub init phase.",
+                        command=("gh", "repo", "create", "<owner>/<repo>", "--private"),
+                    ),
+                    evidence=(),
+                )
             if not repo_owner:
                 return self._block_github(
                     job,
@@ -1984,6 +1978,26 @@ class ProjectFactoryInitService:
                         message=f"GitHub repository {repo_ref} cannot be inspected with current permissions.",
                         next_action="Grant repository access or authenticate with an account that can view/create it.",
                         command=("gh", "repo", "view", repo_ref),
+                    ),
+                    evidence=tuple(evidence),
+                )
+
+            if _repo_visibility(repo_payload) != _DEFAULT_GITHUB_VISIBILITY:
+                return self._block_github(
+                    job,
+                    blocker=_github_blocker(
+                        code="github_repo_not_private",
+                        message=f"GitHub repository {repo_ref} must be private.",
+                        next_action="Change the repository visibility to private, then rerun the GitHub init phase.",
+                        command=(
+                            "gh",
+                            "repo",
+                            "edit",
+                            repo_ref,
+                            "--visibility",
+                            "private",
+                            "--accept-visibility-change-consequences",
+                        ),
                     ),
                     evidence=tuple(evidence),
                 )
@@ -4571,6 +4585,7 @@ _GENERATED_ARTIFACT_GITIGNORE_ENTRIES = (
 )
 
 _EXISTING_BASELINE_MANAGED_REFRESH_FILES = (
+    ".github/workflows/android-preview-release.yml",
     "scripts/publish_android_preview_release.sh",
     "scripts/register_installable_app.sh",
 )

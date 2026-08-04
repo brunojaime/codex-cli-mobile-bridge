@@ -7,7 +7,7 @@ from pathlib import Path
 
 SCRIPT = Path("scripts/validate_android_release_channel.py")
 VERIFY_SCRIPT = Path("scripts/verify_android_release_apk.py")
-PUBLISH_SCRIPT = Path("scripts/publish_android_release.sh")
+PUBLISH_SCRIPT = Path("scripts/publish_android_release_local.sh")
 
 
 def test_android_release_channel_dry_run_accepts_prod_real_config(
@@ -409,11 +409,27 @@ def test_workflow_and_gradle_fail_closed_for_real_release_signing() -> None:
     )
 
     assert "Missing required Android release signing secret" in workflow
+    assert "push:" not in workflow
+    assert "workflow_dispatch:" in workflow
     assert "using debug signing fallback" not in workflow
     assert "scripts/verify_android_release_apk.py" in workflow
     assert "codex.allowDebugReleaseSigning" in gradle
     assert "throw GradleException" in gradle
     assert 'signingConfigs.getByName("debug")' in gradle
+
+
+def test_local_release_script_owns_build_tag_and_publication() -> None:
+    script = Path("scripts/publish_android_release_local.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "git -C \"$ROOT_DIR\" status --porcelain" in script
+    assert "Local HEAD must be pushed" in script
+    assert "flutter build apk --release" in script
+    assert "scripts/verify_android_release_apk.py" in script
+    assert "Existing tag $TAG does not point to current HEAD" in script
+    assert "gh release create" in script
+    assert "gh release upload" in script
 
 
 def _run_validator(*args: str) -> subprocess.CompletedProcess[str]:
