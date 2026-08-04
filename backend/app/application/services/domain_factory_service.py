@@ -9,6 +9,10 @@ import subprocess
 from typing import Any
 
 from backend.app.application.services.sdd_standard_service import parse_simple_yaml
+from backend.app.domain.entities.project_management import (
+    PROJECT_CHARTER_METADATA_PATH,
+    PROJECT_CHARTER_SOURCE_PATH,
+)
 from backend.app.domain.entities.agent_configuration import (
     AgentConfiguration,
     AgentDisplayMode,
@@ -92,8 +96,8 @@ CRITICAL_BASELINE_FILES = (
     ".codex/factory/llm-start-context.md",
     "release/preview-runtime.json",
     ".codex/project.yaml",
-    "docs/project-charter.md",
-    "docs/project-charter.json",
+    PROJECT_CHARTER_SOURCE_PATH,
+    PROJECT_CHARTER_METADATA_PATH,
 )
 
 PROTECTED_FOUNDATION_AREAS = (
@@ -1254,8 +1258,13 @@ Baseline context:
 
 Rules:
 - Consume the baseline context before editing.
-- Read `docs/project-charter.md` first. It is the approved product contract;
-  implementation and SDD traceability must remain aligned with it.
+- Read `{PROJECT_CHARTER_SOURCE_PATH}` first. It is the evolving product and
+  project contract; implementation and SDD traceability must remain aligned.
+- Update the working Acta when this stage confirms objectives, benefits, scope,
+  roles, workflows, assumptions, or pending definitions. Refresh its metadata
+  hash and render after edits.
+- Never mark the Acta as delivered or create a v1.0 client release unless the
+  user explicitly requests delivery.
 - Consume the configured UX workflow. The early UX baseline is derived from the
   user's domain brief before this paired Domain Factory implementation stage;
   preserve that look-and-feel direction while implementing domain behavior.
@@ -1295,9 +1304,11 @@ Review with the same baseline context:
 Return only the next concrete prompt for the generator unless the work is truly release-ready.
 
 Verify:
-- `docs/project-charter.md` exists, is approved by its metadata, and the
+- `{PROJECT_CHARTER_SOURCE_PATH}` and its metadata are valid, and the
   implementation remains traceable to its objective, scope, roles, workflows,
-  acceptance criteria, and release expectations.
+  acceptance criteria, pending definitions, and release expectations.
+- Confirm newly discovered project facts were reflected in the working Acta
+  without creating a client-delivered release implicitly.
 - Generator did not recreate New Project baseline infrastructure.
 - Generic auth, RBAC engine, admin shell, Bridge plumbing, Workbench plumbing, updater plumbing, preview runtime, and initial project identity are intact.
 - Domain roles and permissions match the requested business and are testable.
@@ -1818,15 +1829,15 @@ def _context_blockers(
             "The deterministic project manifest is missing.",
             "Restore .codex/project.yaml from deterministic init.",
         ),
-        "docs/project-charter.md": (
+        PROJECT_CHARTER_SOURCE_PATH: (
             "missing_project_charter",
-            "The approved Project Charter is missing.",
-            "Rerun New Project init after approving the project scope.",
+            "The working Project Charter is missing.",
+            "Rerun New Project init to restore the initial v0.1 Acta.",
         ),
-        "docs/project-charter.json": (
+        PROJECT_CHARTER_METADATA_PATH: (
             "missing_project_charter_metadata",
-            "The approved Project Charter metadata is missing.",
-            "Rerun New Project init to restore the approved charter metadata.",
+            "The Project Charter metadata is missing.",
+            "Rerun New Project init to restore the charter metadata.",
         ),
     }
     for missing_file in missing_baseline_files:

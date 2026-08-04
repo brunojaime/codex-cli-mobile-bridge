@@ -10,15 +10,20 @@ import json
 from pathlib import Path
 import re
 import smtplib
-from typing import Any
 import urllib.error
 import urllib.request
 
+import yaml
+
+from backend.app.domain.entities.project_management import (
+    PROJECT_CHARTER_METADATA_PATH,
+    PROJECT_CHARTER_RENDER_PATH,
+    PROJECT_CHARTER_SOURCE_PATH,
+)
 from backend.app.infrastructure.config.settings import Settings
 
 
-PROJECT_CHARTER_PATH = "docs/project-charter.md"
-PROJECT_CHARTER_METADATA_PATH = "docs/project-charter.json"
+PROJECT_CHARTER_PATH = PROJECT_CHARTER_SOURCE_PATH
 _EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 
@@ -38,6 +43,7 @@ class ProjectCharterDocument:
     approved_at: str
     digest: str
     content: str
+    render_content: str | None = None
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -55,79 +61,71 @@ class ProjectCharterDocument:
 
 
 class ProjectCharterService:
+    """Compatibility reader and mail delivery for the formal Acta framework."""
+
     def __init__(self, *, settings: Settings) -> None:
         self._settings = settings
         self._projects_root = Path(settings.projects_root).expanduser().resolve()
 
-    def materialize_from_draft(
-        self,
-        *,
-        workspace: Path,
-        draft_payload: dict[str, Any],
-        approved_brief: str,
-    ) -> ProjectCharterDocument:
-        request = draft_payload.get("request")
-        guided = draft_payload.get("guided_intake")
-        if not isinstance(request, dict) or not isinstance(guided, dict):
-            raise ProjectCharterError(
-                "project_charter_draft_invalid",
-                "The approved Project Factory draft is missing request or intake data.",
-            )
-        if str(guided.get("status") or "") not in {"confirmed", "build_started"}:
-            raise ProjectCharterError(
-                "project_charter_not_approved",
-                "The Project Factory contract must be approved before creating its charter.",
-            )
-        approved_at = str(guided.get("confirmedAt") or guided.get("confirmed_at") or "")
-        if not approved_at:
-            raise ProjectCharterError(
-                "project_charter_approval_missing",
-                "The approved Project Factory contract has no approval timestamp.",
-            )
-        if not approved_brief.strip():
-            raise ProjectCharterError(
-                "project_charter_scope_missing",
-                "The approved Project Factory scope is required to create its charter.",
-            )
-        content = build_project_charter_markdown(
-            request=request,
-            guided_intake=guided,
-            approved_brief=approved_brief,
-            approved_at=approved_at,
-        )
-        return self._write_document(workspace, content=content, approved_at=approved_at)
-
     def read(self, workspace_path: str) -> ProjectCharterDocument:
         workspace = self._resolve_workspace(workspace_path)
-        charter_path = workspace / PROJECT_CHARTER_PATH
-        metadata_path = workspace / PROJECT_CHARTER_METADATA_PATH
         try:
-            content = charter_path.read_text(encoding="utf-8")
-            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            content = (workspace / PROJECT_CHARTER_SOURCE_PATH).read_text(
+                encoding="utf-8"
+            )
+            metadata = yaml.safe_load(
+                (workspace / PROJECT_CHARTER_METADATA_PATH).read_text(
+                    encoding="utf-8"
+                )
+            )
         except FileNotFoundError as exc:
             raise ProjectCharterError(
                 "project_charter_missing",
-                "This project does not have an approved charter.",
+                "This project does not have a Project Charter / Acta de Proyecto.",
             ) from exc
-        except (OSError, json.JSONDecodeError) as exc:
+        except (OSError, yaml.YAMLError) as exc:
             raise ProjectCharterError(
-                "project_charter_invalid", "The project charter could not be read."
+                "project_charter_invalid", "The Project Charter could not be read."
             ) from exc
+        if not isinstance(metadata, dict):
+            raise ProjectCharterError(
+                "project_charter_invalid", "The Project Charter metadata is invalid."
+            )
         digest = sha256(content.encode("utf-8")).hexdigest()
-        if metadata.get("digest") != digest or metadata.get("status") != "approved":
+        hashes = metadata.get("hashes")
+        expected_digest = hashes.get("source") if isinstance(hashes, dict) else None
+        if not content.strip() or expected_digest != digest:
             raise ProjectCharterError(
                 "project_charter_integrity_failed",
-                "The project charter metadata does not match its approved document.",
+                "The Acta source does not match its formal metadata.",
             )
+        document = metadata.get("document")
+        versions = metadata.get("versions")
+        timestamps = metadata.get("timestamps")
+        delivered = versions.get("delivered") if isinstance(versions, dict) else None
+        draft = versions.get("draft") if isinstance(versions, dict) else None
+        render_path = workspace / PROJECT_CHARTER_RENDER_PATH
+        render_content = (
+            render_path.read_text(encoding="utf-8") if render_path.is_file() else None
+        )
         return ProjectCharterDocument(
-            path=PROJECT_CHARTER_PATH,
+            path=PROJECT_CHARTER_SOURCE_PATH,
             metadata_path=PROJECT_CHARTER_METADATA_PATH,
-            title=str(metadata.get("title") or "Project Charter"),
-            status="approved",
-            version=str(metadata.get("version") or "1.0"),
-            approved_at=str(metadata.get("approvedAt") or ""),
+            title=str(
+                document.get("title")
+                if isinstance(document, dict) and document.get("title")
+                else "Acta de Proyecto"
+            ),
+            status=str(metadata.get("status") or "draft"),
+            version=str(delivered or draft or "v0.1"),
+            approved_at=str(
+                timestamps.get("delivered_at")
+                if isinstance(timestamps, dict) and timestamps.get("delivered_at")
+                else ""
+            ),
             digest=digest,
             content=content,
+            render_content=render_content,
         )
 
     def share(
@@ -178,44 +176,9 @@ class ProjectCharterService:
             "sentAt": datetime.now(UTC).isoformat(),
         }
 
-    def _write_document(
-        self, workspace: Path, *, content: str, approved_at: str
-    ) -> ProjectCharterDocument:
-        docs_dir = workspace / "docs"
-        docs_dir.mkdir(parents=True, exist_ok=True)
-        digest = sha256(content.encode("utf-8")).hexdigest()
-        metadata = {
-            "kind": "codex.projectCharterMetadata",
-            "schemaVersion": 1,
-            "title": "Project Charter",
-            "status": "approved",
-            "version": "1.0",
-            "approvedAt": approved_at,
-            "path": PROJECT_CHARTER_PATH,
-            "digest": digest,
-        }
-        (workspace / PROJECT_CHARTER_PATH).write_text(content, encoding="utf-8")
-        (workspace / PROJECT_CHARTER_METADATA_PATH).write_text(
-            json.dumps(metadata, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        return ProjectCharterDocument(
-            path=PROJECT_CHARTER_PATH,
-            metadata_path=PROJECT_CHARTER_METADATA_PATH,
-            title="Project Charter",
-            status="approved",
-            version="1.0",
-            approved_at=approved_at,
-            digest=digest,
-            content=content,
-        )
-
     def _resolve_workspace(self, workspace_path: str) -> Path:
         workspace = Path(workspace_path).expanduser().resolve()
-        if (
-            workspace == self._projects_root
-            or self._projects_root not in workspace.parents
-        ):
+        if workspace == self._projects_root or self._projects_root not in workspace.parents:
             raise ProjectCharterError(
                 "project_charter_workspace_invalid",
                 "The requested workspace is outside the configured projects root.",
@@ -235,20 +198,16 @@ class ProjectCharterService:
         if not sender or not host:
             raise ProjectCharterError(
                 "project_charter_email_unavailable",
-                "SMTP sender and host are required to share the charter.",
+                "SMTP sender and host are required to share the Acta.",
             )
         email = EmailMessage()
         message_id = make_msgid(domain="codex-mobile-bridge.local")
         email["From"] = sender
         email["To"] = ", ".join(recipients)
-        email["Subject"] = (
-            f"Project Charter - {_charter_project_name(document.content)}"
-        )
+        email["Subject"] = f"Acta de Proyecto - {_charter_project_name(document.content)}"
         email["Date"] = formatdate(localtime=False, usegmt=True)
         email["Message-ID"] = message_id
-        email.set_content(
-            _email_text(document, note=note, include_full=include_full_document)
-        )
+        email.set_content(_email_text(document, note=note, include_full=include_full_document))
         email.add_alternative(
             _email_html(document, note=note, include_full=include_full_document),
             subtype="html",
@@ -258,8 +217,15 @@ class ProjectCharterService:
                 document.content.encode("utf-8"),
                 maintype="text",
                 subtype="markdown",
-                filename="project-charter.md",
+                filename="acta-de-proyecto.md",
             )
+            if document.render_content:
+                email.add_attachment(
+                    document.render_content.encode("utf-8"),
+                    maintype="text",
+                    subtype="html",
+                    filename="acta-de-proyecto.html",
+                )
         smtp_port = self._settings.web_preview_smtp_port
         smtp_class = (
             smtplib.SMTP_SSL
@@ -272,17 +238,13 @@ class ProjectCharterService:
                 smtp_port,
                 timeout=self._settings.web_preview_smtp_timeout_seconds,
             ) as smtp:
-                if (
-                    smtp_class is smtplib.SMTP
-                    and self._settings.web_preview_smtp_use_tls
-                ):
+                if smtp_class is smtplib.SMTP and self._settings.web_preview_smtp_use_tls:
                     smtp.starttls()
                 username = self._settings.web_preview_smtp_username
                 password = self._settings.web_preview_smtp_password
                 if username and password:
                     smtp.login(username, password)
-                refused = smtp.send_message(email)
-                if refused:
+                if smtp.send_message(email):
                     raise ProjectCharterError(
                         "project_charter_email_failed", "SMTP refused a recipient."
                     )
@@ -290,7 +252,7 @@ class ProjectCharterService:
             raise
         except Exception as exc:
             raise ProjectCharterError(
-                "project_charter_email_failed", "The charter email could not be sent."
+                "project_charter_email_failed", "The Acta email could not be sent."
             ) from exc
         return message_id
 
@@ -316,22 +278,14 @@ class ProjectCharterService:
                 payload = {
                     "from": sender,
                     "to": recipient,
-                    "subject": (
-                        f"Project Charter - {_charter_project_name(document.content)}"
-                    ),
-                    "text": _email_text(
-                        document,
-                        note=note,
-                        include_full=include_full_document,
-                    ),
-                    "html": _email_html(
-                        document,
-                        note=note,
-                        include_full=include_full_document,
-                    ),
+                    "subject": f"Acta de Proyecto - {_charter_project_name(document.content)}",
+                    "text": _email_text(document, note=note, include_full=include_full_document),
+                    "html": _email_html(document, note=note, include_full=include_full_document),
                     "metadata": {
                         "document_kind": "project_charter",
                         "document_digest": document.digest,
+                        "document_status": document.status,
+                        "document_version": document.version,
                     },
                 }
                 request = urllib.request.Request(
@@ -347,105 +301,29 @@ class ProjectCharterService:
                     request,
                     timeout=self._settings.web_preview_smtp_timeout_seconds,
                 ) as response:
-                    response_payload = json.loads(
-                        response.read().decode("utf-8") or "{}"
-                    )
+                    response_payload = json.loads(response.read().decode("utf-8") or "{}")
                 message_id = str(response_payload.get("id") or "")
                 if message_id:
                     message_ids.append(message_id)
         except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
             raise ProjectCharterError(
-                "project_charter_email_failed", "The charter email could not be sent."
+                "project_charter_email_failed", "The Acta email could not be sent."
             ) from exc
         return ",".join(message_ids) or None
 
 
-def build_project_charter_markdown(
-    *,
-    request: dict[str, Any],
-    guided_intake: dict[str, Any],
-    approved_brief: str,
-    approved_at: str,
-) -> str:
-    preview = guided_intake.get("contractPreview") or guided_intake.get(
-        "contract_preview"
-    )
-    preview = preview if isinstance(preview, dict) else {}
-    decisions = preview.get("decisions")
-    decisions = decisions if isinstance(decisions, dict) else {}
-    assumptions = preview.get("assumptions")
-    assumptions = assumptions if isinstance(assumptions, list) else []
-    name = str(request.get("name") or decisions.get("name") or "Unnamed project")
-    slug = str(request.get("slug") or decisions.get("slug") or "")
-    goal = str(
-        request.get("primary_goal")
-        or request.get("primaryGoal")
-        or decisions.get("primaryGoal")
-        or "Not specified"
-    )
-    business_type = str(
-        request.get("business_type")
-        or request.get("businessType")
-        or decisions.get("businessType")
-        or "Not specified"
-    )
-    platforms = request.get("platforms") or decisions.get("platforms") or []
-    if isinstance(platforms, dict):
-        platforms = [key for key, enabled in platforms.items() if enabled]
-    platform_text = ", ".join(str(item) for item in platforms) or "Not specified"
-    approved_scope = approved_brief.strip()
-    assumption_lines = (
-        "\n".join(
-            f"- {str(item.get('message') or item.get('value') or item)}"
-            if isinstance(item, dict)
-            else f"- {item}"
-            for item in assumptions
-        )
-        or "- No unresolved assumptions were recorded at approval."
-    )
-    return f"""# Project Charter
-
-- Status: Approved
-- Version: 1.0
-- Approved at: {approved_at}
-- Project: {name}
-- Slug: `{slug}`
-- Business type: {business_type}
-- Platforms: {platform_text}
-
-## Executive objective
-
-{goal}
-
-## Approved scope and requirements
-
-{approved_scope}
-
-## Assumptions recorded at approval
-
-{assumption_lines}
-
-## Delivery and governance
-
-- This charter is the approved source contract for UX, SDD, Generator, Reviewer, implementation, and release validation.
-- Changes to scope, roles, workflows, data, acceptance criteria, or release expectations require an explicit charter revision.
-- Mock or demo data is not authorized unless a later approved revision states it explicitly.
-- Generated implementation must remain traceable to this document in SDD Workbench.
-"""
-
-
 def _charter_project_name(content: str) -> str:
-    match = re.search(r"^- Project: (.+?)$", content, re.MULTILINE)
-    return match.group(1).strip() if match else "Project"
+    match = re.search(r"^- (?:Proyecto|Project): (.+?)$", content, re.MULTILINE)
+    return match.group(1).strip() if match else "Proyecto"
 
 
 def _email_text(
     document: ProjectCharterDocument, *, note: str | None, include_full: bool
 ) -> str:
-    prefix = (note or "").strip()
-    body = [prefix] if prefix else []
+    body = [(note or "").strip()] if (note or "").strip() else []
     body.append(
-        f"Approved project charter v{document.version}.\nDigest: {document.digest}"
+        f"Acta de Proyecto {document.version} ({document.status}).\n"
+        f"Integridad: {document.digest}"
     )
     if include_full:
         body.extend(["", document.content])
@@ -459,12 +337,14 @@ def _email_html(
     if note and note.strip():
         pieces.append(f"<p>{html.escape(note.strip())}</p>")
     pieces.append(
-        f"<p><strong>Approved project charter v{html.escape(document.version)}</strong><br>"
-        f"Digest: <code>{html.escape(document.digest)}</code></p>"
+        f"<p><strong>Acta de Proyecto {html.escape(document.version)} "
+        f"({html.escape(document.status)})</strong><br>"
+        f"Integridad: <code>{html.escape(document.digest)}</code></p>"
     )
     if include_full:
         pieces.append(
-            f'<pre style="white-space:pre-wrap">{html.escape(document.content)}</pre>'
+            document.render_content
+            or f'<pre style="white-space:pre-wrap">{html.escape(document.content)}</pre>'
         )
     pieces.append("</body></html>")
     return "".join(pieces)

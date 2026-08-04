@@ -6,6 +6,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
+from backend.app.domain.entities.project_management import (
+    default_project_management_manifest,
+)
+
 
 DEFAULT_PLATFORMS = ("ios", "android", "web")
 DEFAULT_ROLES = ("owner", "admin", "manager", "staff", "customer", "guest")
@@ -597,6 +601,9 @@ def _build_manifest(
             "initial_spec_id": "001-product-foundation",
             "required_artifacts": ["spec.md", "plan.md", "tasks.md", "metadata.yaml"],
         },
+        "project_management": (
+            default_project_management_manifest().to_manifest_payload()
+        ),
         "release": {
             "first_release_mode": first_release_mode,
             "default_runtime_profile": "preview",

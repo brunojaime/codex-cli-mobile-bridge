@@ -6,6 +6,7 @@ import 'package:codex_mobile_frontend/src/models/conversation_product.dart';
 import 'package:codex_mobile_frontend/src/models/current_run_execution.dart';
 import 'package:codex_mobile_frontend/src/models/domain_factory.dart';
 import 'package:codex_mobile_frontend/src/models/chat_turn_summary.dart';
+import 'package:codex_mobile_frontend/src/models/project_documents.dart';
 import 'package:codex_mobile_frontend/src/models/reviewer_lifecycle_state.dart';
 import 'package:codex_mobile_frontend/src/models/session_detail.dart';
 import 'package:codex_mobile_frontend/src/models/workspace.dart';
@@ -67,6 +68,37 @@ void main() {
     expect(find.text('Domain factory'), findsNothing);
     expect(find.text('Domain Factory'), findsNothing);
     expect(apiClient.domainFactoryStarts, 0);
+  });
+
+  testWidgets('documents chip opens project charter surface',
+      (WidgetTester tester) async {
+    final session = _buildSession(
+      workspacePath: '/workspace/clinica-norte',
+      workspaceName: 'Clinica Norte',
+      messages: const <ChatMessage>[],
+    );
+    final apiClient = _ChatScreenOverflowApiClient(session);
+    final documentClient = _ChatScreenProjectDocumentsApiClient();
+
+    await _pumpChatScreen(
+      tester,
+      width: 900,
+      height: 760,
+      session: session,
+      apiClient: apiClient,
+      projectDocumentsClient: documentClient,
+    );
+
+    expect(find.text('Documents'), findsOneWidget);
+    expect(find.text('Project Charter'), findsNothing);
+
+    await tester.tap(find.text('Documents'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Project Charter'), findsWidgets);
+    expect(find.text('Latest Preview'), findsOneWidget);
+    expect(documentClient.listCalls, 1);
+    expect(documentClient.detailCalls, 1);
   });
 
   testWidgets('conversation context sheet scrolls safely for long content',
@@ -1515,6 +1547,7 @@ Future<void> _pumpChatScreen(
   WidgetTester tester, {
   required SessionDetail session,
   ApiClient? apiClient,
+  ApiClient? projectDocumentsClient,
   List<Workspace> sidebarWorkspaces = const <Workspace>[],
   Locale? locale,
   double width = 320,
@@ -1544,6 +1577,7 @@ Future<void> _pumpChatScreen(
         controllerOverride: controller,
         enableServerBootstrap: false,
         initialSidebarWorkspaces: sidebarWorkspaces,
+        projectDocumentsClientOverride: projectDocumentsClient,
       ),
     ),
   );
@@ -1561,6 +1595,158 @@ Future<ChatController> _seedController(
   await controller.refreshSessions();
   await controller.selectSession(session.id);
   return controller;
+}
+
+class _ChatScreenProjectDocumentsApiClient extends ApiClient {
+  _ChatScreenProjectDocumentsApiClient()
+      : super(baseUrl: 'http://localhost:8000');
+
+  int listCalls = 0;
+  int detailCalls = 0;
+
+  @override
+  Future<ProjectDocuments> listProjectDocuments({
+    String? workspacePath,
+    String? draftId,
+    String? jobId,
+  }) async {
+    listCalls += 1;
+    return ProjectDocuments.fromJson(<String, dynamic>{
+      'workspace_path': workspacePath ?? '/workspace/clinica-norte',
+      'workspace_name': 'Clinica Norte',
+      'standard': 'project-charter-v1',
+      'root': 'docs/project-management',
+      'source': 'workspace_path',
+      'evidence': <String, dynamic>{'workspacePath': workspacePath},
+      'modules': <Map<String, dynamic>>[
+        _documentModule('charter', loadByDefault: true, status: 'ready'),
+        _documentModule('wbs', status: 'dormant'),
+        _documentModule('roles', status: 'dormant'),
+        _documentModule('risks', status: 'dormant'),
+        _documentModule('alternatives', status: 'dormant'),
+      ],
+      'charter': <String, dynamic>{
+        'path': 'docs/project-management/acta/current/acta.md',
+        'status': 'draft',
+        'latest_render': 'docs/project-management/acta/current/render.html',
+        'latest_release': null,
+        'validation': <String, dynamic>{'ok': true, 'blocking_count': 0},
+        'render': <String, dynamic>{
+          'path': 'docs/project-management/acta/current/render.html',
+          'exists': true,
+          'source_hash': 'source-hash',
+          'render_hash': 'render-hash',
+          'status': 'fresh',
+        },
+      },
+    });
+  }
+
+  @override
+  Future<ProjectDocumentCharterDetail> getProjectDocumentCharter({
+    String? workspacePath,
+    String? draftId,
+    String? jobId,
+    bool includeRenderContent = true,
+  }) async {
+    detailCalls += 1;
+    return ProjectDocumentCharterDetail.fromJson(<String, dynamic>{
+      'workspace_path': workspacePath ?? '/workspace/clinica-norte',
+      'workspace_name': 'Clinica Norte',
+      'standard': 'project-charter-v1',
+      'source': 'workspace_path',
+      'evidence': <String, dynamic>{'workspacePath': workspacePath},
+      'metadata': <String, dynamic>{
+        'status': 'draft',
+        'versions': <String, dynamic>{'draft': 'v0.1', 'delivered': null},
+        'timestamps': <String, dynamic>{
+          'updated_at': '2026-08-01T12:00:00Z',
+        },
+      },
+      'brand': <String, dynamic>{},
+      'source_summary': <String, dynamic>{
+        'path': 'docs/project-management/acta/current/acta.md',
+        'exists': true,
+        'title': 'Acta de Proyecto',
+        'size_bytes': 1200,
+        'sha256': 'source-hash',
+        'section_headings': <String>['Acta de Proyecto'],
+        'excerpt': '# Acta de Proyecto\n\nProyecto: Clinica Norte',
+      },
+      'render': <String, dynamic>{
+        'path': 'docs/project-management/acta/current/render.html',
+        'exists': true,
+        'size_bytes': 3200,
+        'content':
+            '<!doctype html><html><body><h1>Acta de Proyecto</h1><p>Proyecto: Clinica Norte</p></body></html>',
+        'truncated': false,
+      },
+      'render_manifest': <String, dynamic>{
+        'source_hash': 'source-hash',
+        'render_hash': 'render-hash',
+        'status': 'fresh',
+      },
+      'validation': _documentValidation(),
+      'latest_release': null,
+    });
+  }
+
+  @override
+  Future<ProjectDocumentCharterValidationResponse>
+      validateProjectDocumentCharter({
+    String? workspacePath,
+    String? draftId,
+    String? jobId,
+    bool clientExport = true,
+  }) async {
+    return ProjectDocumentCharterValidationResponse.fromJson(
+      <String, dynamic>{
+        'workspace_path': workspacePath ?? '/workspace/clinica-norte',
+        'validation': _documentValidation(),
+      },
+    );
+  }
+
+  @override
+  Future<ProjectDocumentCharterReleasesResponse>
+      listProjectDocumentCharterReleases({
+    String? workspacePath,
+    String? draftId,
+    String? jobId,
+  }) async {
+    return ProjectDocumentCharterReleasesResponse.fromJson(<String, dynamic>{
+      'workspace_path': workspacePath ?? '/workspace/clinica-norte',
+      'releases': const <Map<String, dynamic>>[],
+    });
+  }
+}
+
+Map<String, dynamic> _documentModule(
+  String id, {
+  bool loadByDefault = false,
+  String status = 'dormant',
+}) {
+  return <String, dynamic>{
+    'id': id,
+    'title': id == 'charter' ? 'Project Charter' : id.toUpperCase(),
+    'path': 'docs/project-management/$id/README.md',
+    'exists': true,
+    'status': status,
+    'load_by_default': loadByDefault,
+    'description': '$id context',
+    'validation': id == 'charter'
+        ? <String, dynamic>{'ok': true, 'blocking_count': 0}
+        : null,
+  };
+}
+
+Map<String, dynamic> _documentValidation() {
+  return const <String, dynamic>{
+    'ok': true,
+    'generated_at': '2026-08-01T12:00:01Z',
+    'blocking_count': 0,
+    'issues': <Map<String, dynamic>>[],
+  };
 }
 
 class _ChatScreenOverflowApiClient extends ApiClient {

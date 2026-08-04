@@ -12,6 +12,7 @@ from backend.app.application.services.sdd_standard_service import (
     SddStandardError,
     parse_simple_yaml,
 )
+from backend.app.domain.entities.project_management import PROJECT_CHARTER_SOURCE_PATH
 
 
 ALLOWED_SDD_EXTENSIONS = frozenset({".md", ".mmd", ".yaml", ".yml", ".json"})
@@ -428,7 +429,7 @@ class SddProjectService:
         )
         has_project_charter = self._allowed_file_exists(
             workspace,
-            "docs/project-charter.md",
+            PROJECT_CHARTER_SOURCE_PATH,
         )
         project_charter_required = self._project_charter_required(workspace)
         diagram_count = architecture_diagram_count + spec_diagram_count
@@ -437,7 +438,7 @@ class SddProjectService:
         if not has_constitution:
             missing_required.append(".specify/memory/constitution.md")
         if project_charter_required and not has_project_charter:
-            missing_required.append("docs/project-charter.md")
+            missing_required.append(PROJECT_CHARTER_SOURCE_PATH)
         if not spec_count:
             missing_required.append("specs/<feature>/spec.md")
         if not diagram_count:
@@ -461,7 +462,7 @@ class SddProjectService:
         )
         project_charter = self._read_optional_file(
             workspace,
-            "docs/project-charter.md",
+            PROJECT_CHARTER_SOURCE_PATH,
         )
         architecture_diagrams = self._read_diagrams(
             workspace,
@@ -475,7 +476,7 @@ class SddProjectService:
         if constitution is None:
             missing_required.append(".specify/memory/constitution.md")
         if self._project_charter_required(workspace) and project_charter is None:
-            missing_required.append("docs/project-charter.md")
+            missing_required.append(PROJECT_CHARTER_SOURCE_PATH)
         if not specs:
             missing_required.append("specs/<feature>/spec.md")
         if not architecture_diagrams and not any(spec.diagrams for spec in specs):
@@ -500,7 +501,7 @@ class SddProjectService:
         )
         project_charter = self._read_optional_file(
             workspace,
-            "docs/project-charter.md",
+            PROJECT_CHARTER_SOURCE_PATH,
         )
         architecture_diagrams = self._read_diagrams(
             workspace,
@@ -514,7 +515,7 @@ class SddProjectService:
         if constitution is None:
             missing_required.append(".specify/memory/constitution.md")
         if self._project_charter_required(workspace) and project_charter is None:
-            missing_required.append("docs/project-charter.md")
+            missing_required.append(PROJECT_CHARTER_SOURCE_PATH)
         if not specs:
             missing_required.append("specs/<feature>/spec.md")
         if not architecture_diagrams and not any(spec.diagrams for spec in specs):

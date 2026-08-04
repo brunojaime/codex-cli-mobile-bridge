@@ -663,7 +663,7 @@ void main() {
     );
     _openWorkbench(tester);
     await tester.pumpAndSettle();
-    await tester.drag(find.byType(ListView).first, const Offset(0, -500));
+    await tester.drag(find.byType(ListView).first, const Offset(0, -1200));
     await tester.pumpAndSettle();
     expect(find.text('Android release'), findsOneWidget);
     expect(find.text('android-v1.2.3'), findsOneWidget);
@@ -685,7 +685,7 @@ void main() {
 
     await tester.tap(find.text('Overview').first);
     await tester.pumpAndSettle();
-    await tester.drag(find.byType(ListView).first, const Offset(0, -350));
+    await tester.drag(find.byType(ListView).first, const Offset(0, -900));
     await tester.pumpAndSettle();
     expect(find.text('Feedback groups'), findsOneWidget);
     expect(find.text('diagram architecture: 1'), findsOneWidget);
@@ -4269,7 +4269,7 @@ Map<String, dynamic> _projectJson() {
       'content': '# Constitution',
     },
     'project_charter': <String, dynamic>{
-      'path': 'docs/project-charter.md',
+      'path': 'docs/project-management/acta/current/acta.md',
       'title': 'Project Charter',
       'size_bytes': 420,
       'content': '''# Project Charter

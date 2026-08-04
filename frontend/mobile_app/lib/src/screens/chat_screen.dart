@@ -38,6 +38,7 @@ import '../utils/chat_message_visibility.dart';
 import '../widgets/agent_studio_status_button.dart';
 import '../widgets/chat_bubble.dart';
 import '../widgets/installable_apps_sheet.dart';
+import '../widgets/project_documents_panel.dart';
 import '../widgets/reviewer_status_banner.dart';
 
 const String _defaultAutoReviewerPrompt =
@@ -55,7 +56,8 @@ const String _projectFactoryGeneratorPrompt =
     'visual references, and produce a '
     'domain contract/spec seed for approval. The contract should cover business '
     'outcome, users, roles, permissions, entities, workflows, screens, visual '
-    'direction, assets, acceptance criteria, and release expectations. After '
+    'direction, colors, information architecture, logo/icon assets, acceptance '
+    'criteria, and release expectations. After '
     'approval, the bridge will run deterministic New Project init first, then '
     'Domain Factory implementation on the generated baseline. The default '
     'release path is real preview data: Cloudflare Preview API, persistent D1, '
@@ -83,13 +85,18 @@ const String _uxGeneratorPrompt =
     'professional products, inspect screenshots or capture them when the app '
     'can run, perform focused UAT on the primary journeys, and save concise UX '
     'evidence under .codex/ux/. Validate responsive desktop and mobile views '
-    'before reporting completion.';
+    'before reporting completion. Treat the generated baseline as infrastructure '
+    'only: define product navigation, screens, colors, logo treatment, and app '
+    'icon source from the domain brief/assets instead of accepting scaffold '
+    'defaults.';
 const String _uxReviewerPrompt =
     'You are the Senior UX Reviewer Codex. You must use the visual-ux-polish '
     'skill before acting. Review only the UX Generator changes and evidence. '
     'Check visual quality, interaction clarity, accessibility, responsive '
     'fit, screenshot/UAT evidence, and scope discipline. Do not request '
-    'functional/backend/business-logic changes. Return only JSON with '
+    'functional/backend/business-logic changes. Reject completion when the app '
+    'still looks like a generic authenticated shell or inherits scaffold '
+    'navigation, colors, logo, or app icon decisions. Return only JSON with '
     '{"status":"continue","prompt":"<next UX-only prompt>"} when another UX '
     'iteration is needed, or {"status":"complete","summary":"<why the UX pass '
     'is done>"} when no further UX-only work is needed.';
@@ -98,12 +105,16 @@ const String _uxGeneratorKickoffPrompt =
     'benchmark comparable apps, inspect or capture screenshots when possible, '
     'perform focused UAT on the primary flows, improve only visual UX/copy/'
     'responsive/accessibility states, write evidence under .codex/ux/, and do '
-    'not change functionality or backend behavior.';
+    'not change functionality or backend behavior. Define product navigation, '
+    'primary screens, colors, logo treatment, and app icon source from the '
+    'domain brief/assets.';
 const String _uxFullKickoffPrompt =
     'Run the full Senior UX generator/reviewer lane on this project. The '
     'generator should improve only UX/visual/copy/responsive/accessibility '
     'quality using visual-ux-polish, benchmarks, screenshots, and UAT evidence '
-    'under .codex/ux/. The reviewer controls the stop condition and may request '
+    'under .codex/ux/. The generator must replace any generic shell/default '
+    'navigation with domain-specific IA, screens, colors, logo treatment, and '
+    'app icon source. The reviewer controls the stop condition and may request '
     'up to the configured iteration budget, but must stop early when the UX is '
     'professional and validated. Do not change functionality or backend '
     'behavior.';
@@ -495,7 +506,7 @@ enum _PinnedWorkspaceAction { newChat, remove }
 
 enum _RenameChatMode { manual, generated }
 
-enum _ChatBodyView { conversation, agentSummaries, turnSummaries }
+enum _ChatBodyView { conversation, agentSummaries, turnSummaries, documents }
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({
@@ -515,6 +526,7 @@ class ChatScreen extends StatefulWidget {
     this.initialServerHealthOverride,
     this.initialProdUpdateStatusOverride,
     this.prodUpdateClientOverride,
+    this.projectDocumentsClientOverride,
   });
 
   final String initialApiBaseUrl;
@@ -537,6 +549,8 @@ class ChatScreen extends StatefulWidget {
   final ServerHealth? initialServerHealthOverride;
   final ProdUpdateStatus? initialProdUpdateStatusOverride;
   final ApiClient? prodUpdateClientOverride;
+  @visibleForTesting
+  final ApiClient? projectDocumentsClientOverride;
   @override
   State<ChatScreen> createState() => _ChatScreenState();
 }
@@ -667,6 +681,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             _chatBodyView == _ChatBodyView.agentSummaries;
         final isShowingTurnSummaries =
             _chatBodyView == _ChatBodyView.turnSummaries;
+        final isShowingDocuments = _chatBodyView == _ChatBodyView.documents;
+        final hasDocumentWorkspace = currentSession != null &&
+            currentSession.workspacePath.trim().isNotEmpty;
         final showFilteredMessagesPlaceholder = currentSession != null &&
             currentSession.messages.isNotEmpty &&
             messages.isEmpty;
@@ -959,6 +976,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                             turnSummaryCount > 0 ||
                                             currentSession
                                                 .turnSummariesEnabled ||
+                                            hasDocumentWorkspace ||
                                             _chatBodyView !=
                                                 _ChatBodyView.conversation))
                                       SliverToBoxAdapter(
@@ -1086,6 +1104,43 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                   color: Color(0xFF23304F),
                                                 ),
                                               ),
+                                              ChoiceChip(
+                                                label: const Text('Documents'),
+                                                avatar: Icon(
+                                                  Icons.description_outlined,
+                                                  size: 18,
+                                                  color: isShowingDocuments
+                                                      ? const Color(0xFF07131D)
+                                                      : const Color(0xFFDCE5FF),
+                                                ),
+                                                selected: isShowingDocuments,
+                                                onSelected: hasDocumentWorkspace
+                                                    ? (selected) {
+                                                        if (!selected) {
+                                                          return;
+                                                        }
+                                                        _setChatBodyView(
+                                                          _ChatBodyView
+                                                              .documents,
+                                                        );
+                                                      }
+                                                    : null,
+                                                selectedColor: const Color(
+                                                  0xFF55D6BE,
+                                                ),
+                                                backgroundColor: const Color(
+                                                  0xFF16213C,
+                                                ),
+                                                labelStyle: TextStyle(
+                                                  color: isShowingDocuments
+                                                      ? const Color(0xFF07131D)
+                                                      : const Color(0xFFDCE5FF),
+                                                  fontWeight: FontWeight.w700,
+                                                ),
+                                                side: const BorderSide(
+                                                  color: Color(0xFF23304F),
+                                                ),
+                                              ),
                                             ],
                                           ),
                                         ),
@@ -1164,6 +1219,26 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                             },
                                             childCount: currentSession
                                                 .turnSummaries.length,
+                                          ),
+                                        ),
+                                      )
+                                    else if (isShowingDocuments &&
+                                        currentSession != null)
+                                      SliverPadding(
+                                        padding: const EdgeInsets.fromLTRB(
+                                          16,
+                                          12,
+                                          16,
+                                          16,
+                                        ),
+                                        sliver: SliverToBoxAdapter(
+                                          child: ProjectDocumentsPanel(
+                                            apiClient:
+                                                _projectDocumentsClient(),
+                                            workspacePath:
+                                                currentSession.workspacePath,
+                                            onRequestCharterChange:
+                                                _handleProjectCharterChangeRequest,
                                           ),
                                         ),
                                       )
@@ -2102,6 +2177,18 @@ When you create the Project Factory draft, link each asset with POST /project-fa
     );
   }
 
+  void _handleProjectCharterChangeRequest(String value) {
+    _textController
+      ..text = value
+      ..selection = TextSelection.collapsed(offset: value.length);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Project charter request inserted into the composer.'),
+        duration: Duration(seconds: 1),
+      ),
+    );
+  }
+
   Future<void> _handleMessageLinkTap(String target) async {
     final trimmedTarget = target.trim();
     final uri = _parseMessageTarget(trimmedTarget);
@@ -2460,6 +2547,11 @@ When you create the Project Factory draft, link each asset with POST /project-fa
 
   ApiClient _projectFactoryClient() {
     return widget.projectFactoryClientOverride ??
+        ApiClient(baseUrl: _activeServer?.baseUrl ?? widget.initialApiBaseUrl);
+  }
+
+  ApiClient _projectDocumentsClient() {
+    return widget.projectDocumentsClientOverride ??
         ApiClient(baseUrl: _activeServer?.baseUrl ?? widget.initialApiBaseUrl);
   }
 
@@ -3124,6 +3216,7 @@ Primero respondeme al usuario, no generes archivos todavia. Usa el nombre/titulo
 - backend;
 - logo/icono;
 - colores, estilo visual y referencias de look and feel;
+- arquitectura visual/navegacion/pantallas esperadas, si ya las sabe;
 - roles/permisos especiales si aplican;
 - emails iniciales de administradores para enviar invites de Web Preview;
 - entidades principales del dominio para DER/ERD;
@@ -3148,7 +3241,7 @@ Defaults si el usuario no modifica nada:
 - flutter soporta APK preview, Workbench en APK y registro Bridge.
 - svelte es web-first sobre Cloudflare Worker/D1; no prometas APK ni Bridge installable si no hay wrapper explicito.
 
-Si el usuario no sabe el rubro o titulo funcional, proponelo a partir de lo que cuente sin cambiar el slug del draft. Para colores y look and feel no inventes como definitivo: preguntale o propone 2-3 direcciones y espera confirmacion. Antes de crear nada, devolve un preview corto del proyecto que vas a armar y pedi confirmacion explicita tipo "ok, dale para adelante".
+Si el usuario no sabe el rubro o titulo funcional, proponelo a partir de lo que cuente sin cambiar el slug del draft. Para colores, look and feel, navegacion y pantallas, inferi una direccion recomendada desde el dominio y referencias; si la decision es riesgosa, presenta 2-3 opciones y espera confirmacion. Antes de crear nada, devolve un preview corto del proyecto que vas a armar y pedi confirmacion explicita tipo "ok, dale para adelante".
 
 Contrato semi-obligatorio antes del build:
 - Trabaja como intake guiado con estados: collecting, ready_for_review, changes_requested, confirmed, build_started o blocked.

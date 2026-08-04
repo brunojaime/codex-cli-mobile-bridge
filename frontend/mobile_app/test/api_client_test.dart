@@ -133,6 +133,109 @@ void main() {
     expect(detail.installStatusHint, 'no_release_available');
   });
 
+  test('api client handles project document endpoints', () async {
+    var step = 0;
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8000',
+      client: MockClient((request) async {
+        step += 1;
+        switch (step) {
+          case 1:
+            expect(request.method, 'GET');
+            expect(request.url.path, '/project-documents');
+            expect(
+                request.url.queryParameters['workspacePath'], '/workspace/a');
+            return http.Response(_projectDocumentsPayload(), 200);
+          case 2:
+            expect(request.method, 'GET');
+            expect(request.url.path, '/project-documents/charter');
+            expect(
+              request.url.queryParameters['include_render_content'],
+              'true',
+            );
+            return http.Response(_projectCharterDetailPayload(), 200);
+          case 3:
+            expect(request.method, 'POST');
+            expect(request.url.path, '/project-documents/charter/validate');
+            expect(request.body, contains('"workspacePath":"/workspace/a"'));
+            expect(request.body, contains('"clientExport":true'));
+            return http.Response(_projectCharterValidationPayload(), 200);
+          case 4:
+            expect(request.method, 'POST');
+            expect(request.url.path, '/project-documents/charter/render');
+            expect(request.body, contains('"workspacePath":"/workspace/a"'));
+            return http.Response(_projectCharterRenderPayload(), 200);
+          case 5:
+            expect(request.method, 'POST');
+            expect(request.url.path, '/project-documents/charter/release');
+            expect(request.body, contains('"version":"v1.0"'));
+            expect(request.body, contains('"changedFields":["benefits"]'));
+            return http.Response(_projectCharterReleasePayload(), 200);
+          case 6:
+            expect(request.method, 'GET');
+            expect(request.url.path, '/project-documents/charter/releases');
+            return http.Response(_projectCharterReleasesPayload(), 200);
+          default:
+            expect(request.method, 'GET');
+            expect(
+              request.url.path,
+              '/project-documents/charter/releases/v1.0',
+            );
+            expect(
+              request.url.queryParameters['include_render_content'],
+              'false',
+            );
+            return http.Response(_projectCharterReleaseDetailPayload(), 200);
+        }
+      }),
+    );
+
+    final documents = await client.listProjectDocuments(
+      workspacePath: '/workspace/a',
+    );
+    expect(documents.modules.map((module) => module.id), contains('charter'));
+    expect(documents.charter.render.exists, isTrue);
+
+    final charter = await client.getProjectDocumentCharter(
+      workspacePath: '/workspace/a',
+    );
+    expect(charter.workspaceName, 'Workspace A');
+    expect(charter.sourceSummary.sectionHeadings, contains('Acta de Proyecto'));
+    expect(charter.hasFreshRender, isTrue);
+
+    final validation = await client.validateProjectDocumentCharter(
+      workspacePath: '/workspace/a',
+      clientExport: true,
+    );
+    expect(validation.validation.ok, isTrue);
+
+    final render = await client.renderProjectDocumentCharter(
+      workspacePath: '/workspace/a',
+    );
+    expect(render.render.exists, isTrue);
+    expect(render.renderManifest['source_hash'], 'source-hash');
+
+    final release = await client.releaseProjectDocumentCharter(
+      workspacePath: '/workspace/a',
+      version: 'v1.0',
+      changedFields: const <String>['benefits'],
+    );
+    expect(release.ok, isTrue);
+    expect(release.releaseVersion, 'v1.0');
+
+    final releases = await client.listProjectDocumentCharterReleases(
+      workspacePath: '/workspace/a',
+    );
+    expect(releases.releases.single.version, 'v1.0');
+    expect(releases.releases.single.artifacts, contains('acta.md'));
+
+    final releaseDetail = await client.getProjectDocumentCharterRelease(
+      workspacePath: '/workspace/a',
+      version: 'v1.0',
+    );
+    expect(releaseDetail.release?.source?.content, contains('Clinica Norte'));
+  });
+
   test('project factory client creates and generates draft', () async {
     var step = 0;
     final client = ApiClient(
@@ -2041,6 +2144,227 @@ String _projectFactoryDraftAssetJson() {
     "sha256": "sha256-value",
     "storage_path": "files/asset-abc123def456.png",
     "source": "chat_upload"
+  }
+  ''';
+}
+
+String _projectDocumentsPayload() {
+  return '''
+  {
+    "kind": "codex.projectDocuments",
+    "version": 1,
+    "workspace_path": "/workspace/a",
+    "workspace_name": "Workspace A",
+    "standard": "project-charter-v1",
+    "root": "docs/project-management",
+    "source": "workspace_path",
+    "evidence": {"workspacePath": "/workspace/a"},
+    "modules": [
+      {
+        "id": "charter",
+        "title": "Project Charter",
+        "path": "docs/project-management/acta/README.md",
+        "exists": true,
+        "status": "ready",
+        "load_by_default": true,
+        "description": "Project charter context",
+        "validation": {"ok": true, "blocking_count": 0}
+      },
+      {
+        "id": "wbs",
+        "title": "WBS",
+        "path": "docs/project-management/wbs/README.md",
+        "exists": true,
+        "status": "dormant",
+        "load_by_default": false,
+        "description": "WBS context",
+        "validation": null
+      }
+    ],
+    "charter": {
+      "path": "docs/project-management/acta/current/acta.md",
+      "status": "draft",
+      "latest_render": "docs/project-management/acta/current/render.html",
+      "latest_release": null,
+      "validation": {"ok": true, "blocking_count": 0},
+      "render": {
+        "path": "docs/project-management/acta/current/render.html",
+        "exists": true,
+        "source_hash": "source-hash",
+        "render_hash": "render-hash",
+        "status": "fresh"
+      }
+    }
+  }
+  ''';
+}
+
+String _projectCharterDetailPayload() {
+  return '''
+  {
+    "kind": "codex.projectDocumentCharter",
+    "version": 1,
+    "workspace_path": "/workspace/a",
+    "workspace_name": "Workspace A",
+    "standard": "project-charter-v1",
+    "source": "workspace_path",
+    "evidence": {"workspacePath": "/workspace/a"},
+    "metadata": {
+      "status": "draft",
+      "versions": {"draft": "v0.1", "delivered": null},
+      "timestamps": {"updated_at": "2026-08-01T12:00:00Z"}
+    },
+    "brand": {"logo": {"status": "pending"}},
+    "source_summary": {
+      "path": "docs/project-management/acta/current/acta.md",
+      "exists": true,
+      "title": "Acta de Proyecto",
+      "size_bytes": 1200,
+      "sha256": "source-hash",
+      "section_headings": ["Acta de Proyecto", "Beneficios"],
+      "excerpt": "# Acta de Proyecto\\n\\nProyecto: Clinica Norte"
+    },
+    "render": {
+      "path": "docs/project-management/acta/current/render.html",
+      "exists": true,
+      "size_bytes": 3200,
+      "sha256": "render-file-hash",
+      "content": "<!doctype html><html><body><h1>Acta de Proyecto</h1><p>Proyecto: Clinica Norte</p></body></html>",
+      "truncated": false
+    },
+    "render_manifest": {
+      "source_hash": "source-hash",
+      "render_hash": "render-hash",
+      "status": "fresh"
+    },
+    "validation": {
+      "kind": "codex.projectCharterValidationResult",
+      "version": 1,
+      "ok": true,
+      "generated_at": "2026-08-01T12:00:01Z",
+      "blocking_count": 0,
+      "issues": []
+    },
+    "latest_release": null
+  }
+  ''';
+}
+
+String _projectCharterValidationPayload({bool ok = true}) {
+  final issues = ok
+      ? '[]'
+      : '[{"severity":"error","code":"logo_pending","field":"brand.logo","message":"Logo pending","next_action":"Choose logo decision","blocking":true,"affected_file":"docs/project-management/acta/current/brand.yaml"}]';
+  return '''
+  {
+    "kind": "codex.projectDocumentCharterValidation",
+    "version": 1,
+    "workspace_path": "/workspace/a",
+    "validation": {
+      "kind": "codex.projectCharterValidationResult",
+      "version": 1,
+      "ok": $ok,
+      "generated_at": "2026-08-01T12:00:01Z",
+      "blocking_count": ${ok ? 0 : 1},
+      "issues": $issues
+    }
+  }
+  ''';
+}
+
+String _projectCharterRenderPayload() {
+  return '''
+  {
+    "kind": "codex.projectDocumentCharterRender",
+    "version": 1,
+    "workspace_path": "/workspace/a",
+    "render": {
+      "path": "docs/project-management/acta/current/render.html",
+      "exists": true,
+      "source_hash": "source-hash",
+      "render_hash": "render-hash",
+      "size_bytes": 3200
+    },
+    "render_manifest": {
+      "source_hash": "source-hash",
+      "render_hash": "render-hash",
+      "status": "fresh"
+    }
+  }
+  ''';
+}
+
+String _projectCharterReleasePayload() {
+  return '''
+  {
+    "kind": "codex.projectDocumentCharterRelease",
+    "version": 1,
+    "workspace_path": "/workspace/a",
+    "ok": true,
+    "release_version": "v1.0",
+    "release_path": "docs/project-management/acta/releases/v1.0",
+    "recommended_impact": "minor",
+    "validation": {
+      "kind": "codex.projectCharterValidationResult",
+      "version": 1,
+      "ok": true,
+      "generated_at": "2026-08-01T12:00:01Z",
+      "blocking_count": 0,
+      "issues": []
+    }
+  }
+  ''';
+}
+
+String _projectCharterReleasesPayload() {
+  return '''
+  {
+    "kind": "codex.projectDocumentCharterReleases",
+    "version": 1,
+    "workspace_path": "/workspace/a",
+    "releases": [
+      {
+        "version": "v1.0",
+        "path": "docs/project-management/acta/releases/v1.0",
+        "exists": true,
+        "manifest": {"released_at": "2026-08-01T12:05:00Z"},
+        "metadata": {},
+        "artifacts": ["acta.md", "metadata.yaml", "render.html"]
+      }
+    ]
+  }
+  ''';
+}
+
+String _projectCharterReleaseDetailPayload() {
+  return '''
+  {
+    "kind": "codex.projectDocumentCharterRelease",
+    "version": 1,
+    "workspace_path": "/workspace/a",
+    "release": {
+      "version": "v1.0",
+      "path": "docs/project-management/acta/releases/v1.0",
+      "exists": true,
+      "manifest": {"released_at": "2026-08-01T12:05:00Z"},
+      "metadata": {},
+      "artifacts": ["acta.md", "metadata.yaml", "render.html"],
+      "source": {
+        "path": "docs/project-management/acta/releases/v1.0/acta.md",
+        "exists": true,
+        "size_bytes": 1200,
+        "sha256": "source-hash",
+        "content": "# Acta de Proyecto\\n\\nProyecto: Clinica Norte",
+        "truncated": false
+      },
+      "render": {
+        "path": "docs/project-management/acta/releases/v1.0/render.html",
+        "exists": true,
+        "size_bytes": 3200,
+        "sha256": "render-hash",
+        "content": null,
+        "truncated": false
+      }
+    }
   }
   ''';
 }

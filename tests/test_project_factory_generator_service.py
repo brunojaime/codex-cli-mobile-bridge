@@ -22,6 +22,13 @@ from backend.app.application.services.project_factory_manifest_service import (
 )
 from backend.app.application.services.sdd_index_service import SddIndexService
 from backend.app.application.services.sdd_standard_service import SddStandardService
+from backend.app.domain.entities.project_management import (
+    PROJECT_CHARTER_BRAND_PATH,
+    PROJECT_CHARTER_METADATA_PATH,
+    PROJECT_CHARTER_RENDER_MANIFEST_PATH,
+    PROJECT_CHARTER_SOURCE_PATH,
+    PROJECT_CHARTER_STANDARD_ID,
+)
 
 
 def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> None:
@@ -100,6 +107,35 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     assert (project / "release/dns-cloudflare-troubleshooting.md").is_file()
     assert (project / "apps/mobile/.gitkeep").is_file()
     assert (project / "backend/.gitkeep").is_file()
+    project_management_paths = [
+        "docs/project-management/index.md",
+        "docs/project-management/glossary.md",
+        "docs/project-management/versioning.md",
+        "docs/project-management/context-routing.md",
+        "docs/project-management/acta/README.md",
+        PROJECT_CHARTER_SOURCE_PATH,
+        PROJECT_CHARTER_METADATA_PATH,
+        PROJECT_CHARTER_BRAND_PATH,
+        "docs/project-management/acta/current/render.html",
+        PROJECT_CHARTER_RENDER_MANIFEST_PATH,
+        "docs/project-management/acta/changelog.md",
+        "docs/project-management/acta/validation-rules.md",
+        "docs/project-management/acta/export-rules.md",
+        "docs/project-management/acta/releases/.gitkeep",
+        "docs/project-management/wbs/README.md",
+        "docs/project-management/wbs/wbs.md",
+        "docs/project-management/wbs/wbs.puml",
+        "docs/project-management/roles/README.md",
+        "docs/project-management/roles/roles-responsibilities.md",
+        "docs/project-management/roles/skills-competencies.md",
+        "docs/project-management/risks/README.md",
+        "docs/project-management/risks/risks.md",
+        "docs/project-management/alternatives/README.md",
+        "docs/project-management/alternatives/decision-matrix-template.md",
+        "assets/brand/.gitkeep",
+    ]
+    for relative_path in project_management_paths:
+        assert (project / relative_path).is_file(), relative_path
     assert result.git_status == "initialized_committed"
     assert _git(["log", "--oneline", "-1"], project).stdout
     assert (
@@ -141,6 +177,88 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
         auto_regenerate=False,
     )
     assert index_status.state == "fresh"
+    manifest_payload = pytest.importorskip("yaml").safe_load(
+        (project / ".codex/project.yaml").read_text(encoding="utf-8")
+    )
+    assert manifest_payload["project_management"]["standard"] == (
+        PROJECT_CHARTER_STANDARD_ID
+    )
+    assert manifest_payload["project_management"]["primary_document"] == (
+        PROJECT_CHARTER_SOURCE_PATH
+    )
+    assert manifest_payload["project_management"]["latest_render"] == (
+        "docs/project-management/acta/current/render.html"
+    )
+    acta = (project / PROJECT_CHARTER_SOURCE_PATH).read_text(encoding="utf-8")
+    assert "Clinica Norte" in acta
+    assert "Reservar turnos" in acta
+    assert "Definir el objetivo del producto." in acta
+    assert "Definir beneficios esperados" in acta
+    assert "TODO" not in acta
+    assert "lorem" not in acta.lower()
+    charter_metadata = pytest.importorskip("yaml").safe_load(
+        (project / PROJECT_CHARTER_METADATA_PATH).read_text(encoding="utf-8")
+    )
+    assert charter_metadata["standard"] == PROJECT_CHARTER_STANDARD_ID
+    assert charter_metadata["document"]["source_path"] == PROJECT_CHARTER_SOURCE_PATH
+    assert charter_metadata["project"]["name"] == "Clinica Norte"
+    assert charter_metadata["status"] == "draft"
+    brand = pytest.importorskip("yaml").safe_load(
+        (project / PROJECT_CHARTER_BRAND_PATH).read_text(encoding="utf-8")
+    )
+    assert brand["standard"] == PROJECT_CHARTER_STANDARD_ID
+    assert brand["logo_status"] == "generated"
+    render_manifest = json.loads(
+        (project / PROJECT_CHARTER_RENDER_MANIFEST_PATH).read_text(
+            encoding="utf-8"
+        )
+    )
+    render_html = (
+        project / "docs/project-management/acta/current/render.html"
+    ).read_text(encoding="utf-8")
+    assert "<!doctype html>" in render_html
+    assert "Clinica Norte" in render_html
+    assert "@page" in render_html
+    assert render_manifest["standard"] == PROJECT_CHARTER_STANDARD_ID
+    assert render_manifest["source_path"] == PROJECT_CHARTER_SOURCE_PATH
+    assert render_manifest["output_path"] == (
+        "docs/project-management/acta/current/render.html"
+    )
+    assert render_manifest["status"] == "rendered"
+    assert render_manifest["validation"]["blocking_issue_count"] == 0
+    routing = (
+        project / "docs/project-management/context-routing.md"
+    ).read_text(encoding="utf-8")
+    assert "For charter-only work, read:" in routing
+    assert "docs/project-management/acta/current/acta.md" in routing
+    assert "Do not read WBS, roles, risks, or alternatives" in routing
+    assert "Never deliver, export, release, snapshot, or bump" in routing
+    glossary = (project / "docs/project-management/glossary.md").read_text(
+        encoding="utf-8"
+    )
+    for term in [
+        "Project objective",
+        "Product objective",
+        "Benefits",
+        "Preliminary scope",
+        "Pending definitions",
+        "Revision history",
+        "Draft version",
+        "Delivered version",
+        "Client export",
+    ]:
+        assert term in glossary
+    module_readmes = {
+        "wbs": "docs/project-management/wbs/README.md",
+        "roles": "docs/project-management/roles/README.md",
+        "risks": "docs/project-management/risks/README.md",
+        "alternatives": "docs/project-management/alternatives/README.md",
+    }
+    for module_path in module_readmes.values():
+        module_text = (project / module_path).read_text(encoding="utf-8")
+        assert "Read This Module When" in module_text
+        assert "Do Not Read This Module When" in module_text
+        assert "Do not load it for charter-only updates." in module_text
     tree = json.loads(
         (project / "specs/001-product-foundation/tree.json").read_text(
             encoding="utf-8",
@@ -401,6 +519,7 @@ def test_generator_writes_executable_e2e_validation_script(tmp_path: Path) -> No
     assert "/notifications" in content
     assert "flutter test --dart-define=API_BASE_URL=" in content
     assert "validate_release_profiles.sh" in content
+    assert "Color.withOpacity" in content
     assert "trap cleanup EXIT" in content
 
 
@@ -870,6 +989,7 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
     assert "APP_RUNTIME_PROFILE" in release_profile_content
     assert "android-preview-v*" in release_profile_content
     assert "APP_RUNTIME_PROFILE=preview" in release_profile_content
+    assert "Color.withOpacity" in release_profile_content
     assert "android-mock-" in release_profile_content
     assert "productive android-v* tags cannot use" in release_profile_content
     assert "API_BASE_URL" in release_profile_content
@@ -1469,7 +1589,6 @@ def test_generated_initial_preview_validation_runs_all_flutter_checks(
     assert "skipped_with_reason" not in statuses.values()
     assert _git(["status", "--porcelain"], project).stdout == ""
     log = command_log.read_text(encoding="utf-8")
-    assert "backend tests" in log
     assert "flutter analyze" in log
     assert "flutter test" in log
     assert "flutter build apk" in log
@@ -2812,6 +2931,7 @@ def test_generated_flutter_mock_seed_selector_is_mock_profile_only(
     assert "bool get isMockRuntime" in session
     assert "if (widget.controller.isMockRuntime)" in screens
     assert "Enter demo as role" in screens
+    assert "withOpacity(" not in screens
 
 
 def test_generator_writes_flutter_mobile_v1_template(tmp_path: Path) -> None:

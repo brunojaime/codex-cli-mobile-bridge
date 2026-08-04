@@ -4,9 +4,20 @@ import json
 from hashlib import sha256
 from pathlib import Path
 
+import yaml
+
+from backend.app.domain.entities.project_management import (
+    PROJECT_CHARTER_BRAND_PATH,
+    PROJECT_CHARTER_METADATA_PATH,
+    PROJECT_CHARTER_SOURCE_PATH,
+)
+
 from backend.app.application.services.project_factory_generator_service import (
     ProjectFactoryGeneratedFile,
     ProjectFactoryGenerationResult,
+)
+from backend.app.application.services.project_charter_document_service import (
+    ProjectCharterDocumentService,
 )
 from backend.app.application.services.project_factory_init_service import (
     ProjectFactoryInitService,
@@ -261,19 +272,32 @@ def test_business_prompts_consume_context_pack_without_recreating_setup(
 
 
 def _write_approved_charter(workspace: Path) -> None:
-    content = "# Project Charter\n\nApproved scope.\n"
-    docs = workspace / "docs"
-    docs.mkdir(parents=True, exist_ok=True)
-    (docs / "project-charter.md").write_text(content, encoding="utf-8")
-    (docs / "project-charter.json").write_text(
-        json.dumps(
+    content = "# Acta de Proyecto\n\n## Historial de revisiones\n\nApproved scope.\n"
+    source = workspace / PROJECT_CHARTER_SOURCE_PATH
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text(content, encoding="utf-8")
+    (workspace / PROJECT_CHARTER_METADATA_PATH).write_text(
+        yaml.safe_dump(
             {
-                "status": "approved",
-                "digest": sha256(content.encode("utf-8")).hexdigest(),
-            }
+                "standard": "project-charter/v1",
+                "document": {
+                    "title": "Acta de Proyecto",
+                    "source_path": PROJECT_CHARTER_SOURCE_PATH,
+                },
+                "project": {"name": "Clinica Norte"},
+                "status": "draft",
+                "versions": {"draft": "v0.1", "delivered": None},
+                "hashes": {"source": sha256(content.encode("utf-8")).hexdigest()},
+            },
+            sort_keys=False,
         ),
         encoding="utf-8",
     )
+    (workspace / PROJECT_CHARTER_BRAND_PATH).write_text(
+        "logo_status: not_required\nlogo_source: none\n",
+        encoding="utf-8",
+    )
+    ProjectCharterDocumentService(workspace_root=workspace).refresh_render()
 
 
 def _service(

@@ -6,7 +6,6 @@ import shlex
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from hashlib import sha256
 from pathlib import Path
 from typing import Protocol
 
@@ -20,6 +19,10 @@ from backend.app.application.services.project_factory_manifest_service import (
 from backend.app.application.services.project_factory_reference_asset_service import (
     ProjectFactoryReferenceAsset,
 )
+from backend.app.application.services.project_charter_document_service import (
+    ProjectCharterDocumentService,
+)
+from backend.app.domain.entities.project_management import PROJECT_CHARTER_SOURCE_PATH
 
 
 ALLOWED_ENV_KEYS = frozenset(
@@ -260,7 +263,7 @@ class ProjectFactoryJobRunner:
         )
 
         try:
-            _require_approved_project_charter(project_path)
+            _require_valid_project_charter(project_path)
         except ProjectFactoryJobRunnerBlockedError as exc:
             event_sink(
                 _event(
@@ -1338,28 +1341,18 @@ def _require_ux_brief(project_path: Path) -> None:
         )
 
 
-def _require_approved_project_charter(project_path: Path) -> None:
+def _require_valid_project_charter(project_path: Path) -> None:
     init_result_path = project_path / ".codex" / "factory" / "init-result.json"
     if not init_result_path.is_file():
         return
-    charter_path = project_path / "docs" / "project-charter.md"
-    metadata_path = project_path / "docs" / "project-charter.json"
-    try:
-        content = charter_path.read_text(encoding="utf-8")
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, OSError, json.JSONDecodeError) as exc:
+    validation = ProjectCharterDocumentService(
+        workspace_root=project_path
+    ).validate(client_export=False)
+    if not validation.ok:
+        blocking_codes = ", ".join(issue.code for issue in validation.blocking_issues)
         raise ProjectFactoryJobRunnerBlockedError(
-            "Full generation requires an approved Project Charter from New Project."
-        ) from exc
-    digest = sha256(content.encode("utf-8")).hexdigest()
-    if (
-        not content.strip()
-        or not isinstance(metadata, dict)
-        or metadata.get("status") != "approved"
-        or metadata.get("digest") != digest
-    ):
-        raise ProjectFactoryJobRunnerBlockedError(
-            "Full generation requires a valid approved Project Charter."
+            "Full generation requires a valid Project Charter draft from New "
+            f"Project. Blocking validation: {blocking_codes or 'unknown'}."
         )
 
 
@@ -1436,8 +1429,11 @@ def _project_factory_init_context_section(project_path: Path) -> str:
 
 Business generator/reviewer rules:
 - Consume the initialized baseline from the context pack before making changes.
-- Read `docs/project-charter.md` first and keep implementation, SDD, tests, and
-  release evidence traceable to the approved charter.
+- Read `{PROJECT_CHARTER_SOURCE_PATH}` first. Keep the working Acta aligned with
+  requirements discovered during UX, generation, and review, and preserve
+  unresolved facts under `Definiciones pendientes`.
+- Do not mark the Acta as client-delivered or create a v1.0 release unless the
+  user explicitly requests delivery.
 - Do not recreate GitHub, Cloudflare Worker/route/D1, Android prerelease,
   Bridge installable, feedback, updater, or Workbench plumbing manually.
 - Keep preview runtime real; do not switch to mock/demo/local/placeholder URLs

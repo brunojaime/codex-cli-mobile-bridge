@@ -1090,9 +1090,14 @@ class ProjectFactoryService:
             project_assets=tuple(asset.to_manifest_item() for asset in project_assets),
             guided_intake_enabled=draft.request.guided_intake_enabled,
         )
-        return self._manifest_service.plan_manifest(
+        manifest_plan = self._manifest_service.plan_manifest(
             request,
             allow_existing=allow_existing,
+        )
+        return _manifest_plan_with_charter_seed(
+            manifest_plan,
+            request=request,
+            guided_intake=draft.guided_intake,
         )
 
     def _refresh_guided_intake(
@@ -1906,6 +1911,7 @@ def _draft_storage_payload(draft: ProjectFactoryDraft) -> dict[str, object]:
             "visual_reference_assets": [
                 dict(item) for item in draft.request.visual_reference_assets
             ],
+            "project_assets": [dict(item) for item in draft.request.project_assets],
             "guided_intake_enabled": draft.request.guided_intake_enabled,
         },
         "manifest_plan": draft.manifest_plan.to_payload(),
@@ -2009,8 +2015,56 @@ def _request_from_payload(payload: dict[str, object]) -> ProjectFactoryManifestI
             for item in payload.get("visual_reference_assets", [])
             if isinstance(item, dict)
         ),
+        project_assets=tuple(
+            dict(item)
+            for item in payload.get("project_assets", [])
+            if isinstance(item, dict)
+        ),
         guided_intake_enabled=bool(payload.get("guided_intake_enabled") or False),
     )
+
+
+def _manifest_plan_with_charter_seed(
+    manifest_plan: ProjectFactoryManifestPlan,
+    *,
+    request: ProjectFactoryManifestInput,
+    guided_intake: ProjectFactoryGuidedIntake,
+) -> ProjectFactoryManifestPlan:
+    if not manifest_plan.ok:
+        return manifest_plan
+    manifest = dict(manifest_plan.manifest)
+    project_management = dict(manifest.get("project_management") or {})
+    charter_seed: dict[str, object] = {
+        "source": "project_factory_draft",
+        "project_name": request.name,
+        "business_type": request.business_type,
+        "project_objective": request.primary_goal,
+        "logo_mode": request.logo_mode,
+        "confirmed_guided_intake": False,
+    }
+    if guided_intake.enabled and guided_intake.status in {
+        "confirmed",
+        "build_started",
+    }:
+        preview = dict(guided_intake.contract_preview or {})
+        decisions = (
+            dict(preview.get("decisions"))
+            if isinstance(preview.get("decisions"), dict)
+            else {}
+        )
+        charter_seed.update(
+            {
+                "source": "confirmed_guided_intake_contract",
+                "confirmed_guided_intake": True,
+                "decisions": decisions,
+                "missing_definitions": [
+                    dict(item) for item in guided_intake.missing_fields
+                ],
+            }
+        )
+    project_management["charter_seed"] = charter_seed
+    manifest["project_management"] = project_management
+    return replace(manifest_plan, manifest=manifest)
 
 
 def _guided_intake_from_payload(

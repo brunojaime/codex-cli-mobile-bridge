@@ -93,7 +93,10 @@ def test_sdd_project_exposes_charter_and_missing_share_is_404(
     assert missing.status_code == 404
     assert missing.json()["detail"]["code"] == "project_charter_missing"
     snapshot = client.get("/sdd/project", params={"workspace_path": str(project)})
-    assert "docs/project-charter.md" in snapshot.json()["missing_required"]
+    assert (
+        "docs/project-management/acta/current/acta.md"
+        in snapshot.json()["missing_required"]
+    )
 
 
 def test_sdd_project_returns_explicit_spec_plan_task_tree(tmp_path: Path) -> None:

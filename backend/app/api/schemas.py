@@ -1893,6 +1893,97 @@ class SddDoctorResponse(BaseModel):
     index_status: dict[str, Any] | None = None
 
 
+class ProjectDocumentWorkspaceRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    workspace_path: str | None = Field(default=None, alias="workspacePath")
+    draft_id: str | None = Field(default=None, alias="draftId")
+    job_id: str | None = Field(default=None, alias="jobId")
+
+
+class ProjectDocumentCharterValidationRequest(ProjectDocumentWorkspaceRequest):
+    client_export: bool = Field(default=True, alias="clientExport")
+
+
+class ProjectDocumentCharterRenderRequest(ProjectDocumentWorkspaceRequest):
+    pass
+
+
+class ProjectDocumentCharterReleaseRequest(ProjectDocumentWorkspaceRequest):
+    version: str = Field(..., min_length=1, max_length=32)
+    changed_fields: list[str] = Field(default_factory=list, alias="changedFields")
+    changelog_entry: str | None = Field(
+        default=None,
+        alias="changelogEntry",
+        max_length=10000,
+    )
+    client_export: bool = Field(default=True, alias="clientExport")
+
+
+class ProjectDocumentsResponse(BaseModel):
+    kind: str = "codex.projectDocuments"
+    version: int = 1
+    workspace_path: str
+    workspace_name: str
+    standard: str
+    root: str
+    source: str
+    evidence: dict[str, Any] = Field(default_factory=dict)
+    modules: list[dict[str, Any]] = Field(default_factory=list)
+    charter: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectDocumentCharterResponse(BaseModel):
+    kind: str = "codex.projectDocumentCharter"
+    version: int = 1
+    workspace_path: str
+    workspace_name: str
+    standard: str
+    source: str
+    evidence: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    brand: dict[str, Any] = Field(default_factory=dict)
+    source_summary: dict[str, Any] = Field(default_factory=dict)
+    render: dict[str, Any] = Field(default_factory=dict)
+    render_manifest: dict[str, Any] = Field(default_factory=dict)
+    validation: dict[str, Any] = Field(default_factory=dict)
+    latest_release: str | None = None
+
+
+class ProjectDocumentCharterValidationResponse(BaseModel):
+    kind: str = "codex.projectDocumentCharterValidation"
+    version: int = 1
+    workspace_path: str
+    validation: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectDocumentCharterRenderResponse(BaseModel):
+    kind: str = "codex.projectDocumentCharterRender"
+    version: int = 1
+    workspace_path: str
+    render: dict[str, Any] = Field(default_factory=dict)
+    render_manifest: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectDocumentCharterReleaseResponse(BaseModel):
+    kind: str = "codex.projectDocumentCharterRelease"
+    version: int = 1
+    workspace_path: str
+    ok: bool | None = None
+    release_version: str | None = None
+    release_path: str | None = None
+    recommended_impact: str | None = None
+    validation: dict[str, Any] = Field(default_factory=dict)
+    release: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectDocumentCharterReleasesResponse(BaseModel):
+    kind: str = "codex.projectDocumentCharterReleases"
+    version: int = 1
+    workspace_path: str
+    releases: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class SddWorkbenchCheckResponse(BaseModel):
     name: str
     status: str
@@ -2012,6 +2103,7 @@ class SddWorkbenchViewResponse(BaseModel):
         default_factory=list,
     )
     preview_readiness: dict[str, Any] = Field(default_factory=dict)
+    documents: dict[str, Any] = Field(default_factory=dict)
 
 
 class SddWorkbenchKanbanResponse(BaseModel):

@@ -462,8 +462,10 @@ def test_domain_factory_blocks_each_missing_critical_baseline_file(
         ".codex/factory/llm-start-context.md": "missing_llm_start_context",
         "release/preview-runtime.json": "missing_preview_runtime",
         ".codex/project.yaml": "missing_project_manifest",
-        "docs/project-charter.md": "missing_project_charter",
-        "docs/project-charter.json": "missing_project_charter_metadata",
+        "docs/project-management/acta/current/acta.md": "missing_project_charter",
+        "docs/project-management/acta/current/metadata.yaml": (
+            "missing_project_charter_metadata"
+        ),
     }
     for relative_path, expected_code in expected_codes.items():
         workspace = _baseline_workspace(tmp_path / relative_path.replace("/", "_"))
@@ -951,7 +953,7 @@ def _baseline_workspace(tmp_path: Path) -> Path:
     (workspace / ".codex/factory").mkdir(parents=True)
     (workspace / ".codex").mkdir(exist_ok=True)
     (workspace / "release").mkdir()
-    (workspace / "docs").mkdir()
+    (workspace / "docs/project-management/acta/current").mkdir(parents=True)
     (workspace / "specs/001-baseline").mkdir(parents=True)
     (workspace / "codex-bridge.yaml").write_text(
         "source_app: clinica-norte\ndisplay_name: Clinica Norte\n",
@@ -961,12 +963,12 @@ def _baseline_workspace(tmp_path: Path) -> Path:
         "source_app: clinica-norte\nname: Clinica Norte\n",
         encoding="utf-8",
     )
-    (workspace / "docs/project-charter.md").write_text(
-        "# Project Charter\n\nApproved project scope.\n",
+    (workspace / "docs/project-management/acta/current/acta.md").write_text(
+        "# Acta de Proyecto\n\n## Historial de revisiones\n\nApproved project scope.\n",
         encoding="utf-8",
     )
-    (workspace / "docs/project-charter.json").write_text(
-        json.dumps({"status": "approved", "version": "1.0"}),
+    (workspace / "docs/project-management/acta/current/metadata.yaml").write_text(
+        "standard: project-charter/v1\nstatus: draft\nversions:\n  draft: v0.1\n",
         encoding="utf-8",
     )
     (workspace / "release/preview-runtime.json").write_text(

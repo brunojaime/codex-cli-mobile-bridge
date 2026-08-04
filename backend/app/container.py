@@ -26,6 +26,9 @@ from backend.app.application.services.project_charter_service import (
 from backend.app.application.services.project_factory_init_service import (
     ProjectFactoryInitService,
 )
+from backend.app.application.services.project_document_discovery_service import (
+    ProjectDocumentDiscoveryService,
+)
 from backend.app.application.services.web_preview_deploy_service import (
     WebPreviewDeployService,
 )
@@ -95,6 +98,7 @@ class AppContainer:
     sdd_workbench_view_service: SddWorkbenchViewService
     sdd_workbench_kanban_service: SddWorkbenchKanbanService
     sdd_codex_job_service: SddCodexJobService
+    project_document_discovery_service: ProjectDocumentDiscoveryService
     project_factory_service: ProjectFactoryService
     project_factory_init_service: ProjectFactoryInitService
     project_charter_service: ProjectCharterService
@@ -161,7 +165,6 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         workspace_aliases=resolved_settings.feedback_source_workspace_alias_map,
         file_max_bytes=resolved_settings.sdd_file_max_bytes,
     )
-    sdd_workbench_view_service = SddWorkbenchViewService()
     sdd_codex_job_service = SddCodexJobService(
         projects_root=resolved_settings.projects_root,
         workspace_aliases=resolved_settings.feedback_source_workspace_alias_map,
@@ -206,7 +209,16 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         command_timeout_seconds=resolved_settings.project_factory_step_timeout_seconds,
         settings=resolved_settings,
         chat_repository=repository,
-        project_charter_service=project_charter_service,
+        asset_depot_service=asset_depot_service,
+    )
+    project_document_discovery_service = ProjectDocumentDiscoveryService(
+        projects_root=resolved_settings.projects_root,
+        workspace_aliases=resolved_settings.feedback_source_workspace_alias_map,
+        project_factory_service=project_factory_service,
+        project_factory_init_service=project_factory_init_service,
+    )
+    sdd_workbench_view_service = SddWorkbenchViewService(
+        project_document_service=project_document_discovery_service,
     )
     sdd_workbench_kanban_service = SddWorkbenchKanbanService(
         projects_root=resolved_settings.projects_root,
@@ -274,6 +286,7 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         sdd_workbench_view_service=sdd_workbench_view_service,
         sdd_workbench_kanban_service=sdd_workbench_kanban_service,
         sdd_codex_job_service=sdd_codex_job_service,
+        project_document_discovery_service=project_document_discovery_service,
         project_factory_service=project_factory_service,
         project_factory_init_service=project_factory_init_service,
         project_charter_service=project_charter_service,
