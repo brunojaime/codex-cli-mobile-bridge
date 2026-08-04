@@ -6358,6 +6358,12 @@ async def start_domain_factory_mode(
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    await _start_domain_factory_implementation_run(
+        session_id=session_id,
+        service=service,
+        container=container,
+    )
+
     messages = service.list_messages(session_id)
     payload_data = result.to_payload()
     return DomainFactoryStartResponse(
@@ -6433,6 +6439,12 @@ async def confirm_domain_factory_implementation(
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    await _start_domain_factory_implementation_run(
+        session_id=session_id,
+        service=service,
+        container=container,
+    )
+
     messages = service.list_messages(session_id)
     return DomainFactoryImplementationResponse(
         **result.to_payload(),
@@ -6446,6 +6458,44 @@ async def confirm_domain_factory_implementation(
             ),
         ),
     )
+
+
+async def _start_domain_factory_implementation_run(
+    *,
+    session_id: str,
+    service: MessageService,
+    container: AppContainer,
+) -> None:
+    claimed = await run_in_threadpool(
+        container.domain_factory_service.claim_implementation_run,
+        session_id=session_id,
+    )
+    if not claimed:
+        return
+    try:
+        job = await run_in_threadpool(
+            service.submit_message,
+            (
+                "Ejecuta ahora la implementacion completa del contrato de dominio "
+                "aprobado. Corre el workflow emparejado de Domain Generator y "
+                "Domain Reviewer, continua con el pulido UX final, valida datos "
+                "reales y persistentes, actualiza SDD y Acta, y prepara una nueva "
+                "release preview/APK sin sobrescribir el build inicial. No te "
+                "detengas en la configuracion del modo: implementa el producto."
+            ),
+            session_id=session_id,
+        )
+        await run_in_threadpool(
+            container.domain_factory_service.record_implementation_run_job,
+            session_id=session_id,
+            job_id=job.id,
+        )
+    except Exception:
+        await run_in_threadpool(
+            container.domain_factory_service.release_implementation_run_claim,
+            session_id=session_id,
+        )
+        raise
 
 
 @router.get(

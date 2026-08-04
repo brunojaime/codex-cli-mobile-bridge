@@ -714,6 +714,20 @@ def test_domain_factory_confirm_implementation_writes_paired_workflow_evidence(
     assert configuration.agents[AgentId.UX].enabled is False
     assert configuration.preset.value == "review"
 
+    assert service.claim_implementation_run(session_id=session.id) is True
+    assert service.claim_implementation_run(session_id=session.id) is False
+    service.record_implementation_run_job(
+        session_id=session.id,
+        job_id="domain-job-1",
+    )
+    state = json.loads(
+        (workspace / ".codex/factory/domain-factory-state.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert state["implementationRunStatus"] == "running"
+    assert state["implementationRunJobId"] == "domain-job-1"
+
 
 def test_domain_factory_completion_evidence_blocks_until_required_files_exist(
     tmp_path: Path,

@@ -827,6 +827,59 @@ class DomainFactoryService:
             message_id=message_id,
         )
 
+    def claim_implementation_run(self, *, session_id: str) -> bool:
+        """Atomically claim the single automatic implementation run."""
+
+        context = self.build_context(session_id=session_id)
+        if context.blockers:
+            return False
+        state = self._read_state(context)
+        if state.get("modeStatus") != "implementing":
+            return False
+        run_status = str(state.get("implementationRunStatus") or "")
+        if run_status in {"requested", "running", "completed"}:
+            return False
+        state.update(
+            {
+                "implementationRunStatus": "requested",
+                "implementationRunRequestedAt": _now_iso(),
+                "updatedAt": _now_iso(),
+            }
+        )
+        self._write_state_payload(context, state)
+        return True
+
+    def record_implementation_run_job(
+        self,
+        *,
+        session_id: str,
+        job_id: str,
+    ) -> None:
+        context = self.build_context(session_id=session_id)
+        state = self._read_state(context)
+        state.update(
+            {
+                "implementationRunStatus": "running",
+                "implementationRunJobId": job_id,
+                "implementationRunStartedAt": _now_iso(),
+                "updatedAt": _now_iso(),
+            }
+        )
+        self._write_state_payload(context, state)
+
+    def release_implementation_run_claim(self, *, session_id: str) -> None:
+        context = self.build_context(session_id=session_id)
+        state = self._read_state(context)
+        if state.get("implementationRunStatus") != "requested":
+            return
+        state.update(
+            {
+                "implementationRunStatus": "start_failed",
+                "updatedAt": _now_iso(),
+            }
+        )
+        self._write_state_payload(context, state)
+
     def validate_completion_evidence(self, *, session_id: str) -> dict[str, Any]:
         context = self.build_context(session_id=session_id)
         spec_root = self._require_state_spec_root(context)
