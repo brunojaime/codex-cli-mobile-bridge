@@ -226,13 +226,18 @@ def test_init_service_run_pipeline_generates_workspace_ux_and_blocked_context(
     ]
     assert len(ux_commands) == 4
     assert all(len(command[-1]) < 500 for command in ux_commands)
-    assert all("Read and follow the full automatic UX prompt" in command[-1] for command in ux_commands)
-    assert all("Automatic New Project UX Generator" not in command[-1] for command in ux_commands)
-    assert (
-        workspace / ".codex/ux/evidence-index.json"
-    ).is_file()
+    assert all(
+        "Read and follow the full automatic UX prompt" in command[-1]
+        for command in ux_commands
+    )
+    assert all(
+        "Automatic New Project UX Generator" not in command[-1]
+        for command in ux_commands
+    )
+    assert (workspace / ".codex/ux/evidence-index.json").is_file()
     ux_messages = [
-        message for message in repository.list_messages("chat-1")
+        message
+        for message in repository.list_messages("chat-1")
         if message.agent_label in {"UX Generator", "UX Reviewer"}
     ]
     assert [message.agent_label for message in ux_messages] == [
@@ -248,7 +253,9 @@ def test_init_service_run_pipeline_generates_workspace_ux_and_blocked_context(
     assert all(".codex/ux/" in message.content for message in ux_messages)
     assert all("Status:" not in message.content for message in ux_messages)
     assert all("Evidence:" not in message.content for message in ux_messages)
-    assert all(".codex/factory/prompts/" not in message.content for message in ux_messages)
+    assert all(
+        ".codex/factory/prompts/" not in message.content for message in ux_messages
+    )
     assert (
         completed.phase(ProjectFactoryInitPhaseName.LOCAL_GIT_COMMIT).status
         == ProjectFactoryInitPhaseStatus.COMPLETED
@@ -266,9 +273,53 @@ def test_init_service_run_pipeline_generates_workspace_ux_and_blocked_context(
         == ProjectFactoryInitCompletionState.BLOCKED_WITH_CONTEXT
     )
     phase_names = [phase.name for phase in completed.phases]
-    assert phase_names.index(ProjectFactoryInitPhaseName.UX_REVIEWER) < phase_names.index(
-        ProjectFactoryInitPhaseName.LOCAL_VALIDATION
+    assert phase_names.index(
+        ProjectFactoryInitPhaseName.UX_REVIEWER
+    ) < phase_names.index(ProjectFactoryInitPhaseName.LOCAL_VALIDATION)
+
+
+def test_init_service_repairs_post_ux_validation_before_release(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    command_runner = _FakeInitCommandRunner(validation_failures_before_success=1)
+    monkeypatch.setenv(
+        "VISUAL_UX_POLISH_SKILL_PATH",
+        str(_visual_ux_skill_fixture(tmp_path)),
     )
+    service = ProjectFactoryInitService(
+        state_root=tmp_path / ".state",
+        command_runner=command_runner,
+        settings=Settings(
+            projects_root=str(tmp_path),
+            project_factory_state_dir=str(tmp_path / ".state"),
+            chat_store_backend="memory",
+            audio_transcription_backend="disabled",
+            speech_synthesis_backend="disabled",
+            codex_command="fake-codex",
+        ),
+    )
+    job = service.start_or_resume(
+        draft_id="draft-validation-repair",
+        project_name="Clinica Norte",
+        slug="clinica-norte",
+        frontend_strategy="flutter",
+    )
+
+    waiting = service.run_pipeline(job.id)
+    _write_domain_brief(tmp_path / "clinica-norte")
+    completed = service.run_pipeline(waiting.id)
+
+    validation = completed.phase(ProjectFactoryInitPhaseName.LOCAL_VALIDATION)
+    assert validation.status == ProjectFactoryInitPhaseStatus.COMPLETED
+    assert "after 1 automatic repair attempt" in validation.message
+    assert command_runner.validation_calls == 2
+    assert command_runner.validation_repair_calls == 1
+    prompt = (
+        tmp_path / "clinica-norte/.codex/factory/prompts/local-validation-repair-1.md"
+    ).read_text(encoding="utf-8")
+    assert "flutter analyze found generated warnings" in prompt
+    assert "Do not enable mock/demo/local mode" in prompt
 
 
 def test_automatic_ux_messages_are_visible_while_agent_runs(
@@ -367,8 +418,7 @@ def test_automatic_ux_chat_content_uses_agent_reply_not_technical_report(
         "BEGIN_AUTOMATIC_UX_CHAT_RESPONSE\n"
         "Ajuste la direccion visual inicial para una clinica: navegacion clara, "
         "jerarquia de turnos y una marca simple lista para revisar.\n"
-        "END_AUTOMATIC_UX_CHAT_RESPONSE\n"
-        + ("full report detail\n" * 10_000),
+        "END_AUTOMATIC_UX_CHAT_RESPONSE\n" + ("full report detail\n" * 10_000),
         encoding="utf-8",
     )
     result = ProjectFactoryInitCommandResult(
@@ -491,8 +541,7 @@ def test_init_service_waits_for_domain_brief_before_automatic_ux(
         == ProjectFactoryInitPhaseStatus.QUEUED_WAITING_FOR_DOMAIN_BRIEF
     )
     assert (
-        reviewer.status
-        == ProjectFactoryInitPhaseStatus.QUEUED_WAITING_FOR_DOMAIN_BRIEF
+        reviewer.status == ProjectFactoryInitPhaseStatus.QUEUED_WAITING_FOR_DOMAIN_BRIEF
     )
     assert "queued_waiting_for_domain_brief" in generator.message
     assert command_runner.ux_generator_calls == 0
@@ -504,8 +553,7 @@ def test_init_service_waits_for_domain_brief_before_automatic_ux(
     guidance_messages = [
         message
         for message in repository.list_messages("chat-1")
-        if message.dedupe_key
-        == f"project-factory-init-domain-brief-guide:{job.id}"
+        if message.dedupe_key == f"project-factory-init-domain-brief-guide:{job.id}"
     ]
     assert len(guidance_messages) == 1
     guidance = guidance_messages[0]
@@ -526,8 +574,7 @@ def test_init_service_waits_for_domain_brief_before_automatic_ux(
     guidance_messages = [
         message
         for message in repository.list_messages("chat-1")
-        if message.dedupe_key
-        == f"project-factory-init-domain-brief-guide:{job.id}"
+        if message.dedupe_key == f"project-factory-init-domain-brief-guide:{job.id}"
     ]
     assert len(guidance_messages) == 1
 
@@ -656,9 +703,7 @@ def test_init_service_uses_approved_project_factory_chat_as_ux_domain_brief(
         completed.phase(ProjectFactoryInitPhaseName.UX_REVIEWER).status
         == ProjectFactoryInitPhaseStatus.COMPLETED
     )
-    domain_brief = (workspace / ".codex/ux/domain-brief.md").read_text(
-        encoding="utf-8"
-    )
+    domain_brief = (workspace / ".codex/ux/domain-brief.md").read_text(encoding="utf-8")
     assert "Approved Project Factory Domain Brief" in domain_brief
     assert "proyecto es del puerto" in domain_brief
     assert "Contrato Aprobado: prueba-22" in domain_brief
@@ -751,9 +796,7 @@ def test_init_service_automatic_ux_blocks_sandbox_text_even_with_zero_exit(
     assert generator.status == ProjectFactoryInitPhaseStatus.BLOCKED
     assert generator.blockers[0].code == "automatic_ux_generator_failed"
     assert "bwrap: loopback" in generator.blockers[0].message
-    fallback_report = (
-        tmp_path / "clinica-norte" / ".codex/ux/ux-generator-report.md"
-    )
+    fallback_report = tmp_path / "clinica-norte" / ".codex/ux/ux-generator-report.md"
     assert fallback_report.is_file()
     assert "bwrap: loopback" in fallback_report.read_text(encoding="utf-8")
     assert command_runner.ux_generator_calls == 1
@@ -1095,10 +1138,10 @@ def _write_domain_brief(workspace: Path) -> Path:
     state_path = workspace / ".codex/factory/domain-factory-state.json"
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(
-        '{\n'
+        "{\n"
         '  "modeStatus": "implementation_ready",\n'
         '  "briefPath": "specs/019-domain-factory/intake/original-brief.md"\n'
-        '}\n',
+        "}\n",
         encoding="utf-8",
     )
     return brief_path
@@ -1124,9 +1167,7 @@ def _save_chat_message(
             ),
             agent_id=agent_id,
             agent_type=(
-                AgentType.HUMAN
-                if agent_id == AgentId.USER
-                else AgentType.GENERATOR
+                AgentType.HUMAN if agent_id == AgentId.USER else AgentType.GENERATOR
             ),
             agent_label=None if agent_id == AgentId.USER else "Project Factory",
             content=content,
@@ -1143,13 +1184,17 @@ class _FakeInitCommandRunner:
         fail_ux_reviewer: bool = False,
         sandbox_blocked_ux: bool = False,
         on_ux_run: Callable[[str, int, Path], None] | None = None,
+        validation_failures_before_success: int = 0,
     ) -> None:
         self.ux_complete_after = ux_complete_after
         self.fail_ux_reviewer = fail_ux_reviewer
         self.sandbox_blocked_ux = sandbox_blocked_ux
         self.on_ux_run = on_ux_run
+        self.validation_failures_before_success = validation_failures_before_success
         self.ux_generator_calls = 0
         self.ux_reviewer_calls = 0
+        self.validation_calls = 0
+        self.validation_repair_calls = 0
         self.commands: list[tuple[str, ...]] = []
         self.timeouts: list[float] = []
 
@@ -1171,6 +1216,32 @@ class _FakeInitCommandRunner:
             prompt_path = cwd_path / relative
             if prompt_path.exists():
                 prompt = prompt_path.read_text(encoding="utf-8")
+        if argv == ("bash", "scripts/validate_generated_project.sh"):
+            self.validation_calls += 1
+            if self.validation_calls <= self.validation_failures_before_success:
+                return ProjectFactoryInitCommandResult(
+                    argv=argv,
+                    cwd=str(cwd_path),
+                    exit_code=1,
+                    stderr="flutter analyze found generated warnings",
+                    env=env,
+                )
+            return ProjectFactoryInitCommandResult(
+                argv=argv,
+                cwd=str(cwd_path),
+                exit_code=0,
+                stdout="generated project validation passed",
+                env=env,
+            )
+        if "Project Factory Post-UX Validation Repair" in prompt:
+            self.validation_repair_calls += 1
+            return ProjectFactoryInitCommandResult(
+                argv=argv,
+                cwd=str(cwd_path),
+                exit_code=0,
+                stdout="validation repaired",
+                env=env,
+            )
         if "Automatic New Project UX Generator" in prompt:
             self.ux_generator_calls += 1
             if self.on_ux_run is not None:
@@ -1227,8 +1298,7 @@ class _FakeInitCommandRunner:
             ux_dir = cwd_path / ".codex/ux"
             ux_dir.mkdir(parents=True, exist_ok=True)
             (ux_dir / "ux-reviewer-report.md").write_text(
-                "# UX reviewer report\n\n"
-                + f"status: {status}\nrelease_gate: pass\n",
+                "# UX reviewer report\n\n" + f"status: {status}\nrelease_gate: pass\n",
                 encoding="utf-8",
             )
             return ProjectFactoryInitCommandResult(

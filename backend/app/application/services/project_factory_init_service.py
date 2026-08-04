@@ -128,6 +128,8 @@ _PREVIEW_SMOKE_PHASE = ProjectFactoryInitPhaseName.PREVIEW_SMOKE
 _FRONTEND_BASELINE_PHASE = ProjectFactoryInitPhaseName.FLUTTER_OR_STRATEGY_BASELINE
 _AUTOMATIC_UX_COMMAND_TIMEOUT_SECONDS = 1200.0
 _AUTOMATIC_UX_SKILL_CONTEXT_MAX_CHARS = 6000
+_LOCAL_VALIDATION_REPAIR_ATTEMPTS = 3
+_LOCAL_VALIDATION_REPAIR_TIMEOUT_SECONDS = 1200.0
 _AUTOMATIC_UX_CHAT_RESPONSE_START = "BEGIN_AUTOMATIC_UX_CHAT_RESPONSE"
 _AUTOMATIC_UX_CHAT_RESPONSE_END = "END_AUTOMATIC_UX_CHAT_RESPONSE"
 
@@ -374,11 +376,8 @@ class ProjectFactoryInitService:
             if _has_waiting_phase(job):
                 return job
             if not _has_blocking_phase(job):
-                job = self.complete_phase(
-                    job.id,
-                    ProjectFactoryInitPhaseName.LOCAL_VALIDATION.value,
-                    message="Generated baseline contracts verified locally.",
-                )
+                job = self.run_local_validation_phase(job.id)
+            if not _has_blocking_phase(job):
                 job = self._run_local_git_commit_phase(job.id)
             if not _has_blocking_phase(job):
                 job = self.run_github_repository_phase(job.id)
@@ -682,6 +681,126 @@ class ProjectFactoryInitService:
                 artifacts=artifacts,
                 command_evidence=tuple(reviewer_evidence),
             )
+
+    def run_local_validation_phase(
+        self,
+        init_job_id: str,
+        *,
+        project_path: str | Path | None = None,
+    ) -> ProjectFactoryInitJob:
+        """Validate post-UX output and automatically repair generated regressions."""
+
+        with self._lock:
+            job = self._require_job(init_job_id)
+            phase = job.phase(ProjectFactoryInitPhaseName.LOCAL_VALIDATION)
+            if phase.status == ProjectFactoryInitPhaseStatus.COMPLETED:
+                return job
+            target = self._frontend_target_path(job, project_path)
+            validator = target / "scripts" / "validate_generated_project.sh"
+            if not validator.is_file():
+                return self.block_phase(
+                    job.id,
+                    ProjectFactoryInitPhaseName.LOCAL_VALIDATION.value,
+                    blocker=_local_validation_blocker(
+                        message="Generated project validation script is missing.",
+                        detail=str(validator),
+                    ),
+                    context_available=True,
+                )
+
+            job = self.begin_phase(
+                job.id,
+                ProjectFactoryInitPhaseName.LOCAL_VALIDATION.value,
+                message="Validating generated output after the automatic UX lane.",
+            )
+            evidence: list[ProjectFactoryInitCommandEvidence] = []
+            codex_command = self._settings.codex_command if self._settings else "codex"
+            codex_exec_args = self._settings.codex_exec_args if self._settings else None
+            prompt_root = target / ".codex" / "factory" / "prompts"
+            prompt_root.mkdir(parents=True, exist_ok=True)
+
+            for attempt in range(_LOCAL_VALIDATION_REPAIR_ATTEMPTS + 1):
+                validation = self._run(
+                    ("bash", "scripts/validate_generated_project.sh"),
+                    cwd=target,
+                )
+                evidence.append(self._evidence(validation))
+                if validation.exit_code == 0:
+                    return self.complete_phase(
+                        job.id,
+                        ProjectFactoryInitPhaseName.LOCAL_VALIDATION.value,
+                        message=(
+                            "Generated output passed post-UX local validation"
+                            + (
+                                f" after {attempt} automatic repair attempt(s)."
+                                if attempt
+                                else "."
+                            )
+                        ),
+                        command_evidence=tuple(evidence),
+                    )
+
+                if attempt >= _LOCAL_VALIDATION_REPAIR_ATTEMPTS:
+                    return self.block_phase(
+                        job.id,
+                        ProjectFactoryInitPhaseName.LOCAL_VALIDATION.value,
+                        blocker=_local_validation_blocker(
+                            message=(
+                                "Generated output still fails validation after "
+                                f"{_LOCAL_VALIDATION_REPAIR_ATTEMPTS} automatic repair attempt(s)."
+                            ),
+                            detail=_validation_failure_excerpt(validation),
+                        ),
+                        context_available=True,
+                        command_evidence=tuple(evidence),
+                    )
+
+                repair_number = attempt + 1
+                prompt_path = (
+                    prompt_root / f"local-validation-repair-{repair_number}.md"
+                )
+                report_path = (
+                    target
+                    / ".codex"
+                    / "factory"
+                    / f"local-validation-repair-{repair_number}-report.md"
+                )
+                prompt_path.write_text(
+                    _local_validation_repair_prompt(
+                        job=job,
+                        target=target,
+                        validation=validation,
+                        attempt=repair_number,
+                    ),
+                    encoding="utf-8",
+                )
+                repair = self._run(
+                    _codex_argv_with_output_report(
+                        codex_command,
+                        _local_validation_prompt_file_instruction(
+                            prompt_path,
+                            cwd=target,
+                        ),
+                        report_path=report_path,
+                        exec_args=codex_exec_args,
+                    ),
+                    cwd=target,
+                    timeout_seconds=_LOCAL_VALIDATION_REPAIR_TIMEOUT_SECONDS,
+                )
+                evidence.append(self._evidence(repair))
+                if repair.exit_code != 0:
+                    return self.block_phase(
+                        job.id,
+                        ProjectFactoryInitPhaseName.LOCAL_VALIDATION.value,
+                        blocker=_local_validation_blocker(
+                            message="Automatic generated-output repair failed to run.",
+                            detail=_validation_failure_excerpt(repair),
+                        ),
+                        context_available=True,
+                        command_evidence=tuple(evidence),
+                    )
+
+            return job
 
     def queue_retry(self, init_job_id: str) -> ProjectFactoryInitJob:
         """Prepare a blocked or failed deterministic init job for another pass."""
@@ -6091,6 +6210,85 @@ def _write_automatic_ux_domain_brief(target: Path, domain_brief: str) -> Path:
     brief_path.parent.mkdir(parents=True, exist_ok=True)
     brief_path.write_text(domain_brief.strip() + "\n", encoding="utf-8")
     return brief_path
+
+
+def _local_validation_repair_prompt(
+    *,
+    job: ProjectFactoryInitJob,
+    target: Path,
+    validation: ProjectFactoryInitCommandResult,
+    attempt: int,
+) -> str:
+    return f"""# Project Factory Post-UX Validation Repair
+
+Workspace: `{target}`
+Project: `{job.project_name}`
+Source app: `{job.slug}`
+Repair attempt: {attempt} of {_LOCAL_VALIDATION_REPAIR_ATTEMPTS}
+
+The deterministic validator failed after the automatic UX generator/reviewer
+lane. Diagnose and fix the generated project in this workspace. This is an
+implementation repair, not a new design pass.
+
+Required behavior:
+- Run `bash scripts/validate_generated_project.sh` and fix every reported issue.
+- Keep UX copy and tests synchronized when visible labels changed.
+- Keep Flutter analysis warning-free and all generated tests passing.
+- Preserve real preview configuration, Cloudflare D1 persistence, auth, RBAC,
+  Workbench, feedback, updater, SDD, and Project Charter contracts.
+- Do not enable mock/demo/local mode, publish releases, push commits, or modify
+  external infrastructure.
+- Keep changes limited to what is required for validation to pass.
+- Finish only after rerunning the validator successfully.
+
+Latest validator output:
+
+```text
+{_validation_failure_excerpt(validation, max_chars=12000)}
+```
+"""
+
+
+def _local_validation_prompt_file_instruction(prompt_path: Path, *, cwd: Path) -> str:
+    try:
+        display_path = prompt_path.relative_to(cwd)
+    except ValueError:
+        display_path = prompt_path
+    return (
+        "Read and execute the post-UX validation repair instructions from "
+        f"`{display_path}`. Work in the current workspace, fix the validation "
+        "failures, and rerun the validator before finishing."
+    )
+
+
+def _validation_failure_excerpt(
+    result: ProjectFactoryInitCommandResult,
+    *,
+    max_chars: int = 4000,
+) -> str:
+    output = "\n".join(
+        part.strip() for part in (result.stdout, result.stderr) if part.strip()
+    )
+    if not output:
+        output = f"Command exited with code {result.exit_code} without output."
+    return _markdown_excerpt(output, max_chars=max_chars)
+
+
+def _local_validation_blocker(
+    *,
+    message: str,
+    detail: str,
+) -> ProjectFactoryInitBlocker:
+    return ProjectFactoryInitBlocker(
+        code="post_ux_local_validation_failed",
+        message=f"{message} Detail: {detail}",
+        phase=ProjectFactoryInitPhaseName.LOCAL_VALIDATION,
+        next_action=(
+            "Inspect the automatic validation repair evidence, fix the remaining "
+            "generated-project issue, and rerun deterministic init."
+        ),
+        command=("bash", "scripts/validate_generated_project.sh"),
+    )
 
 
 def _markdown_excerpt(text: str, *, max_chars: int) -> str:
