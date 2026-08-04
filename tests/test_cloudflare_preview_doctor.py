@@ -9,6 +9,7 @@ from backend.app.application.services.cloudflare_preview_service import (
     CloudflarePreviewDoctorService,
     CloudflareProvisioningPlanner,
     HttpCloudflareClient,
+    project_preview_worker_name,
 )
 from backend.app.application.services.project_factory_generator_service import (
     _web_preview_manifest_payload,
@@ -174,7 +175,7 @@ def test_cloudflare_planner_can_use_generated_web_preview_manifest() -> None:
 
     resources = {(item["kind"], item.get("name")) for item in plan["resources"]}
     assert ("dns_record", "preview.nienfos.com") in resources
-    assert ("worker_script", "nienfos-preview-runtime") in resources
+    assert ("worker_script", "nienfos-preview-clinica-norte") in resources
     assert ("worker_route", "preview.nienfos.com/clinica-norte/*") in resources
     assert ("d1_database", "nienfos-preview") in resources
     assert ("pages_project", "nienfos-preview-web") in resources
@@ -182,19 +183,38 @@ def test_cloudflare_planner_can_use_generated_web_preview_manifest() -> None:
     assert plan["runtime_type"] == "cloudflare_worker_assets"
     assert plan["health_path"] == "/api/health"
     assert plan["access_mode"] == "invite_token"
-    assert plan["required_worker_secrets"] == ["WEB_PREVIEW_INVITE_SECRET"]
+    assert plan["required_worker_secrets"] == [
+        "PREVIEW_ADMIN_BOOTSTRAP_TOKEN",
+        "WEB_PREVIEW_INVITE_SECRET",
+    ]
     secret_resources = [
         item for item in plan["resources"] if item["kind"] == "worker_secret"
     ]
     assert secret_resources == [
         {
             "kind": "worker_secret",
+            "name": "PREVIEW_ADMIN_BOOTSTRAP_TOKEN",
+            "mode": "required_external",
+            "status": "operator_configured",
+        },
+        {
+            "kind": "worker_secret",
             "name": "WEB_PREVIEW_INVITE_SECRET",
             "mode": "required_external",
             "status": "operator_configured",
-        }
+        },
     ]
     assert "test-web-preview-invite-secret" not in str(plan)
+
+
+def test_project_worker_name_is_stable_and_cloudflare_safe() -> None:
+    source_app = "a" * 80
+
+    worker_name = project_preview_worker_name(source_app)
+
+    assert len(worker_name) == 63
+    assert worker_name == project_preview_worker_name(source_app)
+    assert worker_name != project_preview_worker_name("a" * 79 + "b")
 
 
 def test_http_cloudflare_client_uses_expected_paths_and_tokens(monkeypatch) -> None:
@@ -241,6 +261,12 @@ def test_http_cloudflare_client_uses_expected_paths_and_tokens(monkeypatch) -> N
         script_content="export default { fetch() { return new Response('ok'); } };",
         worker_format="module",
     )
+    client.put_worker_secret(
+        account_id="acct-1",
+        script_name="preview-worker",
+        name="PREVIEW_ADMIN_BOOTSTRAP_TOKEN",
+        text="bootstrap-secret",
+    )
     client.list_worker_routes(zone_id="zone-1", pattern="preview.nienfos.com/*")
     client.create_worker_route(
         zone_id="zone-1",
@@ -280,27 +306,36 @@ def test_http_cloudflare_client_uses_expected_paths_and_tokens(monkeypatch) -> N
     assert "Content-Type" not in calls[4]["headers"]
     assert calls[4]["files"]["metadata"][2] == "application/json"
     assert calls[4]["files"]["index.js"][2] == "application/javascript+module"
-    assert calls[5]["method"] == "GET"
+    assert calls[5]["method"] == "PUT"
     assert calls[5]["url"].endswith(
+        "/accounts/acct-1/workers/scripts/preview-worker/secrets",
+    )
+    assert calls[5]["json"] == {
+        "name": "PREVIEW_ADMIN_BOOTSTRAP_TOKEN",
+        "text": "bootstrap-secret",
+        "type": "secret_text",
+    }
+    assert calls[6]["method"] == "GET"
+    assert calls[6]["url"].endswith(
         "/zones/zone-1/workers/routes?pattern=preview.nienfos.com%2F%2A",
     )
-    assert calls[5]["headers"]["Authorization"] == "Bearer platform-token"
-    assert calls[6]["method"] == "POST"
-    assert calls[6]["url"].endswith("/zones/zone-1/workers/routes")
     assert calls[6]["headers"]["Authorization"] == "Bearer platform-token"
-    assert calls[7]["method"] == "PUT"
-    assert calls[7]["url"].endswith("/zones/zone-1/workers/routes/route-1")
+    assert calls[7]["method"] == "POST"
+    assert calls[7]["url"].endswith("/zones/zone-1/workers/routes")
     assert calls[7]["headers"]["Authorization"] == "Bearer platform-token"
-    assert calls[8]["url"].endswith("/accounts/acct-1/d1/database")
-    assert calls[9]["method"] == "POST"
+    assert calls[8]["method"] == "PUT"
+    assert calls[8]["url"].endswith("/zones/zone-1/workers/routes/route-1")
+    assert calls[8]["headers"]["Authorization"] == "Bearer platform-token"
     assert calls[9]["url"].endswith("/accounts/acct-1/d1/database")
-    assert calls[9]["json"] == {"name": "preview-d1"}
     assert calls[10]["method"] == "POST"
-    assert calls[10]["url"].endswith("/accounts/acct-1/d1/database/d1-1/query")
-    assert calls[10]["json"] == {"sql": "SELECT 1", "params": []}
-    assert calls[11]["url"].endswith("/accounts/acct-1/pages/projects/preview-pages")
-    assert calls[12]["method"] == "POST"
-    assert calls[12]["url"].endswith("/accounts/acct-1/pages/projects")
+    assert calls[10]["url"].endswith("/accounts/acct-1/d1/database")
+    assert calls[10]["json"] == {"name": "preview-d1"}
+    assert calls[11]["method"] == "POST"
+    assert calls[11]["url"].endswith("/accounts/acct-1/d1/database/d1-1/query")
+    assert calls[11]["json"] == {"sql": "SELECT 1", "params": []}
+    assert calls[12]["url"].endswith("/accounts/acct-1/pages/projects/preview-pages")
+    assert calls[13]["method"] == "POST"
+    assert calls[13]["url"].endswith("/accounts/acct-1/pages/projects")
 
 
 def _configured_settings(*, web_preview_apply_enabled: bool = True) -> Settings:

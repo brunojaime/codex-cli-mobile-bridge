@@ -293,7 +293,7 @@ def test_android_release_uses_public_bridge_url_when_transport_is_local(
     )
 
 
-def test_android_release_uses_local_bridge_url_for_generated_scripts(
+def test_android_release_uses_local_transport_for_tailscale_public_bridge(
     tmp_path: Path,
 ) -> None:
     release_tag = "android-preview-v0.1.0-build.1"

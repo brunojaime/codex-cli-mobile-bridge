@@ -82,6 +82,17 @@ finishes or reaches a user-visible blocked-with-context state:
 - Visual implementation is first-class. The agents must prioritize the real
   product look and feel, visual hierarchy, navigation, empty states, mobile
   ergonomics, and reference-image fidelity.
+- Domain Factory must not inherit deterministic scaffold navigation as product
+  direction. If the baseline exposes only a clean authenticated shell, the
+  agent must define the correct product information architecture, navigation
+  model, and primary screens from the business domain.
+- If the user did not specify colors or visual style, Domain Factory must choose
+  a representative, professional direction for the domain and record the
+  rationale in SDD/UX evidence.
+- If the user supplied a logo or app icon asset, Domain Factory must preserve
+  and use it. If no logo or icon was supplied, Domain Factory must generate a
+  minimal domain-appropriate identity and app icon source as part of the visual
+  implementation.
 - Every Domain Factory run must update SDD evidence before claiming readiness.
 - Every Domain Factory implementation run must publish a new preview release
   unless the user explicitly stops before release.

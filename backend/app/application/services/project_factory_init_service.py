@@ -23,6 +23,7 @@ import yaml
 from backend.app.application.services.cloudflare_preview_service import (
     CloudflareClient,
     CloudflarePreviewDoctorService,
+    project_preview_worker_name,
 )
 from backend.app.application.services.asset_depot_service import AssetDepotService
 from backend.app.application.services.project_factory_generator_service import (
@@ -892,6 +893,36 @@ class ProjectFactoryInitService:
     ) -> ProjectFactoryInitJob:
         with self._lock:
             job = self._require_job(init_job_id)
+            if self._legacy_shared_worker_requires_migration(job):
+                self._migrate_legacy_shared_worker_manifest(job)
+                migration_phases = {
+                    ProjectFactoryInitPhaseName.CLOUDFLARE_PREVIEW_PROVISION,
+                    ProjectFactoryInitPhaseName.CLOUDFLARE_PREVIEW_DEPLOY,
+                    ProjectFactoryInitPhaseName.PREVIEW_SMOKE,
+                    ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                    ProjectFactoryInitPhaseName.BRIDGE_INSTALLABLE_REGISTRATION,
+                }
+                updated = job
+                for phase_name in INIT_PHASE_ORDER:
+                    if phase_name not in migration_phases:
+                        continue
+                    phase = updated.phase(phase_name)
+                    if phase.status == ProjectFactoryInitPhaseStatus.SKIPPED:
+                        continue
+                    updated = updated.with_phase(
+                        replace(
+                            phase,
+                            status=ProjectFactoryInitPhaseStatus.QUEUED,
+                            message="",
+                            started_at=None,
+                            completed_at=None,
+                            blockers=(),
+                        )
+                    )
+                updated = updated.with_derived_completion_state()
+                self._jobs[updated.id] = updated
+                self._persist_job(updated)
+                return updated
             for phase_name in INIT_PHASE_ORDER:
                 phase = job.phase(phase_name)
                 if phase.status not in {
@@ -912,6 +943,55 @@ class ProjectFactoryInitService:
                 self._persist_job(updated)
                 return updated
             return job
+
+    def _legacy_shared_worker_requires_migration(
+        self,
+        job: ProjectFactoryInitJob,
+    ) -> bool:
+        if not any(
+            phase.status == ProjectFactoryInitPhaseStatus.BLOCKED
+            for phase in job.phases
+        ):
+            return False
+        target = self._frontend_target_path(job, None)
+        manifest_path = target / "deploy/web-preview/web-preview-manifest.yaml"
+        try:
+            manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError):
+            return False
+        if not isinstance(manifest, dict):
+            return False
+        cloudflare = manifest.get("cloudflare")
+        resources = cloudflare.get("resources") if isinstance(cloudflare, dict) else None
+        worker_name = resources.get("worker_name") if isinstance(resources, dict) else None
+        return not worker_name or str(worker_name) == "nienfos-preview-runtime"
+
+    def _migrate_legacy_shared_worker_manifest(
+        self,
+        job: ProjectFactoryInitJob,
+    ) -> None:
+        target = self._frontend_target_path(job, None)
+        manifest_path = target / "deploy/web-preview/web-preview-manifest.yaml"
+        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        if not isinstance(manifest, dict):
+            raise ProjectFactoryInitConflictError(
+                f"Invalid web preview manifest: {manifest_path}"
+            )
+        cloudflare = manifest.setdefault("cloudflare", {})
+        if not isinstance(cloudflare, dict):
+            raise ProjectFactoryInitConflictError(
+                f"Invalid Cloudflare manifest section: {manifest_path}"
+            )
+        resources = cloudflare.setdefault("resources", {})
+        if not isinstance(resources, dict):
+            raise ProjectFactoryInitConflictError(
+                f"Invalid Cloudflare resources section: {manifest_path}"
+            )
+        resources["worker_name"] = project_preview_worker_name(job.slug)
+        manifest_path.write_text(
+            yaml.safe_dump(manifest, sort_keys=False, allow_unicode=True),
+            encoding="utf-8",
+        )
 
     def get_job(self, init_job_id: str) -> ProjectFactoryInitJob | None:
         with self._lock:
@@ -1376,6 +1456,12 @@ class ProjectFactoryInitService:
                 settings=self._settings,
                 command_env=self._command_env,
             )
+            bridge_transport_url = _resolve_bridge_transport_url(
+                bridge_base_url,
+                bridge_public_url,
+                settings=self._settings,
+                command_env=self._command_env,
+            )
             bridge_registration_url = _resolve_bridge_registration_url(
                 bridge_base_url,
                 settings=self._settings,
@@ -1390,7 +1476,7 @@ class ProjectFactoryInitService:
                 "SOURCE_APP": job.slug,
                 "APP_RELEASE_TAG": release_tag,
                 "APP_ANDROID_PREVIEW_RELEASE_TAG": release_tag,
-                "BRIDGE_URL": bridge_registration_url,
+                "BRIDGE_URL": bridge_transport_url,
                 "BRIDGE_PUBLIC_URL": bridge_public_url,
                 "BRIDGE_REGISTRATION_URL": bridge_registration_url,
                 "CODEX_MOBILE_BRIDGE_ROOT": str(
@@ -7628,6 +7714,44 @@ def _resolve_bridge_public_url(
             ):
                 return public_url
     return bridge_base_url.rstrip("/")
+
+
+def _resolve_bridge_transport_url(
+    bridge_base_url: str,
+    bridge_public_url: str,
+    *,
+    settings: Settings | None,
+    command_env: dict[str, str],
+) -> str:
+    del settings
+    for candidate in (
+        command_env.get("BRIDGE_URL"),
+        command_env.get("CODEX_BRIDGE_URL"),
+        os.environ.get("BRIDGE_URL"),
+        os.environ.get("CODEX_BRIDGE_URL"),
+    ):
+        local_url = _local_http_url(candidate)
+        if local_url:
+            return local_url
+    base_url = bridge_base_url.strip().rstrip("/")
+    if _is_local_bridge_url(base_url):
+        return base_url
+    public_url = bridge_public_url.strip().rstrip("/")
+    parsed = urlparse(public_url or base_url)
+    host = (parsed.hostname or "").lower()
+    if host.endswith(".ts.net") and parsed.port:
+        return f"http://127.0.0.1:{parsed.port}"
+    return base_url
+
+
+def _local_http_url(value: str | None) -> str | None:
+    url = (value or "").strip().rstrip("/")
+    if not url or not _is_local_bridge_url(url):
+        return None
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    return url
 
 
 def _resolve_bridge_registration_url(

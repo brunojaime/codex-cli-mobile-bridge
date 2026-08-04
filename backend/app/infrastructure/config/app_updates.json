@@ -70,7 +70,7 @@
     "releaseMetadata": {
       "initialPreviewRelease": true,
       "latestAssetName": "rentid.apk",
-      "releaseTag": "android-preview-v0.1.0-build.38",
+      "releaseTag": "android-preview-v0.1.0-build.99",
       "releaseTagPattern": "android-preview-v*"
     },
     "releaseTagPattern": "android-preview-v*",
@@ -110,7 +110,7 @@
     "releaseMetadata": {
       "initialPreviewRelease": true,
       "latestAssetName": "satshowroom.apk",
-      "releaseTag": "android-preview-v0.1.0-build.50",
+      "releaseTag": "android-preview-v0.1.0-build.67",
       "releaseTagPattern": "android-preview-v*"
     },
     "releaseTagPattern": "android-preview-v*",
@@ -118,8 +118,8 @@
     "requiredMinimumBuild": null,
     "runtimeProfile": "preview",
     "verifiedPackageIds": {
-      "android-preview-v0.1.0-build.50": "com.example.satshowroom",
-      "satshowroom.apk": "com.example.satshowroom"
+      "android-preview-v0.1.0-build.67": "com.nienfos.satshowroom",
+      "satshowroom.apk": "com.nienfos.satshowroom"
     }
   },
   "smart-nienfos": {

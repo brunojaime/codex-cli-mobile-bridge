@@ -285,8 +285,8 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     assert "'/invites/accept'" in api_client
     assert "Invite token or link" not in screens
     assert "Aceptar invitacion al Preview" in screens
-    assert "Crear contrasena" in screens
-    assert "Repetir contrasena" in screens
+    assert "Crear contraseña" in screens
+    assert "Repetir contraseña" in screens
     assert "Aceptar invitacion" in screens
     assert "Create password" not in screens
     assert "Repeat password" not in screens
@@ -3193,12 +3193,15 @@ def test_generated_web_preview_bundle_is_validable_locally(tmp_path: Path) -> No
     assert payload["access"]["single_use"] is True
     assert payload["access"]["d1_binding"] == "PREVIEW_DB"
     assert payload["access"]["migrations_dir"] == "deploy/web-preview/d1/migrations"
-    assert payload["access"]["required_worker_secrets"] == ["WEB_PREVIEW_INVITE_SECRET"]
+    assert payload["access"]["required_worker_secrets"] == [
+        "PREVIEW_ADMIN_BOOTSTRAP_TOKEN",
+        "WEB_PREVIEW_INVITE_SECRET",
+    ]
     assert payload["access"]["access_path"] == "/__preview/access"
     assert payload["build"]["asset_entrypoint"] == "index.html"
     assert "flutter_bootstrap.js" in payload["build"]["required_files"]
     assert payload["cloudflare"]["resources"]["worker_name"] == (
-        "nienfos-preview-runtime"
+        "nienfos-preview-clinica-norte"
     )
     assert payload["cloudflare"]["resources"]["d1_database"] == "nienfos-preview"
     assert "/clinica-norte/__preview/health" in payload["expected_routes"]

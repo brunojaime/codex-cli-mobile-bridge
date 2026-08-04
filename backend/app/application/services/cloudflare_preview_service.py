@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 from typing import Any, Literal, Protocol
 from urllib.parse import urlencode
@@ -8,6 +9,19 @@ from urllib.parse import urlencode
 import httpx
 
 from backend.app.infrastructure.config.settings import Settings
+
+
+def project_preview_worker_name(source_app: str) -> str:
+    """Return a stable project Worker name within Cloudflare's 63-char limit."""
+
+    prefix = "nienfos-preview-"
+    candidate = f"{prefix}{source_app}"
+    if len(candidate) <= 63:
+        return candidate
+    digest = hashlib.sha256(source_app.encode("utf-8")).hexdigest()[:10]
+    slug_limit = 63 - len(prefix) - len(digest) - 1
+    shortened = source_app[:slug_limit].rstrip("-")
+    return f"{prefix}{shortened}-{digest}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +84,16 @@ class CloudflareClient(Protocol):
         script_content: str,
         worker_format: Literal["classic", "module"] = "module",
         metadata: dict[str, Any] | None = None,
+    ) -> CloudflareLookupResult:
+        ...
+
+    def put_worker_secret(
+        self,
+        *,
+        account_id: str,
+        script_name: str,
+        name: str,
+        text: str,
     ) -> CloudflareLookupResult:
         ...
 
@@ -300,6 +324,20 @@ class HttpCloudflareClient:
             content_type="application/javascript",
         )
 
+    def put_worker_secret(
+        self,
+        *,
+        account_id: str,
+        script_name: str,
+        name: str,
+        text: str,
+    ) -> CloudflareLookupResult:
+        return self._request(
+            "PUT",
+            f"/accounts/{account_id}/workers/scripts/{script_name}/secrets",
+            json={"name": name, "text": text, "type": "secret_text"},
+        )
+
     def list_d1_databases(self, account_id: str) -> CloudflareLookupResult:
         return self._request("GET", f"/accounts/{account_id}/d1/database")
 
@@ -522,8 +560,8 @@ class CloudflarePreviewDoctorService:
                     account_id=self._settings.cloudflare_account_id or "",
                     script_name=self._settings.preview_worker_name,
                 ),
-                "Shared preview Worker script lookup.",
-                ok_on_not_found=False,
+                "Legacy shared preview Worker lookup; project-scoped Workers are created during apply.",
+                ok_on_not_found=True,
             ),
         )
         checks.append(
@@ -568,7 +606,6 @@ class CloudflarePreviewDoctorService:
             "preview_dns_access",
             "preview_dns_record",
             "workers_access",
-            "preview_worker_script",
             "workers_routes_edit_access",
             "d1_access",
             "pages_project",

@@ -14,6 +14,9 @@ from typing import Any
 from backend.app.application.services.asset_depot_service import (
     AssetDepotService,
 )
+from backend.app.application.services.cloudflare_preview_service import (
+    project_preview_worker_name,
+)
 from backend.app.application.services.project_charter_document_service import (
     build_charter_render_manifest,
     render_charter_markdown_to_html,
@@ -931,7 +934,10 @@ def _web_preview_manifest_payload(
             "preview_access_cookie_separate_from_auth_session": True,
             "d1_binding": "PREVIEW_DB",
             "migrations_dir": "deploy/web-preview/d1/migrations",
-            "required_worker_secrets": ["WEB_PREVIEW_INVITE_SECRET"],
+            "required_worker_secrets": [
+                "PREVIEW_ADMIN_BOOTSTRAP_TOKEN",
+                "WEB_PREVIEW_INVITE_SECRET",
+            ],
             "public_paths": ["/__preview/health", "/api/health"],
         },
         "build": {
@@ -951,7 +957,7 @@ def _web_preview_manifest_payload(
             "base_domain": "preview.nienfos.com",
             "route": f"preview.nienfos.com/{slug}/*",
             "resources": {
-                "worker_name": "nienfos-preview-runtime",
+                "worker_name": project_preview_worker_name(slug),
                 "pages_project": "nienfos-preview-web",
                 "d1_database": "nienfos-preview",
                 "r2_bucket": None,
@@ -1101,7 +1107,7 @@ and token SHA256 only, never the plaintext token.
 def _web_preview_wrangler_example(slug: str) -> str:
     return f"""# Example only. Copy to wrangler.toml in an operator-owned deployment
 # workspace and fill Cloudflare resource IDs there. Do not commit secrets.
-name = "nienfos-preview-runtime"
+name = "{project_preview_worker_name(slug)}"
 main = "worker/src/index.js"
 compatibility_date = "2026-07-01"
 
@@ -1114,6 +1120,9 @@ binding = "PREVIEW_DB"
 database_name = "nienfos-preview"
 database_id = "set-in-cloudflare-dashboard-or-doctor-output"
 
+[version_metadata]
+binding = "CF_VERSION_METADATA"
+
 [assets]
 binding = "ASSETS"
 directory = "../../build/web-preview/{slug}"
@@ -1125,7 +1134,9 @@ APP_RUNTIME_PROFILE = "preview"
 API_RUNTIME = "cloudflare_preview"
 APP_SLUG = "{slug}"
 API_BASE_URL = "https://preview.nienfos.com/{slug}/api"
+PREVIEW_WORKER_NAME = "{project_preview_worker_name(slug)}"
 # Configure the real value as a Worker secret, not here:
+# wrangler secret put PREVIEW_ADMIN_BOOTSTRAP_TOKEN
 # wrangler secret put WEB_PREVIEW_INVITE_SECRET
 """
 
@@ -1970,7 +1981,7 @@ async function requireApiSession(env, request) {
 }
 
 async function handlePreviewHealth(env, appSlug = SOURCE_APP) {
-  const healthSlug = appSlug || SOURCE_APP;
+  const healthSlug = SOURCE_APP;
   return json({
     status: 'ok',
     source_app: healthSlug,
@@ -1982,6 +1993,10 @@ async function handlePreviewHealth(env, appSlug = SOURCE_APP) {
     d1_bound: Boolean(env.PREVIEW_DB),
     d1_persistent: Boolean(env.PREVIEW_DB),
     assets_bound: Boolean(env.ASSETS),
+    worker_name: env.PREVIEW_WORKER_NAME || null,
+    worker_version_id: env.CF_VERSION_METADATA?.id || null,
+    worker_version_tag: env.CF_VERSION_METADATA?.tag || null,
+    build_id: env.PREVIEW_BUILD_ID || null,
     version: env.PREVIEW_VERSION || null,
     commit: env.PREVIEW_COMMIT_SHA || null,
     deployed_at: env.PREVIEW_DEPLOYED_AT || null,
@@ -2514,17 +2529,17 @@ async function handleRequest(request, env = globalThis, ctx = undefined) {
     if (isPublicPreviewHealthRoute(request, url, assetPath)) {
     const sluglessPath = stripLeadingSlug(url.pathname);
     if (assetPath === '/api/health' || url.pathname === '/api/health' || sluglessPath === '/api/health') {
-      return handlePreviewHealth(env, appSlug || SOURCE_APP);
+      return handlePreviewHealth(env, SOURCE_APP);
     }
     return json({
       status: 'ok',
-      source_app: appSlug || SOURCE_APP,
-      app_slug: appSlug || SOURCE_APP,
+      source_app: SOURCE_APP,
+      app_slug: SOURCE_APP,
       display_name: DISPLAY_NAME,
       runtime_profile: env.APP_RUNTIME_PROFILE || DEFAULT_RUNTIME_PROFILE,
       runtime: API_RUNTIME,
       runtime_type: 'cloudflare_worker_assets',
-      api_base_url: previewApiBaseUrlFor(env, appSlug || SOURCE_APP),
+      api_base_url: previewApiBaseUrlFor(env, SOURCE_APP),
       access_mode: ACCESS_MODE,
       build_id: env.PREVIEW_BUILD_ID || null,
       version: env.PREVIEW_VERSION || null,
@@ -2532,6 +2547,9 @@ async function handleRequest(request, env = globalThis, ctx = undefined) {
       deployed_at: env.PREVIEW_DEPLOYED_AT || null,
       d1_bound: Boolean(env.PREVIEW_DB),
       assets_bound: Boolean(env.ASSETS),
+      worker_name: env.PREVIEW_WORKER_NAME || null,
+      worker_version_id: env.CF_VERSION_METADATA?.id || null,
+      worker_version_tag: env.CF_VERSION_METADATA?.tag || null,
     });
   }
 
@@ -2993,8 +3011,8 @@ assert.equal(apiHealthBody.d1_bound, true);
 const dynamicSlugHealth = await fetchJson('/other-preview/api/health');
 assert.equal(dynamicSlugHealth.status, 200);
 const dynamicSlugHealthBody = await dynamicSlugHealth.json();
-assert.equal(dynamicSlugHealthBody.source_app, 'other-preview');
-assert.equal(dynamicSlugHealthBody.api_base_url, 'https://preview.nienfos.com/other-preview/api');
+assert.equal(dynamicSlugHealthBody.source_app, '__SOURCE_APP__');
+assert.equal(dynamicSlugHealthBody.api_base_url, 'https://preview.nienfos.com/__SOURCE_APP__/api');
 
 const bootstrap = await fetchJson('/__SOURCE_APP__/api/admin/bootstrap', {
   method: 'POST',
@@ -3009,9 +3027,22 @@ const bootstrapBody = await bootstrap.json();
 assert.equal(bootstrapBody.user.sourceApp, '__SOURCE_APP__');
 assert.match(bootstrapBody.accessToken, /.+/);
 
+const repeatedBootstrap = await fetchJson('/__SOURCE_APP__/api/admin/bootstrap', {
+  method: 'POST',
+  body: {
+    bootstrapToken: 'local-bootstrap-token',
+    email: 'admin@example.com',
+    password: 'refreshed-preview-password',
+  },
+});
+assert.equal(repeatedBootstrap.status, 200);
+const repeatedBootstrapBody = await repeatedBootstrap.json();
+assert.equal(repeatedBootstrapBody.user.id, bootstrapBody.user.id);
+assert.match(repeatedBootstrapBody.accessToken, /.+/);
+
 const login = await fetchJson('/__SOURCE_APP__/api/auth/login', {
   method: 'POST',
-  body: { email: 'admin@example.com', password: 'preview-password' },
+  body: { email: 'admin@example.com', password: 'refreshed-preview-password' },
 });
 assert.equal(login.status, 200);
 const loginBody = await login.json();
@@ -3463,7 +3494,7 @@ checks = (
     ("runtime.asset_binding", runtime.get("asset_binding") if isinstance(runtime, dict) else None, "ASSETS"),
     ("build.output_dir", build.get("output_dir") if isinstance(build, dict) else None, "build/web-preview/" + expected_slug),
     ("build.asset_entrypoint", build.get("asset_entrypoint") if isinstance(build, dict) else None, "index.html"),
-    ("cloudflare.worker_name", resources.get("worker_name") if isinstance(resources, dict) else None, "nienfos-preview-runtime"),
+    ("cloudflare.worker_name", resources.get("worker_name") if isinstance(resources, dict) else None, "nienfos-preview-" + expected_slug),
     ("cloudflare.d1_database", resources.get("d1_database") if isinstance(resources, dict) else None, "nienfos-preview"),
     ("access.mode", access.get("mode") if isinstance(access, dict) else None, "invite_token"),
     ("access.access_path", access.get("access_path") if isinstance(access, dict) else None, "/__preview/access"),
@@ -3490,6 +3521,8 @@ else:
         raise SystemExit("Svelte web preview must not declare android_tag_pattern")
 if not isinstance(access, dict) or "WEB_PREVIEW_INVITE_SECRET" not in access.get("required_worker_secrets", []):
     raise SystemExit("access.required_worker_secrets must include WEB_PREVIEW_INVITE_SECRET")
+if "PREVIEW_ADMIN_BOOTSTRAP_TOKEN" not in access.get("required_worker_secrets", []):
+    raise SystemExit("access.required_worker_secrets must include PREVIEW_ADMIN_BOOTSTRAP_TOKEN")
 PY
 
 grep -q 'export default' "$WORKER" || fail "worker must use ES module export default"
@@ -3511,6 +3544,7 @@ grep -q 'main.dart.js' "$WORKER" || fail "worker no-cache coverage missing for m
 grep -q 'manifest.json' "$WORKER" || fail "worker manifest handling missing"
 grep -q 'isPublicSafeAssetPath' "$WORKER" || fail "worker public-safe manifest/icon handling missing"
 grep -q 'WEB_PREVIEW_INVITE_SECRET' "$WORKER" || fail "worker invite secret binding missing"
+grep -q 'PREVIEW_ADMIN_BOOTSTRAP_TOKEN' "$WORKER" || fail "worker bootstrap secret binding missing"
 grep -q 'PREVIEW_DB' "$WORKER" || fail "worker D1 binding missing"
 grep -q '/__preview/access' "$WORKER" || fail "worker access route missing"
 grep -q 'missing_invite_token' "$WORKER" || fail "worker missing-token response missing"
@@ -3519,6 +3553,7 @@ grep -q 'PREVIEW_DB' "$WRANGLER_EXAMPLE" || fail "wrangler D1 binding missing"
 grep -q 'binding = "ASSETS"' "$WRANGLER_EXAMPLE" || fail "wrangler assets binding missing"
 ! grep -q 'not_found_handling = "single-page-application"' "$WRANGLER_EXAMPLE" || fail "protected previews must not use Cloudflare Assets SPA fallback"
 grep -q 'WEB_PREVIEW_INVITE_SECRET' "$WRANGLER_EXAMPLE" || fail "wrangler invite secret documentation missing"
+grep -q 'PREVIEW_ADMIN_BOOTSTRAP_TOKEN' "$WRANGLER_EXAMPLE" || fail "wrangler bootstrap secret documentation missing"
 grep -q 'CREATE TABLE IF NOT EXISTS preview_invites' "$D1_MIGRATION" || fail "D1 preview_invites migration missing"
 grep -q 'CREATE TABLE IF NOT EXISTS preview_apps' "$D1_MIGRATION" || fail "D1 preview_apps migration missing"
 grep -q 'CREATE TABLE IF NOT EXISTS preview_builds' "$D1_MIGRATION" || fail "D1 preview_builds migration missing"
@@ -4719,6 +4754,7 @@ if not health.get("assets_bound"):
 if not password:
     raise SystemExit("PREVIEW_ADMIN_PASSWORD is required for deployed auth smoke")
 
+token = ""
 if bootstrap_token:
     status, bootstrap = request(
         "POST",
@@ -4734,11 +4770,17 @@ if bootstrap_token:
                 f"body={{bootstrap}}"
             )
         raise SystemExit(f"bootstrap failed: {{status}} {{bootstrap}}")
+    if status == 200:
+        token = str(bootstrap.get("accessToken") or "")
+        user = bootstrap.get("user") if isinstance(bootstrap.get("user"), dict) else {{}}
+        if not token or user.get("sourceApp") != source_app:
+            raise SystemExit(f"bootstrap session invalid: {{status}} {{bootstrap}}")
 
-status, login = request("POST", "/auth/login", {{"email": email, "password": password}})
-if status != 200 or not login.get("access_token"):
-    raise SystemExit(f"login failed: {{status}} {{login}}")
-token = login["access_token"]
+if not token:
+    status, login = retry_request("POST", "/auth/login", {{"email": email, "password": password}})
+    if status != 200 or not login.get("access_token"):
+        raise SystemExit(f"login failed: {{status}} {{login}}")
+    token = login["access_token"]
 
 status, me = request("GET", "/auth/me", token=token)
 if status != 200 or me.get("sourceApp") != source_app:
@@ -6807,7 +6849,7 @@ def _release_contracts_yaml(slug: str, frontend_strategy: str = "flutter") -> st
                 "default_runtime_profile": "preview",
                 "api_base_url": f"https://preview.nienfos.com/{slug}/api",
                 "cloudflare_resources": {
-                    "worker_name": "nienfos-preview-runtime",
+                    "worker_name": project_preview_worker_name(slug),
                     "pages_project": "nienfos-preview-web",
                     "d1_database": "nienfos-preview",
                     "r2_bucket": None,
@@ -6830,7 +6872,7 @@ def _cloudflare_cost_posture_json(slug: str) -> str:
                 "resources": [
                     {
                         "type": "worker",
-                        "name": "nienfos-preview-runtime",
+                        "name": project_preview_worker_name(slug),
                         "paid": False,
                     },
                     {"type": "d1", "name": f"{slug}-preview", "paid": False},
@@ -10512,61 +10554,70 @@ class _AuthScreenState extends State<AuthScreen> {{
   Widget build(BuildContext context) {{
     return Scaffold(
       appBar: AppBar(title: Text(widget.projectName)),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                Text(_title, style: Theme.of(context).textTheme.titleMedium),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _email,
-                  readOnly: _emailBound,
-                  decoration: InputDecoration(labelText: 'Email', helperText: _emailBound ? 'Fixed by invite' : null),
+      body: SafeArea(
+        child: LayoutBuilder(
+          builder: (context, constraints) {{
+            final minHeight =
+                constraints.maxHeight > 40 ? constraints.maxHeight - 40 : 0.0;
+            return SingleChildScrollView(
+              padding: const EdgeInsets.all(20),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: 420, minHeight: minHeight),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: <Widget>[
+                      Text(_title, style: Theme.of(context).textTheme.titleMedium),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _email,
+                        readOnly: _emailBound,
+                        decoration: InputDecoration(labelText: 'Email', helperText: _emailBound ? 'Fixed by invite' : null),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(controller: _password, decoration: InputDecoration(labelText: _isInviteActivation ? 'Crear contraseña' : 'Contraseña'), obscureText: true),
+                      if (_isInviteActivation) ...[
+                        const SizedBox(height: 12),
+                        TextField(controller: _passwordConfirmation, decoration: const InputDecoration(labelText: 'Repetir contraseña'), obscureText: true),
+                      ],
+                      const SizedBox(height: 16),
+                      if (widget.controller.isMockRuntime) ...[
+                        DropdownButtonFormField<String>(
+                          initialValue: _seedRole,
+                          decoration: const InputDecoration(labelText: 'Demo role'),
+                          items: widget.controller.seedRoles
+                              .map((role) => DropdownMenuItem(value: role, child: Text(role)))
+                              .toList(),
+                          onChanged: (value) => setState(() => _seedRole = value ?? 'guest'),
+                        ),
+                        const SizedBox(height: 8),
+                        OutlinedButton(
+                          onPressed: widget.controller.loading
+                              ? null
+                              : () => widget.controller.loginAsSeedRole(_seedRole),
+                          child: const Text('Enter demo as role'),
+                        ),
+                        const SizedBox(height: 12),
+                      ],
+                      if (widget.controller.error != null)
+                        Text(widget.controller.error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                      const SizedBox(height: 8),
+                      FilledButton(
+                        onPressed: widget.controller.loading ? null : _submit,
+                        child: Text(_primaryAction),
+                      ),
+                      if (!widget.controller.isPreviewRuntime)
+                        TextButton(
+                          onPressed: () => setState(() => _register = !_register),
+                          child: Text(_register ? 'Usar inicio de sesión' : 'Crear cuenta'),
+                        ),
+                    ],
+                  ),
                 ),
-                const SizedBox(height: 12),
-                TextField(controller: _password, decoration: InputDecoration(labelText: _isInviteActivation ? 'Crear contrasena' : 'Contrasena'), obscureText: true),
-                if (_isInviteActivation) ...[
-                  const SizedBox(height: 12),
-                  TextField(controller: _passwordConfirmation, decoration: const InputDecoration(labelText: 'Repetir contrasena'), obscureText: true),
-                ],
-                const SizedBox(height: 16),
-                if (widget.controller.isMockRuntime) ...[
-                  DropdownButtonFormField<String>(
-                    initialValue: _seedRole,
-                    decoration: const InputDecoration(labelText: 'Demo role'),
-                    items: widget.controller.seedRoles
-                        .map((role) => DropdownMenuItem(value: role, child: Text(role)))
-                        .toList(),
-                    onChanged: (value) => setState(() => _seedRole = value ?? 'guest'),
-                  ),
-                  const SizedBox(height: 8),
-                  OutlinedButton(
-                    onPressed: widget.controller.loading
-                        ? null
-                        : () => widget.controller.loginAsSeedRole(_seedRole),
-                    child: const Text('Enter demo as role'),
-                  ),
-                  const SizedBox(height: 12),
-                ],
-                if (widget.controller.error != null)
-                  Text(widget.controller.error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
-                const SizedBox(height: 8),
-                FilledButton(
-                  onPressed: widget.controller.loading ? null : _submit,
-                  child: Text(_primaryAction),
-                ),
-                if (!widget.controller.isPreviewRuntime)
-                  TextButton(
-                    onPressed: () => setState(() => _register = !_register),
-                    child: Text(_register ? 'Usar inicio de sesion' : 'Crear cuenta'),
-                  ),
-              ],
-            ),
-          ),
+              ),
+            );
+          }},
         ),
       ),
     );

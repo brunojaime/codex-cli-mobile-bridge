@@ -37,3 +37,6 @@
 - [x] T035 Persist release evidence: commit, tag, release URL, APK URL, SHA-256, preview URL, smoke results, Bridge registry payload, rollback pointer, and updater verification.
 - [x] T036 Add backend and Flutter tests for Domain Factory context building, UI entry, chat mode activation, intake filtering, role model, prompts, and SDD creation.
 - [x] T037 Add release/guardrail tests for baseline preservation, admin all-access, domain role permissions, no mock/demo defaults, no baseline recreation, and preview release evidence.
+- [x] T038 Require Domain Factory to define product navigation, screens, colors,
+  logo, and app icon from the domain brief/assets instead of inheriting
+  deterministic scaffold defaults.

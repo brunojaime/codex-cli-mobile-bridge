@@ -91,7 +91,10 @@ def test_start_domain_factory_configures_current_session_and_writes_sdd(
     assert "not creating a new project" in generator.prompt
     assert "Owner/admin must retain access" in generator.prompt
     assert "mock/demo/local/placeholder data" in generator.prompt
+    assert "Do not inherit its clean shell" in generator.prompt
+    assert "app icon source" in generator.prompt
     assert "did not recreate New Project baseline infrastructure" in reviewer.prompt
+    assert "generic authenticated shell" in reviewer.prompt
 
     messages = repository.list_messages(session.id)
     assert len(messages) == 1
@@ -125,6 +128,10 @@ def test_start_domain_factory_configures_current_session_and_writes_sdd(
     )
     assert "project name or slug" in intake_contract["baselineFieldsToAvoid"]
     assert "business outcome" in intake_contract["intakeFields"]
+    assert (
+        "information architecture, screens, navigation, mobile behavior, and empty states"
+        in intake_contract["intakeFields"]
+    )
     assert intake_contract["rolePermissionModel"]["owner"]["permissions"] == ["*"]
     assert (
         intake_contract["pairedWorkflow"]["reviewerFeedbackBecomesNextGeneratorPrompt"]

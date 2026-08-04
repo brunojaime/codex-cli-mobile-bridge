@@ -112,7 +112,8 @@ PROTECTED_FOUNDATION_AREAS = (
 )
 
 ALLOWED_DOMAIN_MODIFICATION_AREAS = (
-    "Flutter UI, visuals, layout, navigation, empty states, and assets",
+    "Flutter UI, visuals, layout, information architecture, navigation, empty states, and assets",
+    "domain-specific color system, logo treatment, and app icon source",
     "domain backend modules, services, repositories, and migrations",
     "domain-specific admin modules",
     "domain roles and explicit permissions",
@@ -141,7 +142,7 @@ DOMAIN_INTAKE_FIELDS = (
     "notifications and business events",
     "integrations",
     "visual identity, colors, style, and reference images",
-    "screens, navigation, mobile behavior, and empty states",
+    "information architecture, screens, navigation, mobile behavior, and empty states",
     "release acceptance criteria",
 )
 
@@ -188,7 +189,7 @@ DOMAIN_FOLLOW_UP_QUESTIONS = (
     {
         "id": "visual_direction",
         "field": "visual identity",
-        "prompt": "What visual direction, reference images, colors, and mobile empty states should guide the UI?",
+        "prompt": "What visual direction, reference images, colors, identity, app icon, and mobile empty states should guide the UI?",
         "options": (
             "use attached references",
             "clean operational UI",
@@ -1306,9 +1307,6 @@ You are the Domain Factory generator for the current initialized project.
 You are not creating a new project. Work only in the current workspace:
 {context.workspace_path}
 
-Baseline context:
-{context_json}
-
 Rules:
 - Consume the baseline context before editing.
 - Read `{PROJECT_CHARTER_SOURCE_PATH}` first. It is the evolving product and
@@ -1330,6 +1328,9 @@ Rules:
 - Generate follow-up questions only from the Domain Factory intake fields and include recommended/default/inferred options.
 - Produce a domain contract preview before implementation using the role permission model where owner/admin have all access and domain roles get explicit permissions.
 - Visual implementation is first-class: prioritize real product look and feel, mobile ergonomics, empty states, navigation, and reference-image fidelity.
+- The deterministic scaffold is infrastructure only. Do not inherit its clean shell, placeholder screens, default colors, or any scaffold-owned navigation as product direction.
+- Define the product information architecture, navigation model, primary screens, color direction, visual hierarchy, logo treatment, and app icon source from the domain brief, attached assets, and comparable-product research.
+- If a user-supplied logo or app icon exists, preserve and use it. If none exists, create a minimal domain-appropriate identity and app icon source as part of implementation.
 - You may modify UI, colors, layout, navigation, backend domain code, migrations, tests, SDD artifacts, diagrams, and release evidence.
 - Never switch to mock/demo/local/placeholder data unless the user explicitly asks for a demo/mock release.
 - Keep preview runtime real: APP_RUNTIME_PROFILE=preview, API_RUNTIME=cloudflare_preview, API URL {context.api_url or "https://preview.nienfos.com/<slug>/api"}.
@@ -1343,6 +1344,9 @@ Rules:
   and final UX evidence all exist. The baseline shell is never product-ready.
 - Remote destructive operations need explicit approval: {", ".join(DESTRUCTIVE_OPERATION_APPROVAL_REQUIRED)}.
 - Update SDD evidence before claiming readiness: spec, plan, tasks, traceability, DER/ERD, class, sequence, component, and deployment diagrams.
+
+Baseline context follows after the non-negotiable rules so trimming cannot remove them:
+{context_json}
 """.strip()
 
 
@@ -1350,9 +1354,6 @@ def _domain_reviewer_prompt(context: DomainFactoryContext) -> str:
     context_json = json.dumps(context.to_payload(), indent=2, sort_keys=True)
     return f"""
 You are the Domain Factory reviewer for the current initialized project.
-
-Review with the same baseline context:
-{context_json}
 
 Return only the next concrete prompt for the generator unless the work is truly release-ready.
 
@@ -1367,7 +1368,8 @@ Verify:
 - Domain roles and permissions match the requested business and are testable.
 - Owner/admin retain all access across domain capabilities.
 - Domain intake avoided baseline setup questions and produced a contract preview before implementation.
-- UI quality, visual hierarchy, mobile ergonomics, empty states, navigation, and reference-image fidelity are strong.
+- UI quality, product information architecture, visual hierarchy, mobile ergonomics, empty states, navigation, color direction, logo/app icon treatment, and reference-image fidelity are strong.
+- The product does not remain a generic authenticated shell and does not inherit scaffold/default navigation or colors as final UX.
 - Backend domain behavior, persistence, migrations, and seed data are real preview paths, not mock/demo/local defaults.
 - SDD spec, plan, tasks, traceability, DER/ERD, class, sequence, component, and deployment diagrams are updated.
 - Relevant tests pass and release evidence exists for the new preview release.
@@ -1377,6 +1379,9 @@ Verify:
 - The release increments after the initial preview build and Bridge/app updater metadata points at the new build.
 
 If anything is missing, produce an actionable next generator prompt with exact files, tests, and evidence to fix.
+
+Review with the same baseline context after the non-negotiable checks:
+{context_json}
 """.strip()
 
 

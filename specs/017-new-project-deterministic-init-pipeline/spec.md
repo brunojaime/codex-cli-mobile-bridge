@@ -68,6 +68,13 @@ steps".
 - The deterministic init pipeline may consume the approved structured
   draft/contract, but must not depend on unreviewed LLM side effects or
   generated project files.
+- The deterministic Flutter baseline must not impose product information
+  architecture, menu destinations, business screens, colors, logo, or app icon.
+  It may expose only the minimum authenticated shell required to prove auth,
+  session, runtime, Bridge feedback/updater, and Workbench wiring.
+- Product navigation, primary screens, visual direction, colors, logo, and app
+  icon are domain decisions. They must be produced by the UX/Domain lanes from
+  the approved brief, user-provided assets, and domain-appropriate research.
 - New Project button behavior changes from guided-only creation to
   chat-plus-intake creation with gated deterministic init.
 - The first chat must be opened or selected immediately and linked to the draft
@@ -128,6 +135,9 @@ them.
    - Install or verify selected frontend strategy dependencies.
    - For Flutter, create mobile/web baseline, Android project, runtime profile
      wiring, app updater, feedback bridge integration, and Workbench hooks.
+   - For Flutter, start from a clean authenticated app shell with no fixed
+     product menu, no scaffold default destinations, and no scaffold-owned
+     business screens.
    - For non-Flutter strategies, enforce strategy capability limits.
 
 5. `local_validation`
@@ -212,6 +222,9 @@ The context pack must include:
   - do not recreate GitHub, Cloudflare, D1, release, feedback, or Workbench
     plumbing manually;
   - implement only product/business work on top of the initialized baseline;
+  - define the app's navigation, screens, colors, logo/icon treatment, and
+    visual hierarchy from the domain brief and attached assets, not from
+    deterministic scaffold defaults;
   - update specs, tasks, tests, and release evidence as product work changes.
 
 ## New Project UI Contract
