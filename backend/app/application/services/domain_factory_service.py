@@ -92,6 +92,8 @@ CRITICAL_BASELINE_FILES = (
     ".codex/factory/llm-start-context.md",
     "release/preview-runtime.json",
     ".codex/project.yaml",
+    "docs/project-charter.md",
+    "docs/project-charter.json",
 )
 
 PROTECTED_FOUNDATION_AREAS = (
@@ -995,9 +997,7 @@ class DomainFactoryService:
                 continue
             if not candidate.is_dir():
                 continue
-            state = _read_json(
-                candidate / ".codex/factory/domain-factory-state.json"
-            )
+            state = _read_json(candidate / ".codex/factory/domain-factory-state.json")
             if state.get("sessionId") == session_id:
                 return candidate
         return None
@@ -1254,6 +1254,8 @@ Baseline context:
 
 Rules:
 - Consume the baseline context before editing.
+- Read `docs/project-charter.md` first. It is the approved product contract;
+  implementation and SDD traceability must remain aligned with it.
 - Consume the configured UX workflow. The early UX baseline is derived from the
   user's domain brief before this paired Domain Factory implementation stage;
   preserve that look-and-feel direction while implementing domain behavior.
@@ -1293,6 +1295,9 @@ Review with the same baseline context:
 Return only the next concrete prompt for the generator unless the work is truly release-ready.
 
 Verify:
+- `docs/project-charter.md` exists, is approved by its metadata, and the
+  implementation remains traceable to its objective, scope, roles, workflows,
+  acceptance criteria, and release expectations.
 - Generator did not recreate New Project baseline infrastructure.
 - Generic auth, RBAC engine, admin shell, Bridge plumbing, Workbench plumbing, updater plumbing, preview runtime, and initial project identity are intact.
 - Domain roles and permissions match the requested business and are testable.
@@ -1748,9 +1753,7 @@ def _updater_verification_payload(evidence: dict[str, Any]) -> dict[str, Any]:
     nested = evidence.get("updaterVerification")
     updater = dict(nested) if isinstance(nested, dict) else {}
     if "previousBuildSeesNewBuild" not in updater:
-        updater["previousBuildSeesNewBuild"] = evidence.get(
-            "previousBuildSeesNewBuild"
-        )
+        updater["previousBuildSeesNewBuild"] = evidence.get("previousBuildSeesNewBuild")
     if "newBuildHasPendingSelfUpdate" not in updater:
         updater["newBuildHasPendingSelfUpdate"] = evidence.get(
             "newBuildHasPendingSelfUpdate"
@@ -1814,6 +1817,16 @@ def _context_blockers(
             "missing_project_manifest",
             "The deterministic project manifest is missing.",
             "Restore .codex/project.yaml from deterministic init.",
+        ),
+        "docs/project-charter.md": (
+            "missing_project_charter",
+            "The approved Project Charter is missing.",
+            "Rerun New Project init after approving the project scope.",
+        ),
+        "docs/project-charter.json": (
+            "missing_project_charter_metadata",
+            "The approved Project Charter metadata is missing.",
+            "Rerun New Project init to restore the approved charter metadata.",
         ),
     }
     for missing_file in missing_baseline_files:

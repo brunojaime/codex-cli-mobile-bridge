@@ -2817,10 +2817,8 @@ When you create the Project Factory draft, link each asset with POST /project-fa
     String sessionId,
     ProjectFactoryInitJob initJob,
   ) async {
-    final canStartImplementation = initJob.readyForBusinessLlm ||
-        initJob.isReady ||
-        initJob.isBlockedWithContext ||
-        initJob.canContinueWithBlockedContext;
+    final canStartImplementation =
+        initJob.readyForBusinessLlm || initJob.isReady;
     if (!canStartImplementation) {
       return;
     }

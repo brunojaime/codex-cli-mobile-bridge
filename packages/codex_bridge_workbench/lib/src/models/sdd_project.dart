@@ -27,6 +27,7 @@ class SddProjectSummary {
     required this.missingRequired,
     required this.hasManifest,
     required this.hasConstitution,
+    this.hasProjectCharter = false,
   });
 
   final String workspaceName;
@@ -36,6 +37,7 @@ class SddProjectSummary {
   final List<String> missingRequired;
   final bool hasManifest;
   final bool hasConstitution;
+  final bool hasProjectCharter;
 
   factory SddProjectSummary.fromJson(Map<String, dynamic> json) {
     return SddProjectSummary(
@@ -46,6 +48,7 @@ class SddProjectSummary {
       missingRequired: _stringList(json['missing_required']),
       hasManifest: json['has_manifest'] as bool? ?? false,
       hasConstitution: json['has_constitution'] as bool? ?? false,
+      hasProjectCharter: json['has_project_charter'] as bool? ?? false,
     );
   }
 }
@@ -60,6 +63,7 @@ class SddProject {
     required this.missingRequired,
     this.manifest,
     this.constitution,
+    this.projectCharter,
   });
 
   final String workspaceName;
@@ -67,6 +71,7 @@ class SddProject {
   final bool required;
   final SddFile? manifest;
   final SddFile? constitution;
+  final SddFile? projectCharter;
   final List<SddDiagram> architectureDiagrams;
   final List<SddSpec> specs;
   final List<String> missingRequired;
@@ -79,6 +84,7 @@ class SddProject {
     bool? required,
     SddFile? manifest,
     SddFile? constitution,
+    SddFile? projectCharter,
     List<SddDiagram>? architectureDiagrams,
     List<SddSpec>? specs,
     List<String>? missingRequired,
@@ -89,6 +95,7 @@ class SddProject {
       required: required ?? this.required,
       manifest: manifest ?? this.manifest,
       constitution: constitution ?? this.constitution,
+      projectCharter: projectCharter ?? this.projectCharter,
       architectureDiagrams: architectureDiagrams ?? this.architectureDiagrams,
       specs: specs ?? this.specs,
       missingRequired: missingRequired ?? this.missingRequired,
@@ -102,6 +109,7 @@ class SddProject {
       required: json['required'] as bool? ?? true,
       manifest: _fileFromJson(json['manifest']),
       constitution: _fileFromJson(json['constitution']),
+      projectCharter: _fileFromJson(json['project_charter']),
       architectureDiagrams: _diagramList(json['architecture_diagrams']),
       specs: _specList(json['specs']),
       missingRequired: _stringList(json['missing_required']),

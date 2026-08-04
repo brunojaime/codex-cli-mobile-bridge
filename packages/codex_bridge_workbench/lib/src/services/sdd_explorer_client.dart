@@ -133,6 +133,36 @@ class SddExplorerClient {
     return SddDiagram.fromJson(diagram);
   }
 
+  Future<void> shareProjectCharter({
+    required String workspacePath,
+    required List<String> recipients,
+    required bool includeFullDocument,
+    String? message,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/sdd/project/charter/share'),
+      headers: const <String, String>{'Content-Type': 'application/json'},
+      body: jsonEncode(<String, Object?>{
+        'workspacePath': workspacePath,
+        'recipients': recipients,
+        'includeFullDocument': includeFullDocument,
+        if (message != null && message.trim().isNotEmpty)
+          'message': message.trim(),
+      }),
+    );
+    if (response.statusCode != 200) {
+      var detail = 'Could not send the Project Charter.';
+      try {
+        final payload = jsonDecode(response.body) as Map<String, dynamic>;
+        final rawDetail = payload['detail'];
+        if (rawDetail is Map<String, dynamic>) {
+          detail = rawDetail['message'] as String? ?? detail;
+        }
+      } catch (_) {}
+      throw Exception(detail);
+    }
+  }
+
   Future<SddDoctorReport> runDoctor(String workspacePath) async {
     final uri = Uri.parse('$baseUrl/sdd/doctor').replace(
       queryParameters: <String, String>{'workspace_path': workspacePath},

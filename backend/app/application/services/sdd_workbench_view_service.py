@@ -498,6 +498,16 @@ def _baselines(
 ) -> tuple[SddWorkbenchBaselineView, ...]:
     protected = _protected_baseline_paths(workspace)
     baselines: list[SddWorkbenchBaselineView] = []
+    if project.project_charter is not None:
+        baselines.append(
+            SddWorkbenchBaselineView(
+                artifact_type="governance",
+                path=project.project_charter.path,
+                title=project.project_charter.title or "Project Charter",
+                status="approved",
+                protected=True,
+            )
+        )
     baselines.extend(
         _baseline_from_diagram(diagram, protected)
         for diagram in project.architecture_diagrams

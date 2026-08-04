@@ -126,6 +126,87 @@ void main() {
     expect(project.workspaceName, 'Codex Bridge');
   });
 
+  testWidgets('Project Charter is readable and shareable on a narrow phone', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    Map<String, dynamic>? sharedPayload;
+    final client = SddExplorerClient(
+      baseUrl: 'http://bridge.test',
+      client: MockClient((request) async {
+        if (request.url.path == '/sdd/project/charter/share') {
+          sharedPayload = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response(
+            jsonEncode(<String, Object?>{
+              'kind': 'codex.projectCharterShare',
+              'status': 'sent',
+            }),
+            200,
+          );
+        }
+        return http.Response('{}', 404);
+      }),
+    );
+    await _pumpWorkbench(
+      tester,
+      loader: (_) async => SddProject.fromJson(_projectJson()),
+      specIntakeClient: client,
+    );
+    _openWorkbench(tester);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Project Charter'), findsOneWidget);
+    await tester.ensureVisible(find.text('Read charter'));
+    await tester.tap(find.text('Read charter'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(Dialog), findsOneWidget);
+    expect(find.text('Executive objective'), findsOneWidget);
+    expect(
+      find.textContaining('Replace manual port operations'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byTooltip('Share by email'));
+    await tester.pumpAndSettle();
+    expect(find.text('Share Project Charter'), findsOneWidget);
+    await tester.enterText(find.byType(TextField).first, 'owner@example.com');
+    await tester.tap(find.text('Send'));
+    await tester.pumpAndSettle();
+
+    expect(
+      sharedPayload?['workspacePath'],
+      '/workspace/codex-cli-mobile-bridge',
+    );
+    expect(sharedPayload?['recipients'], <String>['owner@example.com']);
+    expect(sharedPayload?['includeFullDocument'], isTrue);
+  });
+
+  testWidgets('Project Charter reader stays readable on a tablet', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(768, 1024);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await _pumpWorkbench(
+      tester,
+      loader: (_) async => SddProject.fromJson(_projectJson()),
+    );
+    _openWorkbench(tester);
+    await tester.pumpAndSettle();
+
+    await tester.ensureVisible(find.text('Read charter'));
+    await tester.tap(find.text('Read charter'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Executive objective'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   test('SDD diagram model parses rendered SVG metadata', () {
     final diagram = SddDiagram.fromJson(<String, dynamic>{
       'path': 'specs/016/diagrams/browser-gateway.svg',
@@ -4186,6 +4267,24 @@ Map<String, dynamic> _projectJson() {
       'title': 'Constitution',
       'size_bytes': 120,
       'content': '# Constitution',
+    },
+    'project_charter': <String, dynamic>{
+      'path': 'docs/project-charter.md',
+      'title': 'Project Charter',
+      'size_bytes': 420,
+      'content': '''# Project Charter
+
+- Status: Approved
+- Version: 1.0
+
+## Executive objective
+
+Replace manual port operations with a traceable mobile workflow.
+
+## Approved scope and requirements
+
+Admins and employees record operations. Users have read-only access.
+''',
     },
     'architecture_diagrams': <Map<String, dynamic>>[
       <String, dynamic>{

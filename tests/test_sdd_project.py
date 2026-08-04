@@ -71,6 +71,31 @@ def test_sdd_endpoints_return_project_snapshot_and_capabilities(
     assert "specs/001-demo/diagrams/ignored.txt" not in diagram_paths
 
 
+def test_sdd_project_exposes_charter_and_missing_share_is_404(
+    tmp_path: Path,
+) -> None:
+    projects_root = tmp_path / "projects"
+    project = projects_root / "demo"
+    _write_sdd_project(project)
+    (project / ".codex").mkdir()
+    (project / ".codex/project.yaml").write_text("name: Demo\n")
+    client = _client(projects_root)
+
+    missing = client.post(
+        "/sdd/project/charter/share",
+        json={
+            "workspacePath": str(project),
+            "recipients": ["owner@example.com"],
+            "includeFullDocument": True,
+        },
+    )
+
+    assert missing.status_code == 404
+    assert missing.json()["detail"]["code"] == "project_charter_missing"
+    snapshot = client.get("/sdd/project", params={"workspace_path": str(project)})
+    assert "docs/project-charter.md" in snapshot.json()["missing_required"]
+
+
 def test_sdd_project_returns_explicit_spec_plan_task_tree(tmp_path: Path) -> None:
     projects_root = tmp_path / "projects"
     project = projects_root / "demo"
@@ -582,7 +607,9 @@ def test_sdd_project_discovers_rendered_svg_diagrams_with_metadata(
     )
     client = _client(projects_root)
 
-    response = client.get("/sdd/project/diagrams", params={"workspace_path": str(project)})
+    response = client.get(
+        "/sdd/project/diagrams", params={"workspace_path": str(project)}
+    )
 
     assert response.status_code == 200
     diagrams = response.json()["diagrams"]
@@ -601,7 +628,7 @@ def test_sdd_project_discovers_rendered_svg_diagrams_with_metadata(
     assert svg["updated_at"]
     assert svg["metadata_path"] == "specs/001-demo/diagrams/browser-gateway.yaml"
     assert svg["renderer"] == "diagram-mcp-rendering-engine"
-    assert "data-node-id=\"browser\"" in svg["content"]
+    assert 'data-node-id="browser"' in svg["content"]
     assert "specs/001-demo/diagrams/arbitrary.svg" not in {
         item["path"] for item in diagrams
     }
@@ -691,9 +718,10 @@ def test_sdd_project_persists_rendered_diagram_exports(tmp_path: Path) -> None:
     assert diagram["metadata_path"] == "specs/001-demo/diagrams/browser-gateway.yaml"
     assert diagram["renderer"] == "diagram-mcp-rendering-engine"
     assert (project / "specs/001-demo/diagrams/browser-gateway.svg").is_file()
-    assert "diagram_spec_id: diagram_123" in (
-        project / "specs/001-demo/diagrams/browser-gateway.yaml"
-    ).read_text()
+    assert (
+        "diagram_spec_id: diagram_123"
+        in (project / "specs/001-demo/diagrams/browser-gateway.yaml").read_text()
+    )
     assert unsafe.status_code == 400
 
 

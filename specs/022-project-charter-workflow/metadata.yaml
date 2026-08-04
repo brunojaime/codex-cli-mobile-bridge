@@ -1,0 +1,29 @@
+id: 022-project-charter-workflow
+slug: 022-project-charter-workflow
+title: Project Charter Workflow
+description: Require an approved Project Charter before project agents run, expose it through SDD, and provide comfortable Flutter reading and complete email sharing.
+status: completed
+last_run_state: implemented
+generated:
+  title: false
+  description: false
+  user_pinned_title: true
+  user_pinned_description: true
+tasks:
+  total: 9
+  completed: 9
+  pending: 0
+diagrams:
+  total: 1
+  items:
+    project-charter-sequence:
+      path: diagrams/sequence.mmd
+      diagram_type: sequence
+      metadata_path: diagrams/sequence.yaml
+available_files:
+  - spec.md
+  - plan.md
+  - tasks.md
+  - traceability.yaml
+  - diagrams/sequence.mmd
+  - diagrams/sequence.yaml

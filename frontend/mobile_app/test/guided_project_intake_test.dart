@@ -710,7 +710,7 @@ void main() {
   });
 
   testWidgets(
-      'blocked-with-context init can start full Generator Reviewer workflow',
+      'blocked-with-context init does not start full Generator Reviewer workflow',
       (tester) async {
     final apiClient = _GuidedProjectApiClient()
       ..includeGeneratorReadyMessage = true
@@ -735,8 +735,8 @@ void main() {
     await _pumpDeferredFullGenerationStart(tester);
 
     expect(apiClient.getInitJobCalls, 1);
-    expect(apiClient.fullGenerationCalls, 1);
-    expect(apiClient.generatedDraftIds, <String>['pf-draft-1']);
+    expect(apiClient.fullGenerationCalls, 0);
+    expect(apiClient.generatedDraftIds, isEmpty);
   });
 
   testWidgets('blocked init shows phases and can be retried', (tester) async {

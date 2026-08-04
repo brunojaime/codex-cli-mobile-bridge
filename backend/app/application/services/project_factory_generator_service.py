@@ -742,6 +742,10 @@ def _codex_bridge_yaml(slug: str, name: str) -> str:
                 "standard": "workbench-sdd/v1",
                 "specIndex": ".sdd/spec-index.yaml",
                 "diagramIndex": ".sdd/diagram-index.yaml",
+                "protected_baseline": [
+                    "docs/project-charter.md",
+                    "docs/project-charter.json",
+                ],
             },
             "feedback": {
                 "bridgeRequired": True,

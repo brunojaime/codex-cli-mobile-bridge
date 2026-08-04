@@ -6,6 +6,7 @@ import shlex
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 from typing import Protocol
 
@@ -203,9 +204,7 @@ class ProjectFactoryJobRunner:
             context.manifest_plan,
         )
         publication_steps = (
-            (6 if supports_android_installable else 4)
-            if remote_publication
-            else 0
+            (6 if supports_android_installable else 4) if remote_publication else 0
         )
         preflight_steps = 1 if remote_publication and self._remote_preflight else 0
         total_steps = (
@@ -259,6 +258,19 @@ class ProjectFactoryJobRunner:
                 _progress(completed_steps, total_steps),
             )
         )
+
+        try:
+            _require_approved_project_charter(project_path)
+        except ProjectFactoryJobRunnerBlockedError as exc:
+            event_sink(
+                _event(
+                    "project_charter",
+                    "blocked",
+                    str(exc),
+                    _progress(completed_steps, total_steps),
+                )
+            )
+            raise
 
         prompt_root = project_path / ".codex" / "factory" / "prompts"
         prompt_root.mkdir(parents=True, exist_ok=True)
@@ -797,9 +809,7 @@ class ProjectFactoryJobRunner:
                 result=reviewer_result,
             )
             if _ux_reviewer_is_complete(reviewer_feedback):
-                skipped_steps = (
-                    _MAX_AUTOMATIC_UX_ITERATIONS - iteration
-                ) * 2
+                skipped_steps = (_MAX_AUTOMATIC_UX_ITERATIONS - iteration) * 2
                 completed_steps += skipped_steps
                 event_sink(
                     _event(
@@ -1175,10 +1185,14 @@ def _codex_argv(
     exec_args: str | None = None,
 ) -> tuple[str, ...]:
     base = tuple(shlex.split(command.strip() or "codex"))
-    args = tuple(shlex.split(exec_args.strip())) if exec_args else (
-        "--skip-git-repo-check",
-        "--color",
-        "never",
+    args = (
+        tuple(shlex.split(exec_args.strip()))
+        if exec_args
+        else (
+            "--skip-git-repo-check",
+            "--color",
+            "never",
+        )
     )
     return (*base, "exec", *args, prompt)
 
@@ -1298,9 +1312,7 @@ def _load_visual_ux_skill_context(
         loaded.append(f"## {label}\n\n{content}")
     prompt_section = (
         "\n# Required visual-ux-polish Skill Context\n\n"
-        f"Resolved skill path: `{skill_path}`\n\n"
-        + "\n\n".join(loaded)
-        + "\n"
+        f"Resolved skill path: `{skill_path}`\n\n" + "\n\n".join(loaded) + "\n"
     )
     return _VisualUxSkillContext(
         skill_path=skill_path,
@@ -1323,6 +1335,31 @@ def _require_ux_brief(project_path: Path) -> None:
     if not brief_path.is_file() or not brief_path.read_text(encoding="utf-8").strip():
         raise ProjectFactoryJobRunnerError(
             "UX brief step completed without writing .codex/ux/pre-project-ux-brief.md."
+        )
+
+
+def _require_approved_project_charter(project_path: Path) -> None:
+    init_result_path = project_path / ".codex" / "factory" / "init-result.json"
+    if not init_result_path.is_file():
+        return
+    charter_path = project_path / "docs" / "project-charter.md"
+    metadata_path = project_path / "docs" / "project-charter.json"
+    try:
+        content = charter_path.read_text(encoding="utf-8")
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError) as exc:
+        raise ProjectFactoryJobRunnerBlockedError(
+            "Full generation requires an approved Project Charter from New Project."
+        ) from exc
+    digest = sha256(content.encode("utf-8")).hexdigest()
+    if (
+        not content.strip()
+        or not isinstance(metadata, dict)
+        or metadata.get("status") != "approved"
+        or metadata.get("digest") != digest
+    ):
+        raise ProjectFactoryJobRunnerBlockedError(
+            "Full generation requires a valid approved Project Charter."
         )
 
 
@@ -1364,9 +1401,7 @@ def _supports_android_installable(manifest_plan: ProjectFactoryManifestPlan) -> 
     manifest = manifest_plan.manifest
     frontend = manifest.get("frontend") if isinstance(manifest, dict) else None
     capabilities = (
-        frontend.get("strategy_capabilities")
-        if isinstance(frontend, dict)
-        else None
+        frontend.get("strategy_capabilities") if isinstance(frontend, dict) else None
     )
     if isinstance(capabilities, dict):
         return bool(
@@ -1401,6 +1436,8 @@ def _project_factory_init_context_section(project_path: Path) -> str:
 
 Business generator/reviewer rules:
 - Consume the initialized baseline from the context pack before making changes.
+- Read `docs/project-charter.md` first and keep implementation, SDD, tests, and
+  release evidence traceable to the approved charter.
 - Do not recreate GitHub, Cloudflare Worker/route/D1, Android prerelease,
   Bridge installable, feedback, updater, or Workbench plumbing manually.
 - Keep preview runtime real; do not switch to mock/demo/local/placeholder URLs

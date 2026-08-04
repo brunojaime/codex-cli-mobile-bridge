@@ -140,6 +140,8 @@ from backend.app.api.schemas import (
     ProjectFactoryJobResponse,
     ProjectFactoryJobsResponse,
     ProjectFactoryOptionsResponse,
+    ProjectCharterShareRequest,
+    ProjectCharterShareResponse,
     ProjectFactoryReferenceAssetDeleteResponse,
     ProjectFactoryReferenceAssetResponse,
     ProjectFactoryReferenceAssetsResponse,
@@ -202,6 +204,9 @@ from backend.app.application.services.project_factory_manifest_service import (
 )
 from backend.app.application.services.project_factory_service import (
     ProjectFactoryGenerationConflictError,
+)
+from backend.app.application.services.project_charter_service import (
+    ProjectCharterError,
 )
 from backend.app.application.services.project_factory_reference_asset_service import (
     ProjectFactoryReferenceAssetError,
@@ -2495,6 +2500,38 @@ async def get_sdd_project_summary(
     return SddProjectLazySummaryResponse(**payload)
 
 
+@router.post(
+    "/sdd/project/charter/share",
+    response_model=ProjectCharterShareResponse,
+)
+async def share_sdd_project_charter(
+    request: ProjectCharterShareRequest,
+    container: AppContainer = Depends(get_container),
+) -> ProjectCharterShareResponse:
+    try:
+        payload = await run_in_threadpool(
+            container.project_charter_service.share,
+            workspace_path=request.workspace_path,
+            recipients=tuple(request.recipients),
+            include_full_document=request.include_full_document,
+            message=request.message,
+        )
+    except ProjectCharterError as exc:
+        status_code = 400
+        if exc.code == "project_charter_missing":
+            status_code = 404
+        elif exc.code in {
+            "project_charter_email_unavailable",
+            "project_charter_email_failed",
+        }:
+            status_code = 503
+        raise HTTPException(
+            status_code=status_code,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+    return ProjectCharterShareResponse(**payload)
+
+
 @router.get("/sdd/project/spec", response_model=SddProjectSpecResponse)
 async def get_sdd_project_spec(
     workspace_path: str = Query(...),
@@ -3475,6 +3512,7 @@ def _sdd_project_summary_response(
         workspace_path=project.workspace_path,
         has_manifest=project.has_manifest,
         has_constitution=project.has_constitution,
+        has_project_charter=project.has_project_charter,
         spec_count=project.spec_count,
         diagram_count=project.diagram_count,
         missing_required=list(project.missing_required),
@@ -3490,6 +3528,7 @@ def _sdd_project_response(
         required=project.required,
         manifest=_sdd_file_response(project.manifest),
         constitution=_sdd_file_response(project.constitution),
+        project_charter=_sdd_file_response(project.project_charter),
         architecture_diagrams=[
             _sdd_diagram_response(diagram) for diagram in project.architecture_diagrams
         ],

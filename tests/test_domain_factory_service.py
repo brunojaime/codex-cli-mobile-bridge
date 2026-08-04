@@ -134,7 +134,9 @@ def test_start_domain_factory_configures_current_session_and_writes_sdd(
         "domain_generator",
         "domain_reviewer",
     ]
-    assert intake_contract["pairedWorkflow"]["noSeparateFunctionalGeneratorStage"] is True
+    assert (
+        intake_contract["pairedWorkflow"]["noSeparateFunctionalGeneratorStage"] is True
+    )
     assert intake_contract["uxWorkflow"]["fullAgentOrder"] == (
         EXPECTED_DOMAIN_FACTORY_UX_ORDER
     )
@@ -433,6 +435,8 @@ def test_start_domain_factory_blocks_without_baseline_context(
         "missing_llm_start_context",
         "missing_preview_runtime",
         "missing_project_manifest",
+        "missing_project_charter",
+        "missing_project_charter_metadata",
         "missing_runtime_profile",
         "missing_api_runtime",
         "missing_preview_api_url",
@@ -458,6 +462,8 @@ def test_domain_factory_blocks_each_missing_critical_baseline_file(
         ".codex/factory/llm-start-context.md": "missing_llm_start_context",
         "release/preview-runtime.json": "missing_preview_runtime",
         ".codex/project.yaml": "missing_project_manifest",
+        "docs/project-charter.md": "missing_project_charter",
+        "docs/project-charter.json": "missing_project_charter_metadata",
     }
     for relative_path, expected_code in expected_codes.items():
         workspace = _baseline_workspace(tmp_path / relative_path.replace("/", "_"))
@@ -917,9 +923,7 @@ class _WaitingInitService:
                 relationships=SimpleNamespace(chat_session_id=session_id),
                 phases=[
                     SimpleNamespace(
-                        status=SimpleNamespace(
-                            value="queued_waiting_for_domain_brief"
-                        )
+                        status=SimpleNamespace(value="queued_waiting_for_domain_brief")
                     )
                 ],
             )
@@ -947,6 +951,7 @@ def _baseline_workspace(tmp_path: Path) -> Path:
     (workspace / ".codex/factory").mkdir(parents=True)
     (workspace / ".codex").mkdir(exist_ok=True)
     (workspace / "release").mkdir()
+    (workspace / "docs").mkdir()
     (workspace / "specs/001-baseline").mkdir(parents=True)
     (workspace / "codex-bridge.yaml").write_text(
         "source_app: clinica-norte\ndisplay_name: Clinica Norte\n",
@@ -954,6 +959,14 @@ def _baseline_workspace(tmp_path: Path) -> Path:
     )
     (workspace / ".codex/project.yaml").write_text(
         "source_app: clinica-norte\nname: Clinica Norte\n",
+        encoding="utf-8",
+    )
+    (workspace / "docs/project-charter.md").write_text(
+        "# Project Charter\n\nApproved project scope.\n",
+        encoding="utf-8",
+    )
+    (workspace / "docs/project-charter.json").write_text(
+        json.dumps({"status": "approved", "version": "1.0"}),
         encoding="utf-8",
     )
     (workspace / "release/preview-runtime.json").write_text(

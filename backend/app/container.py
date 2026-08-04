@@ -20,6 +20,9 @@ from backend.app.application.services.message_service import MessageService
 from backend.app.application.services.project_factory_service import (
     ProjectFactoryService,
 )
+from backend.app.application.services.project_charter_service import (
+    ProjectCharterService,
+)
 from backend.app.application.services.project_factory_init_service import (
     ProjectFactoryInitService,
 )
@@ -94,6 +97,7 @@ class AppContainer:
     sdd_codex_job_service: SddCodexJobService
     project_factory_service: ProjectFactoryService
     project_factory_init_service: ProjectFactoryInitService
+    project_charter_service: ProjectCharterService
     cloudflare_preview_doctor_service: CloudflarePreviewDoctorService
     web_preview_deploy_service: WebPreviewDeployService
     web_preview_invite_service: WebPreviewInviteService
@@ -193,6 +197,7 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         remote_publication_preflight=cloudflare_preview_doctor_service.doctor,
         async_jobs=resolved_settings.project_factory_async_jobs,
     )
+    project_charter_service = ProjectCharterService(settings=resolved_settings)
     project_factory_init_service = ProjectFactoryInitService(
         state_root=resolved_settings.project_factory_state_dir,
         github_owner=resolved_settings.project_factory_github_owner,
@@ -201,6 +206,7 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         command_timeout_seconds=resolved_settings.project_factory_step_timeout_seconds,
         settings=resolved_settings,
         chat_repository=repository,
+        project_charter_service=project_charter_service,
     )
     sdd_workbench_kanban_service = SddWorkbenchKanbanService(
         projects_root=resolved_settings.projects_root,
@@ -270,6 +276,7 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         sdd_codex_job_service=sdd_codex_job_service,
         project_factory_service=project_factory_service,
         project_factory_init_service=project_factory_init_service,
+        project_charter_service=project_charter_service,
         cloudflare_preview_doctor_service=cloudflare_preview_doctor_service,
         web_preview_deploy_service=web_preview_deploy_service,
         web_preview_invite_service=web_preview_invite_service,

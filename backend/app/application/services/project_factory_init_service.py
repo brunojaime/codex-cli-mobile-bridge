@@ -28,6 +28,12 @@ from backend.app.application.services.project_factory_generator_service import (
     ProjectFactoryGeneratorError,
     ProjectFactoryGeneratorService,
 )
+from backend.app.application.services.project_charter_service import (
+    PROJECT_CHARTER_METADATA_PATH,
+    PROJECT_CHARTER_PATH,
+    ProjectCharterError,
+    ProjectCharterService,
+)
 from backend.app.application.services.project_factory_job_runner import (
     _MAX_AUTOMATIC_UX_ITERATIONS,
     _codex_argv,
@@ -244,6 +250,7 @@ class ProjectFactoryInitService:
         cloudflare_doctor_service: CloudflarePreviewDoctorService | None = None,
         web_preview_deploy_service: WebPreviewDeployService | None = None,
         chat_repository: ChatRepository | None = None,
+        project_charter_service: ProjectCharterService | None = None,
     ) -> None:
         self._state_root = Path(state_root).expanduser().resolve()
         self._init_state_dir = self._state_root / "init_jobs"
@@ -260,6 +267,7 @@ class ProjectFactoryInitService:
         self._cloudflare_doctor_service = cloudflare_doctor_service
         self._web_preview_deploy_service = web_preview_deploy_service
         self._chat_repository = chat_repository
+        self._project_charter_service = project_charter_service
         self._lock = RLock()
         self._jobs: dict[str, ProjectFactoryInitJob] = {}
         self._init_state_dir.mkdir(parents=True, exist_ok=True)
@@ -1080,6 +1088,18 @@ class ProjectFactoryInitService:
                     )
                 )
 
+            charter_evidence, charter_blocker = self._ensure_project_charter(
+                job=job,
+                target=target,
+            )
+            evidence.extend(charter_evidence)
+            if charter_blocker is not None:
+                return self._block_frontend_baseline(
+                    job,
+                    blocker=charter_blocker,
+                    evidence=tuple(evidence),
+                )
+
             verification = _verify_frontend_baseline(
                 target=target,
                 slug=job.slug,
@@ -1157,6 +1177,65 @@ class ProjectFactoryInitService:
                 )
             return completed
 
+    def _ensure_project_charter(
+        self,
+        *,
+        job: ProjectFactoryInitJob,
+        target: Path,
+    ) -> tuple[
+        tuple[ProjectFactoryInitCommandEvidence, ...],
+        ProjectFactoryInitBlocker | None,
+    ]:
+        service = self._project_charter_service
+        if service is None:
+            return (), None
+        draft_path = self._state_root / "drafts" / f"{job.relationships.draft_id}.json"
+        try:
+            draft_payload = _read_json(draft_path)
+            approved_brief = self._domain_brief_for_automatic_ux(job, target)
+            document = service.materialize_from_draft(
+                workspace=target,
+                draft_payload=draft_payload,
+                approved_brief=approved_brief,
+            )
+        except (OSError, ValueError, ProjectCharterError) as exc:
+            code = (
+                exc.code
+                if isinstance(exc, ProjectCharterError)
+                else "project_charter_generation_failed"
+            )
+            return (
+                (),
+                _frontend_blocker(
+                    code=code,
+                    message=f"Approved Project Charter could not be generated: {exc}",
+                    next_action="Approve the New Project contract and rerun deterministic init.",
+                ),
+            )
+        evidence = ProjectFactoryInitCommandEvidence(
+            argv=("project-factory", "charter", "materialize"),
+            cwd=str(target),
+            exit_code=0,
+            stdout_summary=(
+                f"approved charter {document.version} digest={document.digest}"
+            ),
+            started_at=_now_iso(),
+            completed_at=_now_iso(),
+        )
+        if (
+            not (target / PROJECT_CHARTER_PATH).is_file()
+            or not (target / PROJECT_CHARTER_METADATA_PATH).is_file()
+        ):
+            return (
+                (evidence,),
+                _frontend_blocker(
+                    code="project_charter_missing",
+                    message="Approved Project Charter files are missing after generation.",
+                    next_action="Restore the approved charter and rerun deterministic init.",
+                ),
+            )
+        return (evidence,), None
+
     def run_android_preview_release_phases(
         self,
         init_job_id: str,
@@ -1181,7 +1260,9 @@ class ProjectFactoryInitService:
                     blocker=runtime_blocker,
                     evidence=(),
                 )
-            android_phase = job.phase(ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE)
+            android_phase = job.phase(
+                ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE
+            )
             if android_phase.status not in {
                 ProjectFactoryInitPhaseStatus.COMPLETED,
                 ProjectFactoryInitPhaseStatus.SKIPPED,
@@ -2324,14 +2405,18 @@ class ProjectFactoryInitService:
         blockers = [
             blocker.to_payload() for phase in job.phases for blocker in phase.blockers
         ]
-        retry_available = status == ProjectFactoryInitCompletionState.RESUMABLE.value or any(
-            blocker.recoverable
-            for phase in job.phases
-            if phase.status == ProjectFactoryInitPhaseStatus.BLOCKED
-            for blocker in phase.blockers
-        ) or any(
-            phase.status == ProjectFactoryInitPhaseStatus.FAILED
-            for phase in job.phases
+        retry_available = (
+            status == ProjectFactoryInitCompletionState.RESUMABLE.value
+            or any(
+                blocker.recoverable
+                for phase in job.phases
+                if phase.status == ProjectFactoryInitPhaseStatus.BLOCKED
+                for blocker in phase.blockers
+            )
+            or any(
+                phase.status == ProjectFactoryInitPhaseStatus.FAILED
+                for phase in job.phases
+            )
         )
         workspace_path = job.relationships.generated_workspace_path
         context_pack = job.context_pack.to_payload() if job.context_pack else None
@@ -3171,9 +3256,7 @@ class ProjectFactoryInitService:
                 blocker=_cloudflare_blocker(
                     phase=_PREVIEW_SMOKE_PHASE,
                     code="web_preview_initial_admin_invites_failed",
-                    message=(
-                        "Initial admin web preview invites could not be created."
-                    ),
+                    message=("Initial admin web preview invites could not be created."),
                     next_action=(
                         "Fix Web Preview invite configuration, then rerun "
                         "deterministic init."
@@ -3371,18 +3454,11 @@ class ProjectFactoryInitService:
             )
         projects_root = target.parent
         projects_root.mkdir(parents=True, exist_ok=True)
-        platforms = ("web",) if strategy == "svelte" else ("ios", "android", "web")
+        request = self._manifest_input_from_draft(job, strategy=strategy)
         manifest_plan = ProjectFactoryManifestService(
             projects_root=projects_root,
         ).plan_manifest(
-            ProjectFactoryManifestInput(
-                name=job.project_name,
-                business_type="project",
-                primary_goal="Generated deterministic baseline",
-                slug=job.slug,
-                platforms=platforms,
-                frontend_strategy=strategy,
-            ),
+            request,
             allow_existing=True,
         )
         try:
@@ -3401,18 +3477,11 @@ class ProjectFactoryInitService:
         if self._settings is None:
             return ()
         projects_root = target.parent
-        platforms = ("web",) if strategy == "svelte" else ("ios", "android", "web")
+        request = self._manifest_input_from_draft(job, strategy=strategy)
         manifest_plan = ProjectFactoryManifestService(
             projects_root=projects_root,
         ).plan_manifest(
-            ProjectFactoryManifestInput(
-                name=job.project_name,
-                business_type="project",
-                primary_goal="Generated deterministic baseline",
-                slug=job.slug,
-                platforms=platforms,
-                frontend_strategy=strategy,
-            ),
+            request,
             allow_existing=True,
         )
         try:
@@ -3423,6 +3492,58 @@ class ProjectFactoryInitService:
         except ProjectFactoryGeneratorError as exc:
             raise ProjectFactoryInitConflictError(str(exc)) from exc
         return tuple(item.path for item in result.generated_files)
+
+    def _manifest_input_from_draft(
+        self,
+        job: ProjectFactoryInitJob,
+        *,
+        strategy: str,
+    ) -> ProjectFactoryManifestInput:
+        fallback_platforms = (
+            ("web",) if strategy == "svelte" else ("ios", "android", "web")
+        )
+        path = self._state_root / "drafts" / f"{job.relationships.draft_id}.json"
+        try:
+            payload = _read_json(path)
+        except Exception:
+            payload = {}
+        request = payload.get("request")
+        request = request if isinstance(request, dict) else {}
+        platforms_value = request.get("platforms")
+        platforms = (
+            tuple(str(item) for item in platforms_value if str(item).strip())
+            if isinstance(platforms_value, list)
+            else fallback_platforms
+        )
+        return ProjectFactoryManifestInput(
+            name=str(request.get("name") or job.project_name),
+            business_type=str(request.get("business_type") or "project"),
+            primary_goal=str(
+                request.get("primary_goal") or "Generated deterministic baseline"
+            ),
+            slug=str(request.get("slug") or job.slug),
+            platforms=platforms or fallback_platforms,
+            backend=str(request.get("backend") or "fastapi"),
+            frontend_strategy=strategy,
+            logo_mode=str(request.get("logo_mode") or "generate"),
+            first_release_mode=str(request.get("first_release_mode") or "preview"),
+            initial_admin_emails=tuple(
+                str(item)
+                for item in request.get("initial_admin_emails", [])
+                if isinstance(item, str)
+            ),
+            visual_reference_paths=tuple(
+                str(item)
+                for item in request.get("visual_reference_paths", [])
+                if isinstance(item, str)
+            ),
+            visual_reference_assets=tuple(
+                dict(item)
+                for item in request.get("visual_reference_assets", [])
+                if isinstance(item, dict)
+            ),
+            guided_intake_enabled=bool(request.get("guided_intake_enabled") or False),
+        )
 
     def _mark_frontend_running(self, job: ProjectFactoryInitJob, message: str) -> None:
         current = self._jobs.get(job.id, job)
@@ -4128,7 +4249,12 @@ class ProjectFactoryInitService:
                     message="Generated Android platform files could not be committed.",
                     phase=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
                     result=commit,
-                    command=("git", "commit", "-m", "Generate Flutter Android platform"),
+                    command=(
+                        "git",
+                        "commit",
+                        "-m",
+                        "Generate Flutter Android platform",
+                    ),
                 ),
             )
         push = self._run_env(("git", "push"), cwd=target, env=env)
@@ -4266,7 +4392,8 @@ class ProjectFactoryInitService:
         ):
             return "running"
         if any(
-            phase.status == ProjectFactoryInitPhaseStatus.QUEUED_WAITING_FOR_DOMAIN_BRIEF
+            phase.status
+            == ProjectFactoryInitPhaseStatus.QUEUED_WAITING_FOR_DOMAIN_BRIEF
             for phase in job.phases
         ):
             return "waiting_for_domain_brief"
@@ -5651,6 +5778,9 @@ def _read_domain_factory_brief(target: Path) -> str:
             candidate = target / brief_path
             if candidate.is_file() and candidate.read_text(encoding="utf-8").strip():
                 return candidate.read_text(encoding="utf-8").strip()
+    domain_brief = target / ".codex" / "ux" / "domain-brief.md"
+    if domain_brief.is_file() and domain_brief.read_text(encoding="utf-8").strip():
+        return domain_brief.read_text(encoding="utf-8").strip()
     for candidate in (target / "specs").glob("*/intake/original-brief.md"):
         if candidate.is_file() and candidate.read_text(encoding="utf-8").strip():
             return candidate.read_text(encoding="utf-8").strip()
@@ -5685,8 +5815,10 @@ def _project_factory_chat_domain_brief(messages: list[ChatMessage]) -> str:
         "",
     ]
     for message in relevant[-8:]:
-        author = "User" if message.role == ChatMessageRole.USER else (
-            message.agent_label or "Project Factory"
+        author = (
+            "User"
+            if message.role == ChatMessageRole.USER
+            else (message.agent_label or "Project Factory")
         )
         lines.append(f"## {author}")
         lines.append("")
@@ -5870,6 +6002,8 @@ Preview API: `{preview_api}`
 
 Required domain brief:
 - Read `.codex/ux/domain-brief.md` before making UX decisions.
+- Read `docs/project-charter.md`; it is the approved source contract and all UX
+  decisions must remain traceable to it.
 - Base the early UX baseline on that approved Project Factory/domain contract.
 - Do not invent another product category when the brief already defines one.
 
@@ -6017,15 +6151,18 @@ def _automatic_ux_pending_chat_content(
     )
     verb = "Estoy definiendo" if label == "UX Generator" else "Estoy revisando"
     noun = "la baseline visual" if label == "UX Generator" else "la propuesta UX"
-    return "\n".join(
-        [
-            f"# {label} pass {iteration}",
-            "",
-            f"{verb} {noun} desde el brief aprobado.",
-            "",
-            f"Cuando termine dejo el detalle en `{evidence_display}`.",
-        ]
-    ) + "\n"
+    return (
+        "\n".join(
+            [
+                f"# {label} pass {iteration}",
+                "",
+                f"{verb} {noun} desde el brief aprobado.",
+                "",
+                f"Cuando termine dejo el detalle en `{evidence_display}`.",
+            ]
+        )
+        + "\n"
+    )
 
 
 def _domain_brief_guidance_chat_content(job: ProjectFactoryInitJob) -> str:
@@ -6209,9 +6346,7 @@ def _automatic_ux_report_summary_from_text(text: str) -> str:
 
 def _automatic_ux_output_summary(result: ProjectFactoryInitCommandResult) -> str:
     text = "\n".join(
-        part.strip()
-        for part in (result.stderr, result.stdout)
-        if part and part.strip()
+        part.strip() for part in (result.stderr, result.stdout) if part and part.strip()
     )
     return _compact_automatic_ux_text(text, max_chars=360)
 
@@ -6269,9 +6404,7 @@ def _ensure_automatic_ux_report(
     report_path.parent.mkdir(parents=True, exist_ok=True)
     status = "completed" if result.exit_code == 0 else "failed"
     body = "\n\n".join(
-        part.strip()
-        for part in (result.stdout, result.stderr)
-        if part and part.strip()
+        part.strip() for part in (result.stdout, result.stderr) if part and part.strip()
     )
     if not body:
         body = "No textual output was captured."
@@ -6341,9 +6474,10 @@ def _automatic_ux_result_failed(
     if any(marker in output for marker in blocked_markers):
         return True
     expected_report = target / ".codex" / "ux" / f"ux-{role}-report.md"
-    return not expected_report.is_file() or not expected_report.read_text(
-        encoding="utf-8"
-    ).strip()
+    return (
+        not expected_report.is_file()
+        or not expected_report.read_text(encoding="utf-8").strip()
+    )
 
 
 def _automatic_ux_blocker(
@@ -6373,9 +6507,7 @@ def _automatic_ux_command_blocker(
 ) -> ProjectFactoryInitBlocker:
     raw_output = "\n".join(part for part in (result.stdout, result.stderr) if part)
     if result.exit_code == 124 or "command timed out" in raw_output.lower():
-        detail = (
-            "Automatic UX agent timed out before completing the response contract."
-        )
+        detail = "Automatic UX agent timed out before completing the response contract."
     else:
         detail = _summarize_output(raw_output, ())
     return _automatic_ux_blocker(
@@ -6853,9 +6985,7 @@ def _ensure_flutter_android_bridge_network_config(mobile: Path) -> None:
                 1,
             )
             manifest.write_text(text, encoding="utf-8")
-    network_config = (
-        mobile / "android/app/src/main/res/xml/network_security_config.xml"
-    )
+    network_config = mobile / "android/app/src/main/res/xml/network_security_config.xml"
     network_config.parent.mkdir(parents=True, exist_ok=True)
     network_config.write_text(
         _android_bridge_network_security_config(),
@@ -7041,10 +7171,14 @@ def _resolve_bridge_registration_url(
     command_env: dict[str, str],
 ) -> str:
     explicit = (
-        command_env.get("BRIDGE_REGISTRATION_URL")
-        or os.environ.get("BRIDGE_REGISTRATION_URL")
-        or ""
-    ).strip().rstrip("/")
+        (
+            command_env.get("BRIDGE_REGISTRATION_URL")
+            or os.environ.get("BRIDGE_REGISTRATION_URL")
+            or ""
+        )
+        .strip()
+        .rstrip("/")
+    )
     if explicit:
         return explicit
     parsed = urlparse((bridge_base_url or "").strip())
@@ -7081,9 +7215,7 @@ def _is_preview_app_public_url(value: str, *, settings: Settings | None) -> bool
 def _android_preview_bridge_url(value: str) -> str:
     url = value.strip().rstrip("/")
     parsed = urlparse(url)
-    if parsed.scheme == "https" and (
-        parsed.hostname or ""
-    ).lower().endswith(".ts.net"):
+    if parsed.scheme == "https" and (parsed.hostname or "").lower().endswith(".ts.net"):
         return parsed._replace(scheme="http").geturl().rstrip("/")
     return url
 

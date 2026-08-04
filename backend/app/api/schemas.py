@@ -1805,6 +1805,7 @@ class SddProjectSummaryResponse(BaseModel):
     workspace_path: str
     has_manifest: bool
     has_constitution: bool
+    has_project_charter: bool = False
     spec_count: int
     diagram_count: int
     missing_required: list[str] = Field(default_factory=list)
@@ -1825,6 +1826,7 @@ class SddProjectResponse(BaseModel):
     required: bool
     manifest: SddFileResponse | None = None
     constitution: SddFileResponse | None = None
+    project_charter: SddFileResponse | None = None
     architecture_diagrams: list[SddDiagramResponse] = Field(default_factory=list)
     specs: list[SddSpecResponse] = Field(default_factory=list)
     missing_required: list[str] = Field(default_factory=list)
@@ -1847,6 +1849,28 @@ class SddProjectDiagramsResponse(BaseModel):
     version: int = 1
     workspace_path: str
     diagrams: list[SddDiagramResponse] = Field(default_factory=list)
+
+
+class ProjectCharterShareRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    workspace_path: str = Field(..., min_length=1, alias="workspacePath")
+    recipients: list[str] = Field(..., min_length=1, max_length=20)
+    include_full_document: bool = Field(default=True, alias="includeFullDocument")
+    message: str | None = Field(default=None, max_length=2000)
+
+
+class ProjectCharterShareResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    kind: str = "codex.projectCharterShare"
+    status: str
+    provider: str
+    recipients: list[str]
+    include_full_document: bool = Field(alias="includeFullDocument")
+    document_digest: str = Field(alias="documentDigest")
+    provider_message_id: str | None = Field(default=None, alias="providerMessageId")
+    sent_at: str = Field(alias="sentAt")
 
 
 class SddDoctorCheckResponse(BaseModel):

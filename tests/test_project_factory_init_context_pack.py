@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 from pathlib import Path
 
 from backend.app.application.services.project_factory_generator_service import (
@@ -91,7 +92,9 @@ def test_context_pack_writes_ready_json_markdown_attaches_chat_and_persists(
     persisted = reloaded.get_job(job.id)
     assert persisted is not None
     assert persisted.context_pack is not None
-    assert persisted.context_pack.content_sha256 == completed.context_pack.content_sha256
+    assert (
+        persisted.context_pack.content_sha256 == completed.context_pack.content_sha256
+    )
 
 
 def test_context_pack_rerun_keeps_hash_and_chat_attachment_idempotent(
@@ -108,7 +111,10 @@ def test_context_pack_rerun_keeps_hash_and_chat_attachment_idempotent(
     assert first.context_pack is not None
     assert second.context_pack is not None
     assert second.context_pack.content_sha256 == first.context_pack.content_sha256
-    assert second.context_pack.attached_message_id == first.context_pack.attached_message_id
+    assert (
+        second.context_pack.attached_message_id
+        == first.context_pack.attached_message_id
+    )
     assert len(repository.list_messages("chat-1")) == 1
 
 
@@ -230,6 +236,7 @@ def test_business_prompts_consume_context_pack_without_recreating_setup(
     job = _ready_job(service)
     completed = service.run_llm_context_pack_phase(job.id)
     workspace = Path(completed.relationships.generated_workspace_path or "")
+    _write_approved_charter(workspace)
     process_runner = _PromptCaptureRunner()
     runner = ProjectFactoryJobRunner(
         generator_service=_ReusableProjectGenerator(workspace),
@@ -238,8 +245,12 @@ def test_business_prompts_consume_context_pack_without_recreating_setup(
 
     runner.run(_runner_context(tmp_path), event_sink=lambda event: None)
 
-    generator_prompt = process_runner.calls[1][-1]
-    reviewer_prompt = process_runner.calls[2][-1]
+    generator_prompt = (workspace / ".codex/factory/prompts/generator-01.md").read_text(
+        encoding="utf-8"
+    )
+    reviewer_prompt = (workspace / ".codex/factory/prompts/reviewer-01.md").read_text(
+        encoding="utf-8"
+    )
     assert "Initialized deterministic baseline" in generator_prompt
     assert ".codex/factory/init-result.json" in generator_prompt
     assert "https://preview.nienfos.com/clinica-norte/api" in generator_prompt
@@ -247,6 +258,22 @@ def test_business_prompts_consume_context_pack_without_recreating_setup(
     assert "Initial git commit, GitHub publish/push status" not in generator_prompt
     assert "Initialized deterministic baseline" in reviewer_prompt
     assert "Do not recreate GitHub, Cloudflare Worker/route/D1" in reviewer_prompt
+
+
+def _write_approved_charter(workspace: Path) -> None:
+    content = "# Project Charter\n\nApproved scope.\n"
+    docs = workspace / "docs"
+    docs.mkdir(parents=True, exist_ok=True)
+    (docs / "project-charter.md").write_text(content, encoding="utf-8")
+    (docs / "project-charter.json").write_text(
+        json.dumps(
+            {
+                "status": "approved",
+                "digest": sha256(content.encode("utf-8")).hexdigest(),
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def _service(
@@ -302,7 +329,9 @@ def _ready_job(
     workspace = Path(job.relationships.generated_workspace_path or "")
     brief_path = workspace / ".codex/ux/pre-project-ux-brief.md"
     brief_path.parent.mkdir(parents=True, exist_ok=True)
-    brief_path.write_text("UX brief ready for business implementation.\n", encoding="utf-8")
+    brief_path.write_text(
+        "UX brief ready for business implementation.\n", encoding="utf-8"
+    )
     for phase in INIT_PHASE_ORDER:
         if phase in {
             ProjectFactoryInitPhaseName.FLUTTER_OR_STRATEGY_BASELINE,
@@ -442,7 +471,9 @@ class _ReusableProjectGenerator:
 
 
 def _runner_context(tmp_path: Path) -> ProjectFactoryRunnerContext:
-    plan = ProjectFactoryManifestService(projects_root=tmp_path / "projects").plan_manifest(
+    plan = ProjectFactoryManifestService(
+        projects_root=tmp_path / "projects"
+    ).plan_manifest(
         ProjectFactoryManifestInput(
             name="Clinica Norte",
             business_type="medical",

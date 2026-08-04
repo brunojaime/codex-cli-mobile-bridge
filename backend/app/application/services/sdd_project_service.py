@@ -176,6 +176,7 @@ class SddProject:
     required: bool
     manifest: SddFile | None
     constitution: SddFile | None
+    project_charter: SddFile | None
     architecture_diagrams: tuple[SddDiagram, ...]
     specs: tuple[SddSpec, ...]
     missing_required: tuple[str, ...]
@@ -187,6 +188,7 @@ class SddProjectSummary:
     workspace_path: str
     has_manifest: bool
     has_constitution: bool
+    has_project_charter: bool
     spec_count: int
     diagram_count: int
     missing_required: tuple[str, ...]
@@ -424,11 +426,18 @@ class SddProjectService:
             workspace,
             ".specify/memory/constitution.md",
         )
+        has_project_charter = self._allowed_file_exists(
+            workspace,
+            "docs/project-charter.md",
+        )
+        project_charter_required = self._project_charter_required(workspace)
         diagram_count = architecture_diagram_count + spec_diagram_count
         if not has_manifest:
             missing_required.append("codex-bridge.yaml")
         if not has_constitution:
             missing_required.append(".specify/memory/constitution.md")
+        if project_charter_required and not has_project_charter:
+            missing_required.append("docs/project-charter.md")
         if not spec_count:
             missing_required.append("specs/<feature>/spec.md")
         if not diagram_count:
@@ -438,6 +447,7 @@ class SddProjectService:
             workspace_path=str(workspace),
             has_manifest=has_manifest,
             has_constitution=has_constitution,
+            has_project_charter=has_project_charter,
             spec_count=spec_count,
             diagram_count=diagram_count,
             missing_required=tuple(missing_required),
@@ -448,6 +458,10 @@ class SddProjectService:
         constitution = self._read_optional_file(
             workspace,
             ".specify/memory/constitution.md",
+        )
+        project_charter = self._read_optional_file(
+            workspace,
+            "docs/project-charter.md",
         )
         architecture_diagrams = self._read_diagrams(
             workspace,
@@ -460,6 +474,8 @@ class SddProjectService:
             missing_required.append("codex-bridge.yaml")
         if constitution is None:
             missing_required.append(".specify/memory/constitution.md")
+        if self._project_charter_required(workspace) and project_charter is None:
+            missing_required.append("docs/project-charter.md")
         if not specs:
             missing_required.append("specs/<feature>/spec.md")
         if not architecture_diagrams and not any(spec.diagrams for spec in specs):
@@ -470,6 +486,7 @@ class SddProjectService:
             required=True,
             manifest=manifest,
             constitution=constitution,
+            project_charter=project_charter,
             architecture_diagrams=architecture_diagrams,
             specs=specs,
             missing_required=tuple(missing_required),
@@ -480,6 +497,10 @@ class SddProjectService:
         constitution = self._read_file_metadata(
             workspace,
             ".specify/memory/constitution.md",
+        )
+        project_charter = self._read_optional_file(
+            workspace,
+            "docs/project-charter.md",
         )
         architecture_diagrams = self._read_diagrams(
             workspace,
@@ -492,6 +513,8 @@ class SddProjectService:
             missing_required.append("codex-bridge.yaml")
         if constitution is None:
             missing_required.append(".specify/memory/constitution.md")
+        if self._project_charter_required(workspace) and project_charter is None:
+            missing_required.append("docs/project-charter.md")
         if not specs:
             missing_required.append("specs/<feature>/spec.md")
         if not architecture_diagrams and not any(spec.diagrams for spec in specs):
@@ -502,10 +525,14 @@ class SddProjectService:
             required=True,
             manifest=manifest,
             constitution=constitution,
+            project_charter=project_charter,
             architecture_diagrams=architecture_diagrams,
             specs=specs,
             missing_required=tuple(missing_required),
         )
+
+    def _project_charter_required(self, workspace: Path) -> bool:
+        return self._allowed_file_exists(workspace, ".codex/project.yaml")
 
     def _read_specs(self, workspace: Path) -> tuple[SddSpec, ...]:
         specs_root = self._specs_root(workspace)
@@ -706,7 +733,9 @@ class SddProjectService:
             missing = list(tree.missing)
         return SddSpec(
             id=feature_dir.name,
-            title=(spec_file.title if spec_file and spec_file.title else feature_dir.name),
+            title=(
+                spec_file.title if spec_file and spec_file.title else feature_dir.name
+            ),
             path=rel_dir,
             spec=spec_file,
             plan=plan_file,
@@ -1287,7 +1316,9 @@ class SddProjectService:
             if file_value is None:
                 continue
             resolved = _safe_resolve(path)
-            stat = resolved.stat() if resolved is not None and resolved.exists() else None
+            stat = (
+                resolved.stat() if resolved is not None and resolved.exists() else None
+            )
             diagrams.append(
                 SddDiagram(
                     path=file_value.path,
@@ -1395,7 +1426,9 @@ class SddProjectService:
                 return candidate
         return None
 
-    def _resolve_rendered_diagram_path(self, workspace: Path, diagram_path: str) -> Path:
+    def _resolve_rendered_diagram_path(
+        self, workspace: Path, diagram_path: str
+    ) -> Path:
         raw_path = diagram_path.strip()
         if not raw_path:
             raise SddProjectError("diagram_path is required.")
@@ -1412,7 +1445,9 @@ class SddProjectService:
             raise SddProjectError("Rendered diagram metadata not found.")
         rel_parts = candidate.relative_to(workspace).parts
         if not _is_allowed_diagram_artifact_location(rel_parts):
-            raise SddProjectError("Rendered diagram path is not an SDD diagram artifact.")
+            raise SddProjectError(
+                "Rendered diagram path is not an SDD diagram artifact."
+            )
         return candidate
 
     def _read_optional_file(
@@ -1441,7 +1476,9 @@ class SddProjectService:
             content=content,
         )
 
-    def _read_file_metadata(self, workspace: Path, relative_path: str) -> SddFile | None:
+    def _read_file_metadata(
+        self, workspace: Path, relative_path: str
+    ) -> SddFile | None:
         path = _safe_resolve(workspace / relative_path)
         if path is None or not _is_relative_to(path, workspace) or not path.is_file():
             return None

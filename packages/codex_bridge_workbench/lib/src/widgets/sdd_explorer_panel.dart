@@ -1542,6 +1542,8 @@ class _OverviewTab extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 14),
+        _ProjectCharterOverview(project: project, client: client),
+        const SizedBox(height: 12),
         if (showCuratorUpdate && MediaQuery.sizeOf(context).width >= 620)
           _LatestCuratorOverviewCard(
             client: client,
@@ -1619,6 +1621,313 @@ class _OverviewTab extends StatelessWidget {
             title: 'No specs',
             detail: 'This project has no readable SDD specs yet.',
           ),
+      ],
+    );
+  }
+}
+
+class _ProjectCharterOverview extends StatelessWidget {
+  const _ProjectCharterOverview({required this.project, required this.client});
+
+  final SddProject project;
+  final SddExplorerClient client;
+
+  @override
+  Widget build(BuildContext context) {
+    final charter = project.projectCharter;
+    return _PanelCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              Icon(
+                charter == null
+                    ? Icons.description_outlined
+                    : Icons.verified_outlined,
+                color: charter == null
+                    ? _WorkbenchColors.warning
+                    : const Color(0xFF76E4A6),
+                size: 20,
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  'Project Charter',
+                  style: TextStyle(
+                    color: _WorkbenchColors.onBackground,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              _SmallBadge(charter == null ? 'Missing' : 'Approved'),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            charter == null
+                ? 'The approved source contract is not available.'
+                : 'Approved scope, roles, workflows, acceptance criteria, and release expectations.',
+            style: const TextStyle(
+              color: _WorkbenchColors.secondaryText,
+              fontSize: 13,
+              height: 1.4,
+            ),
+          ),
+          if (charter != null) ...<Widget>[
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: <Widget>[
+                IconButton(
+                  tooltip: 'Share Project Charter by email',
+                  onPressed: () => _showProjectCharterShareDialog(
+                    context,
+                    project: project,
+                    client: client,
+                  ),
+                  icon: const Icon(Icons.mail_outline_rounded),
+                ),
+                const SizedBox(width: 6),
+                FilledButton.icon(
+                  onPressed: () => _showProjectCharterReader(
+                    context,
+                    project: project,
+                    client: client,
+                  ),
+                  icon: const Icon(Icons.menu_book_rounded, size: 18),
+                  label: const Text('Read charter'),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+Future<void> _showProjectCharterReader(
+  BuildContext context, {
+  required SddProject project,
+  required SddExplorerClient client,
+}) async {
+  final charter = project.projectCharter;
+  if (charter == null || !charter.hasContent) return;
+  await showDialog<void>(
+    context: context,
+    builder: (dialogContext) {
+      final mobile = MediaQuery.sizeOf(dialogContext).width < 620;
+      final content = Scaffold(
+        backgroundColor: _WorkbenchColors.background,
+        appBar: AppBar(
+          backgroundColor: _WorkbenchColors.surface,
+          title: const Text('Project Charter'),
+          actions: <Widget>[
+            IconButton(
+              tooltip: 'Share by email',
+              onPressed: () => _showProjectCharterShareDialog(
+                dialogContext,
+                project: project,
+                client: client,
+              ),
+              icon: const Icon(Icons.mail_outline_rounded),
+            ),
+            IconButton(
+              tooltip: 'Close',
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              icon: const Icon(Icons.close_rounded),
+            ),
+          ],
+        ),
+        body: SafeArea(
+          top: false,
+          child: SingleChildScrollView(
+            padding: EdgeInsets.fromLTRB(
+              mobile ? 18 : 28,
+              24,
+              mobile ? 18 : 28,
+              40,
+            ),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 720),
+                child: SelectionArea(
+                  child: _ReadableMarkdownView(
+                    text: charter.content!,
+                    comfortable: true,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      if (mobile) return Dialog.fullscreen(child: content);
+      return Dialog(
+        insetPadding: const EdgeInsets.all(28),
+        clipBehavior: Clip.antiAlias,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 880, maxHeight: 900),
+          child: content,
+        ),
+      );
+    },
+  );
+}
+
+Future<void> _showProjectCharterShareDialog(
+  BuildContext context, {
+  required SddProject project,
+  required SddExplorerClient client,
+}) async {
+  await showDialog<void>(
+    context: context,
+    builder: (dialogContext) =>
+        _ProjectCharterShareDialog(project: project, client: client),
+  );
+}
+
+class _ProjectCharterShareDialog extends StatefulWidget {
+  const _ProjectCharterShareDialog({
+    required this.project,
+    required this.client,
+  });
+
+  final SddProject project;
+  final SddExplorerClient client;
+
+  @override
+  State<_ProjectCharterShareDialog> createState() =>
+      _ProjectCharterShareDialogState();
+}
+
+class _ProjectCharterShareDialogState
+    extends State<_ProjectCharterShareDialog> {
+  final TextEditingController _recipientsController = TextEditingController();
+  final TextEditingController _messageController = TextEditingController();
+  bool _includeFullDocument = true;
+  bool _sending = false;
+  String? _errorText;
+
+  @override
+  void dispose() {
+    _recipientsController.dispose();
+    _messageController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _send() async {
+    final recipients = _recipientsController.text
+        .split(RegExp(r'[,;\n]'))
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toList(growable: false);
+    if (recipients.isEmpty) {
+      setState(() => _errorText = 'Enter at least one email address.');
+      return;
+    }
+    setState(() {
+      _sending = true;
+      _errorText = null;
+    });
+    try {
+      await widget.client.shareProjectCharter(
+        workspacePath: widget.project.workspacePath,
+        recipients: recipients,
+        includeFullDocument: _includeFullDocument,
+        message: _messageController.text,
+      );
+      if (!mounted) return;
+      final messenger = ScaffoldMessenger.of(context);
+      Navigator.of(context).pop();
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Project Charter sent.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _sending = false;
+        _errorText = error.toString().replaceFirst('Exception: ', '');
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Share Project Charter'),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              TextField(
+                controller: _recipientsController,
+                enabled: !_sending,
+                keyboardType: TextInputType.emailAddress,
+                autofillHints: const <String>[AutofillHints.email],
+                decoration: const InputDecoration(
+                  labelText: 'Recipients',
+                  hintText: 'name@example.com',
+                  prefixIcon: Icon(Icons.alternate_email_rounded),
+                ),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: _messageController,
+                enabled: !_sending,
+                minLines: 2,
+                maxLines: 4,
+                decoration: const InputDecoration(
+                  labelText: 'Message (optional)',
+                  prefixIcon: Icon(Icons.notes_rounded),
+                  alignLabelWithHint: true,
+                ),
+              ),
+              const SizedBox(height: 8),
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                value: _includeFullDocument,
+                onChanged: _sending
+                    ? null
+                    : (value) =>
+                          setState(() => _includeFullDocument = value ?? true),
+                title: const Text('Include full document'),
+                subtitle: const Text(
+                  'Adds the complete charter to the email and attachment.',
+                ),
+                controlAffinity: ListTileControlAffinity.leading,
+              ),
+              if (_errorText != null) ...<Widget>[
+                const SizedBox(height: 8),
+                Text(
+                  _errorText!,
+                  style: const TextStyle(color: _WorkbenchColors.warning),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: _sending ? null : () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton.icon(
+          onPressed: _sending ? null : _send,
+          icon: _sending
+              ? const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.send_rounded, size: 18),
+          label: Text(_sending ? 'Sending' : 'Send'),
+        ),
       ],
     );
   }
@@ -10098,10 +10407,12 @@ class _ReadableMarkdownView extends StatelessWidget {
   const _ReadableMarkdownView({
     required this.text,
     this.skipFirstHeading = false,
+    this.comfortable = false,
   });
 
   final String text;
   final bool skipFirstHeading;
+  final bool comfortable;
 
   @override
   Widget build(BuildContext context) {
@@ -10118,30 +10429,33 @@ class _ReadableMarkdownView extends StatelessWidget {
         style: TextStyle(color: _WorkbenchColors.secondaryText),
       );
     }
-    return _MarkdownBlocksView(blocks: visibleBlocks);
+    return _MarkdownBlocksView(blocks: visibleBlocks, comfortable: comfortable);
   }
 }
 
 class _MarkdownBlocksView extends StatelessWidget {
-  const _MarkdownBlocksView({required this.blocks});
+  const _MarkdownBlocksView({required this.blocks, this.comfortable = false});
 
   final List<_MarkdownBlock> blocks;
+  final bool comfortable;
 
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        for (final block in blocks) _MarkdownBlockView(block: block),
+        for (final block in blocks)
+          _MarkdownBlockView(block: block, comfortable: comfortable),
       ],
     );
   }
 }
 
 class _MarkdownBlockView extends StatelessWidget {
-  const _MarkdownBlockView({required this.block});
+  const _MarkdownBlockView({required this.block, this.comfortable = false});
 
   final _MarkdownBlock block;
+  final bool comfortable;
 
   @override
   Widget build(BuildContext context) {
@@ -10154,14 +10468,20 @@ class _MarkdownBlockView extends StatelessWidget {
           block.text,
           style: TextStyle(
             color: _WorkbenchColors.onBackground,
-            fontSize: block.level <= 1 ? 16 : 14,
+            fontSize: comfortable
+                ? (block.level <= 1 ? 24 : 19)
+                : (block.level <= 1 ? 16 : 14),
             fontWeight: FontWeight.w900,
           ),
         ),
-        _MarkdownBlockKind.bullet => _MarkdownBullet(text: block.text),
+        _MarkdownBlockKind.bullet => _MarkdownBullet(
+          text: block.text,
+          comfortable: comfortable,
+        ),
         _MarkdownBlockKind.numbered => _MarkdownBullet(
           text: block.text,
           marker: '${block.level}.',
+          comfortable: comfortable,
         ),
         _MarkdownBlockKind.check => _MarkdownBullet(
           text: block.text,
@@ -10171,13 +10491,14 @@ class _MarkdownBlockView extends StatelessWidget {
           iconColor: block.checked == true
               ? const Color(0xFF76E4A6)
               : _WorkbenchColors.secondaryText,
+          comfortable: comfortable,
         ),
         _MarkdownBlockKind.paragraph => Text(
           block.text,
-          style: const TextStyle(
+          style: TextStyle(
             color: _WorkbenchColors.secondaryText,
-            fontSize: 12.5,
-            height: 1.35,
+            fontSize: comfortable ? 16 : 12.5,
+            height: comfortable ? 1.55 : 1.35,
           ),
         ),
       },
@@ -10191,12 +10512,14 @@ class _MarkdownBullet extends StatelessWidget {
     this.marker,
     this.icon,
     this.iconColor,
+    this.comfortable = false,
   });
 
   final String text;
   final String? marker;
   final IconData? icon;
   final Color? iconColor;
+  final bool comfortable;
 
   @override
   Widget build(BuildContext context) {
@@ -10218,10 +10541,10 @@ class _MarkdownBullet extends StatelessWidget {
         Expanded(
           child: Text(
             text,
-            style: const TextStyle(
+            style: TextStyle(
               color: _WorkbenchColors.secondaryText,
-              fontSize: 12.5,
-              height: 1.3,
+              fontSize: comfortable ? 16 : 12.5,
+              height: comfortable ? 1.5 : 1.3,
             ),
           ),
         ),
