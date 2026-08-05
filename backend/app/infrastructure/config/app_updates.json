@@ -75,7 +75,7 @@
     },
     "releaseTagPattern": "android-preview-v*",
     "repo": "brunojaime/puertos2",
-    "requiredMinimumBuild": null,
+    "requiredMinimumBuild": 2,
     "runtimeProfile": "preview",
     "verifiedPackageIds": {}
   },
