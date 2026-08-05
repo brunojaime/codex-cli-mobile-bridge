@@ -209,9 +209,7 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     assert brand["standard"] == PROJECT_CHARTER_STANDARD_ID
     assert brand["logo_status"] == "generated"
     render_manifest = json.loads(
-        (project / PROJECT_CHARTER_RENDER_MANIFEST_PATH).read_text(
-            encoding="utf-8"
-        )
+        (project / PROJECT_CHARTER_RENDER_MANIFEST_PATH).read_text(encoding="utf-8")
     )
     render_html = (
         project / "docs/project-management/acta/current/render.html"
@@ -226,9 +224,9 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     )
     assert render_manifest["status"] == "rendered"
     assert render_manifest["validation"]["blocking_issue_count"] == 0
-    routing = (
-        project / "docs/project-management/context-routing.md"
-    ).read_text(encoding="utf-8")
+    routing = (project / "docs/project-management/context-routing.md").read_text(
+        encoding="utf-8"
+    )
     assert "For charter-only work, read:" in routing
     assert "docs/project-management/acta/current/acta.md" in routing
     assert "Do not read WBS, roles, risks, or alternatives" in routing
@@ -309,6 +307,7 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     assert "codex_app_updater:" in pubspec
     assert "ref: 374f0e3180dc8d80214dcaa4374073d8e4ab1340" in pubspec
     assert "codex_bridge_workbench:" in pubspec
+    assert "ref: cb239d40e8fdd2edc4b9140dc2c63e1cc989a682" in pubspec
     android_manifest = (
         project / "apps/mobile/android/app/src/main/AndroidManifest.xml"
     ).read_text(encoding="utf-8")
@@ -921,7 +920,9 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
     assert android_preview_content.index(
         '"$apksigner" verify'
     ) < android_preview_content.index('git push origin "$tag"')
-    assert "GitHub Actions Android preview workflow failed" not in android_preview_content
+    assert (
+        "GitHub Actions Android preview workflow failed" not in android_preview_content
+    )
     register_script_content = (
         tmp_path / "clinica-norte/scripts/register_installable_app.sh"
     ).read_text(encoding="utf-8")
@@ -2973,6 +2974,7 @@ def test_generator_writes_flutter_mobile_v1_template(tmp_path: Path) -> None:
     assert "codex_app_updater:" in pubspec
     assert "ref: 374f0e3180dc8d80214dcaa4374073d8e4ab1340" in pubspec
     assert "codex_bridge_workbench:" in pubspec
+    assert "ref: cb239d40e8fdd2edc4b9140dc2c63e1cc989a682" in pubspec
     android_manifest = (mobile / "android/app/src/main/AndroidManifest.xml").read_text(
         encoding="utf-8"
     )

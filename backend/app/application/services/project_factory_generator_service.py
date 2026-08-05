@@ -9450,7 +9450,7 @@ dependencies:
     git:
       url: https://github.com/brunojaime/codex-cli-mobile-bridge.git
       path: packages/codex_bridge_workbench
-      ref: main
+      ref: cb239d40e8fdd2edc4b9140dc2c63e1cc989a682
 
 dev_dependencies:
   flutter_test:
@@ -13055,9 +13055,7 @@ def _charter_seed(manifest: dict[str, Any]) -> dict[str, object]:
         else {}
     )
     decisions = (
-        dict(seed.get("decisions"))
-        if isinstance(seed.get("decisions"), dict)
-        else {}
+        dict(seed.get("decisions")) if isinstance(seed.get("decisions"), dict) else {}
     )
     return {
         "project_name": str(
@@ -13125,9 +13123,7 @@ def _initial_charter_markdown(seed: dict[str, object]) -> str:
     project_name = str(seed["project_name"])
     client = str(seed["client"] or "Pendiente de definicion")
     project_objective = str(seed["project_objective"])
-    product_objective = str(
-        seed["product_objective"] or "Pendiente de definicion"
-    )
+    product_objective = str(seed["product_objective"] or "Pendiente de definicion")
     benefits = list(seed["benefits"]) if isinstance(seed["benefits"], list) else []
     scope = list(seed["scope"]) if isinstance(seed["scope"], list) else []
     pending = _pending_definitions(seed)
@@ -13186,7 +13182,11 @@ Este documento inicia el marco formal del proyecto {project_name}. La informacio
 
 
 def _pending_definitions(seed: dict[str, object]) -> list[str]:
-    pending = list(seed["pending_definitions"]) if isinstance(seed["pending_definitions"], list) else []
+    pending = (
+        list(seed["pending_definitions"])
+        if isinstance(seed["pending_definitions"], list)
+        else []
+    )
     if not seed["client"]:
         pending.append("Confirmar cliente u organizacion destinataria del acta.")
     if not seed["product_objective"]:
@@ -13232,11 +13232,15 @@ def _charter_metadata(
                 notes="Mapped from the Project Factory primary goal.",
             ),
             "product_objective": CharterFieldSource(
-                source=str(seed["source"]) if seed["product_objective"] else "pending_definition",
+                source=str(seed["source"])
+                if seed["product_objective"]
+                else "pending_definition",
                 confidence=1.0 if seed["product_objective"] else 0.0,
             ),
             "expected_benefits": CharterFieldSource(
-                source=str(seed["source"]) if seed["benefits"] else "pending_definition",
+                source=str(seed["source"])
+                if seed["benefits"]
+                else "pending_definition",
                 confidence=1.0 if seed["benefits"] else 0.0,
             ),
             "preliminary_scope": CharterFieldSource(
@@ -13285,7 +13289,9 @@ def _charter_brand_metadata(manifest: dict[str, Any]) -> ProjectCharterBrandMeta
     )
 
 
-def _brand_asset_for_role(project_assets: object, role: str) -> dict[str, object] | None:
+def _brand_asset_for_role(
+    project_assets: object, role: str
+) -> dict[str, object] | None:
     if not isinstance(project_assets, list):
         return None
     for item in project_assets:
