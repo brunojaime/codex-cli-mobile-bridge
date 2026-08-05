@@ -37,7 +37,7 @@
     "releaseChannel": "dev",
     "releaseTagPattern": "android-dev-v*",
     "repo": "brunojaime/codex-cli-mobile-bridge",
-    "requiredMinimumBuild": null,
+    "requiredMinimumBuild": 134,
     "verifiedPackageIds": {
       "android-dev-v*": "com.example.codex_mobile_frontend.dev",
       "codex-mobile-dev*.apk": "com.example.codex_mobile_frontend.dev"
