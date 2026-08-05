@@ -70,12 +70,12 @@
     "releaseMetadata": {
       "initialPreviewRelease": true,
       "latestAssetName": "puertos2.apk",
-      "releaseTag": "android-preview-v0.1.0-build.2",
+      "releaseTag": "android-preview-v0.1.0-build.3",
       "releaseTagPattern": "android-preview-v*"
     },
     "releaseTagPattern": "android-preview-v*",
     "repo": "brunojaime/puertos2",
-    "requiredMinimumBuild": 2,
+    "requiredMinimumBuild": 3,
     "runtimeProfile": "preview",
     "verifiedPackageIds": {}
   },
