@@ -1919,6 +1919,37 @@ async function findPreviewUserByEmail(env, email) {
     .first();
 }
 
+async function updatePreviewUserPassword(env, user, password) {
+  const updatedAt = nowIso();
+  const nextPasswordHash = await passwordHash(env, password);
+  const result = await env.PREVIEW_DB
+    .prepare(
+      `UPDATE preview_users
+       SET password_hash = ?1, updated_at = ?2
+       WHERE source_app = ?3 AND app_slug = ?4 AND user_id = ?5 AND email = ?6`,
+    )
+    .bind(
+      nextPasswordHash,
+      updatedAt,
+      SOURCE_APP,
+      SOURCE_APP,
+      user.user_id,
+      user.email,
+    )
+    .run();
+  if (Number(result?.meta?.changes || 0) !== 1) {
+    return { ok: false };
+  }
+  return {
+    ok: true,
+    user: {
+      ...user,
+      password_hash: nextPasswordHash,
+      updated_at: updatedAt,
+    },
+  };
+}
+
 function publicUser(row) {
   return {
     id: row.user_id,
@@ -2117,6 +2148,7 @@ async function handlePreviewInviteAccept(request, env) {
     return apiError('invite_email_mismatch', 'This invite is bound to a different email address.', 403);
   }
   let user = await findPreviewUserByEmail(env, email);
+  let credentialStatus = 'created';
   if (!user) {
     const userCount = await countPreviewUsers(env);
     const roles = userCount === 0 ? ['owner', 'admin'] : ['admin'];
@@ -2126,15 +2158,32 @@ async function handlePreviewInviteAccept(request, env) {
       displayName: body.displayName || email,
       roles,
     });
+  } else {
+    const updated = await updatePreviewUserPassword(env, user, password);
+    if (!updated.ok) {
+      return apiError('credential_persistence_failed', 'Preview credentials could not be saved.', 500);
+    }
+    user = updated.user;
+    credentialStatus = 'updated';
   }
   const marked = await markInviteUsed(env, lookup.row);
   if (!marked.ok) {
     return apiError(marked.code, 'Preview invite token cannot be accepted.', marked.status);
   }
   const session = await createPreviewSession(env, user);
+  await recordAuditEvent(
+    env,
+    credentialStatus === 'created' ? 'invite_user_created' : 'invite_credentials_updated',
+    email,
+    {
+      inviteId: verified.payload.invite_id,
+      userId: user.user_id,
+    },
+  );
   await recordAuditEvent(env, 'invite_password_setup', email, {
     inviteId: verified.payload.invite_id,
     userId: user.user_id,
+    credentialStatus,
     sessionExpiresAt: session.expiresAt,
   });
   return json({
@@ -2715,6 +2764,26 @@ const setupToken = signToken({
   iat: now,
   exp: now + 3600,
 }, secret);
+const existingUserSetupToken = signToken({
+  aud: 'codex.web-preview',
+  scope: 'web_preview:access',
+  preview_id: 'wp-__SOURCE_APP__',
+  source_app: '__SOURCE_APP__',
+  app_slug: '__SOURCE_APP__',
+  invite_id: 'wpi-existing-user-setup',
+  iat: now,
+  exp: now + 3600,
+}, secret);
+const failedPersistenceToken = signToken({
+  aud: 'codex.web-preview',
+  scope: 'web_preview:access',
+  preview_id: 'wp-__SOURCE_APP__',
+  source_app: '__SOURCE_APP__',
+  app_slug: '__SOURCE_APP__',
+  invite_id: 'wpi-failed-persistence',
+  iat: now,
+  exp: now + 3600,
+}, secret);
 const expiredToken = signToken({
   aud: 'codex.web-preview',
   scope: 'web_preview:access',
@@ -2774,6 +2843,8 @@ const d1Rows = new Map();
 for (const row of [
   inviteRow('wpi-local', validToken),
   inviteRow('wpi-setup', setupToken),
+  inviteRow('wpi-existing-user-setup', existingUserSetupToken, { email: 'admin@example.com' }),
+  inviteRow('wpi-failed-persistence', failedPersistenceToken, { email: 'admin@example.com' }),
   inviteRow('wpi-revoked', revokedToken, { revoked_at: new Date().toISOString() }),
   inviteRow('wpi-d1-expired', d1ExpiredToken, { expires_at: new Date(Date.now() - 1000).toISOString() }),
 ]) {
@@ -2781,6 +2852,7 @@ for (const row of [
 }
 const previewUsers = new Map();
 const previewSessions = new Map();
+let failNextPreviewUserUpdate = false;
 const previewBusinessRecords = [];
 const previewNotifications = [
   {
@@ -2860,19 +2932,36 @@ function fakeD1() {
                 return { meta: { changes: 0 } };
               }
               if (normalized.startsWith('update preview_users')) {
-                const [passwordHash, rolesJson, updatedAt, sourceApp, appSlug, email] = args;
-                for (const [userId, row] of previewUsers.entries()) {
-                  if (row.source_app === sourceApp && row.app_slug === appSlug && row.email === email) {
-                    previewUsers.set(userId, {
-                      ...row,
-                      password_hash: passwordHash,
-                      roles_json: rolesJson,
-                      updated_at: updatedAt,
-                    });
-                    return { meta: { changes: 1 } };
-                  }
+                if (failNextPreviewUserUpdate) {
+                  failNextPreviewUserUpdate = false;
+                  return { meta: { changes: 0 } };
                 }
-                return { meta: { changes: 0 } };
+                if (normalized.includes('roles_json =')) {
+                  const [passwordHash, rolesJson, updatedAt, sourceApp, appSlug, email] = args;
+                  for (const [userId, row] of previewUsers.entries()) {
+                    if (row.source_app === sourceApp && row.app_slug === appSlug && row.email === email) {
+                      previewUsers.set(userId, {
+                        ...row,
+                        password_hash: passwordHash,
+                        roles_json: rolesJson,
+                        updated_at: updatedAt,
+                      });
+                      return { meta: { changes: 1 } };
+                    }
+                  }
+                  return { meta: { changes: 0 } };
+                }
+                const [passwordHash, updatedAt, sourceApp, appSlug, userId, email] = args;
+                const row = previewUsers.get(userId);
+                if (!row || row.source_app !== sourceApp || row.app_slug !== appSlug || row.email !== email) {
+                  return { meta: { changes: 0 } };
+                }
+                previewUsers.set(userId, {
+                  ...row,
+                  password_hash: passwordHash,
+                  updated_at: updatedAt,
+                });
+                return { meta: { changes: 1 } };
               }
               if (normalized.startsWith('insert into preview_users')) {
                 const [userId, sourceApp, appSlug, email, displayName, passwordHash, rolesJson, createdAt, updatedAt] = args;
@@ -3102,6 +3191,54 @@ const duplicateInviteAccept = await fetchJson('/__SOURCE_APP__/api/invites/accep
 });
 assert.equal(duplicateInviteAccept.status, 403);
 assert.equal((await duplicateInviteAccept.json()).error.code, 'used_invite_token');
+
+const acceptedExistingUserInvite = await fetchJson('/__SOURCE_APP__/api/invites/accept', {
+  method: 'POST',
+  body: {
+    inviteToken: existingUserSetupToken,
+    email: 'admin@example.com',
+    password: 'invite-rotated-password',
+    passwordConfirmation: 'invite-rotated-password',
+  },
+});
+assert.equal(acceptedExistingUserInvite.status, 200);
+const acceptedExistingUserInviteBody = await acceptedExistingUserInvite.json();
+assert.equal(acceptedExistingUserInviteBody.user.id, bootstrapBody.user.id);
+
+const staleInvitePasswordLogin = await fetchJson('/__SOURCE_APP__/api/auth/login', {
+  method: 'POST',
+  body: { email: 'admin@example.com', password: 'rotated-preview-password' },
+});
+assert.equal(staleInvitePasswordLogin.status, 401);
+assert.equal((await staleInvitePasswordLogin.json()).error.code, 'invalid_credentials');
+
+const invitedPasswordLogin = await fetchJson('/__SOURCE_APP__/api/auth/login', {
+  method: 'POST',
+  body: { email: 'admin@example.com', password: 'invite-rotated-password' },
+});
+assert.equal(invitedPasswordLogin.status, 200);
+assert.equal((await invitedPasswordLogin.json()).user.id, bootstrapBody.user.id);
+
+failNextPreviewUserUpdate = true;
+const failedPersistenceInvite = await fetchJson('/__SOURCE_APP__/api/invites/accept', {
+  method: 'POST',
+  body: {
+    inviteToken: failedPersistenceToken,
+    email: 'admin@example.com',
+    password: 'must-not-be-saved',
+    passwordConfirmation: 'must-not-be-saved',
+  },
+});
+assert.equal(failedPersistenceInvite.status, 500);
+assert.equal((await failedPersistenceInvite.json()).error.code, 'credential_persistence_failed');
+const failedPersistenceRow = d1Rows.get(`wpi-failed-persistence:${sha256Hex(failedPersistenceToken)}`);
+assert.equal(failedPersistenceRow.used_at, null);
+
+const unchangedPasswordLogin = await fetchJson('/__SOURCE_APP__/api/auth/login', {
+  method: 'POST',
+  body: { email: 'admin@example.com', password: 'invite-rotated-password' },
+});
+assert.equal(unchangedPasswordLogin.status, 200);
 
 const usedInviteAccessRefresh = await fetchPath(`/__SOURCE_APP__/__preview/access?token=${setupToken}`);
 assert.equal(usedInviteAccessRefresh.status, 302);
@@ -5974,8 +6111,8 @@ if [[ "$FRONTEND_STRATEGY" == "flutter" ]]; then
   ! grep -q "NotificationsScreen" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "deterministic Flutter baseline must not impose scaffold-owned product screens"
   ! grep -q "AdminScreen" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "deterministic Flutter baseline must not impose scaffold-owned product screens"
   ! grep -q "Invite token or link" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "URL invite flow must not ask users to paste invite tokens"
-  grep -q "Crear contrasena" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "invite activation password label missing"
-  grep -q "Repetir contrasena" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "invite activation password confirmation label missing"
+  grep -q "Crear contraseña" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "invite activation password label missing"
+  grep -q "Repetir contraseña" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "invite activation password confirmation label missing"
   grep -q "Aceptar invitacion" "$ROOT_DIR/apps/mobile/lib/src/screens.dart" || fail "invite activation action missing"
   english_create_label="Create"" password"
   english_repeat_label="Repeat"" password"
@@ -10888,8 +11025,8 @@ void main() {{
       ),
     ));
 
-    expect(find.text('Crear contrasena'), findsOneWidget);
-    expect(find.text('Repetir contrasena'), findsOneWidget);
+    expect(find.text('Crear contraseña'), findsOneWidget);
+    expect(find.text('Repetir contraseña'), findsOneWidget);
     expect(find.byType(TextField), findsNWidgets(3));
     expect(find.byType(FilledButton), findsOneWidget);
     expect(find.text('Create' ' password'), findsNothing);
@@ -10917,8 +11054,8 @@ void main() {{
     ));
 
     expect(find.text('Iniciar sesion'), findsOneWidget);
-    expect(find.text('Crear contrasena'), findsNothing);
-    expect(find.text('Repetir contrasena'), findsNothing);
+    expect(find.text('Crear contraseña'), findsNothing);
+    expect(find.text('Repetir contraseña'), findsNothing);
     expect(find.text('Invite token or link'), findsNothing);
     expect(find.byType(TextField), findsNWidgets(2));
     await tester.enterText(find.byType(TextField).at(0), 'admin@example.com');

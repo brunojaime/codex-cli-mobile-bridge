@@ -3103,6 +3103,9 @@ def test_generated_web_preview_bundle_is_validable_locally(tmp_path: Path) -> No
     assert "/api/invites/accept" in worker_text
     assert "handlePreviewInviteAccept" in worker_text
     assert "invite_password_setup" in worker_text
+    assert "updatePreviewUserPassword" in worker_text
+    assert "invite_credentials_updated" in worker_text
+    assert "credential_persistence_failed" in worker_text
     assert "/api/admin/bootstrap" in worker_text
     assert "/api/app-updates/current" in worker_text
     assert "/api/business/records" in worker_text
