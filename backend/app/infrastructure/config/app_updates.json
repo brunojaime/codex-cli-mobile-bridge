@@ -57,6 +57,28 @@
       "android-v1.0.0-build.14": "com.ludmilo.gestion"
     }
   },
+  "puertos2": {
+    "apkAssetPattern": "puertos2*.apk",
+    "displayName": "puertos2 Preview",
+    "enabled": true,
+    "expectedPackageId": null,
+    "latestAssetName": "puertos2.apk",
+    "mockOrDemo": false,
+    "previewUrl": "https://preview.nienfos.com/puertos2",
+    "productionReady": false,
+    "releaseChannel": "prerelease",
+    "releaseMetadata": {
+      "initialPreviewRelease": true,
+      "latestAssetName": "puertos2.apk",
+      "releaseTag": "android-preview-v0.1.0-build.2",
+      "releaseTagPattern": "android-preview-v*"
+    },
+    "releaseTagPattern": "android-preview-v*",
+    "repo": "brunojaime/puertos2",
+    "requiredMinimumBuild": null,
+    "runtimeProfile": "preview",
+    "verifiedPackageIds": {}
+  },
   "rentid": {
     "apkAssetPattern": "rentid*.apk",
     "displayName": "Rent ID",
