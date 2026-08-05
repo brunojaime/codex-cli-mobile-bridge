@@ -1,6 +1,10 @@
 name: Android Release
 
 on:
+  push:
+    tags:
+      - "android-v*"
+      - "android-dev-v*"
   workflow_dispatch:
     inputs:
       channel:
