@@ -1168,6 +1168,12 @@ class _SddProjectViewState extends State<_SddProjectView> {
         selectedIcon: Icons.account_tree_rounded,
       ),
       _WorkbenchNavigationDestination(
+        label: 'Acta',
+        compactLabel: 'Acta',
+        icon: Icons.description_outlined,
+        selectedIcon: Icons.description_rounded,
+      ),
+      _WorkbenchNavigationDestination(
         label: 'Governance',
         compactLabel: 'Gov',
         icon: Icons.verified_outlined,
@@ -1208,6 +1214,7 @@ class _SddProjectViewState extends State<_SddProjectView> {
         onFeedback: widget.onFeedback,
         onCodexAction: widget.onCodexAction,
       ),
+      _ProjectCharterTab(project: widget.project, client: client),
       _GovernanceTab(project: widget.project),
     ];
     return LayoutBuilder(
@@ -1527,6 +1534,12 @@ class _OverviewTab extends StatelessWidget {
               onTap: () => onNavigate(3),
             ),
             _MetricTile(
+              label: 'Acta',
+              value: project.projectCharter == null ? 'Missing' : 'Available',
+              warning: project.projectCharter == null,
+              onTap: () => onNavigate(4),
+            ),
+            _MetricTile(
               label: 'Tasks',
               value: progress == null
                   ? 'Source only'
@@ -1635,6 +1648,7 @@ class _ProjectCharterOverview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final charter = project.projectCharter;
+    final status = _projectCharterStatus(charter);
     return _PanelCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1661,14 +1675,14 @@ class _ProjectCharterOverview extends StatelessWidget {
                   ),
                 ),
               ),
-              _SmallBadge(charter == null ? 'Missing' : 'Approved'),
+              _SmallBadge(charter == null ? 'Missing' : status),
             ],
           ),
           const SizedBox(height: 8),
           Text(
             charter == null
-                ? 'The approved source contract is not available.'
-                : 'Approved scope, roles, workflows, acceptance criteria, and release expectations.',
+                ? 'The project charter is not available for this workspace.'
+                : 'Client-facing project context, objectives, benefits, scope, and pending definitions.',
             style: const TextStyle(
               color: _WorkbenchColors.secondaryText,
               fontSize: 13,
@@ -1706,6 +1720,151 @@ class _ProjectCharterOverview extends StatelessWidget {
       ),
     );
   }
+}
+
+class _ProjectCharterTab extends StatelessWidget {
+  const _ProjectCharterTab({required this.project, required this.client});
+
+  final SddProject project;
+  final SddExplorerClient client;
+
+  @override
+  Widget build(BuildContext context) {
+    final charter = project.projectCharter;
+    if (charter == null || !charter.hasContent) {
+      return const _ProjectCharterMissing();
+    }
+    return ListView(
+      key: const Key('sdd-project-charter-tab'),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 28),
+      children: <Widget>[
+        _PanelCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Row(
+                children: <Widget>[
+                  const Icon(
+                    Icons.description_rounded,
+                    color: _WorkbenchColors.primary,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      charter.title?.trim().isNotEmpty == true
+                          ? charter.title!
+                          : 'Acta de Proyecto',
+                      style: const TextStyle(
+                        color: _WorkbenchColors.onBackground,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                  _SmallBadge(_projectCharterStatus(charter)),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                charter.path,
+                style: const TextStyle(
+                  color: _WorkbenchColors.secondaryText,
+                  fontSize: 12,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: <Widget>[
+                  OutlinedButton.icon(
+                    onPressed: () => _showProjectCharterShareDialog(
+                      context,
+                      project: project,
+                      client: client,
+                    ),
+                    icon: const Icon(Icons.mail_outline_rounded, size: 18),
+                    label: const Text('Share'),
+                  ),
+                  FilledButton.icon(
+                    onPressed: () => _showProjectCharterReader(
+                      context,
+                      project: project,
+                      client: client,
+                    ),
+                    icon: const Icon(Icons.open_in_full_rounded, size: 18),
+                    label: const Text('Full screen'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        _PanelCard(
+          child: SelectionArea(
+            child: _ReadableMarkdownView(
+              text: charter.content!,
+              comfortable: true,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ProjectCharterMissing extends StatelessWidget {
+  const _ProjectCharterMissing();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: Padding(
+        padding: EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Icon(
+              Icons.description_outlined,
+              size: 42,
+              color: _WorkbenchColors.warning,
+            ),
+            SizedBox(height: 14),
+            Text(
+              'Acta de Proyecto unavailable',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
+            ),
+            SizedBox(height: 8),
+            Text(
+              'Generate or restore docs/project-management/acta/current/acta.md for this workspace.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: _WorkbenchColors.secondaryText),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+String _projectCharterStatus(SddFile? charter) {
+  final content = charter?.content ?? '';
+  final match = RegExp(
+    r'^\s*-\s*(?:Estado|Status)\s*:\s*(.+?)\s*$',
+    caseSensitive: false,
+    multiLine: true,
+  ).firstMatch(content);
+  final value = match?.group(1)?.trim();
+  if (value == null || value.isEmpty) return 'Available';
+  return value
+      .split(RegExp(r'[ _-]+'))
+      .where((part) => part.isNotEmpty)
+      .map(
+        (part) => '${part[0].toUpperCase()}${part.substring(1).toLowerCase()}',
+      )
+      .join(' ');
 }
 
 Future<void> _showProjectCharterReader(

@@ -83,8 +83,18 @@ def test_context_pack_writes_ready_json_markdown_attaches_chat_and_persists(
         "android-preview-v0.1.0-build.1"
     )
     assert payload["resources"]["bridgeInstallable"]["sourceApp"] == "clinica-norte"
+    charter = payload["resources"]["projectCharter"]
+    assert charter["exists"] is True
+    assert charter["status"] == "draft"
+    assert charter["draftVersion"] == "v0.1"
+    assert charter["sourcePath"] == str(workspace / PROJECT_CHARTER_SOURCE_PATH)
+    assert any(
+        artifact["kind"] == "project_charter" for artifact in payload["artifacts"]
+    )
     assert "Do not recreate GitHub, Cloudflare Worker/route/D1" in markdown
     assert "mock, demo, localhost, placeholder" in markdown.lower()
+    assert "- Acta status: `draft`" in markdown
+    assert "first client-facing" in markdown
     phase = completed.phase(ProjectFactoryInitPhaseName.LLM_CONTEXT_PACK)
     assert phase.status == ProjectFactoryInitPhaseStatus.COMPLETED
     assert completed.context_pack is not None

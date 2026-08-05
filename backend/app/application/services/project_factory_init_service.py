@@ -78,6 +78,12 @@ from backend.app.domain.entities.project_factory_init import (
     ProjectFactoryInitRemoteResourceType,
     _phases_in_current_order,
 )
+from backend.app.domain.entities.project_management import (
+    PROJECT_CHARTER_METADATA_PATH,
+    PROJECT_CHARTER_RENDER_MANIFEST_PATH,
+    PROJECT_CHARTER_RENDER_PATH,
+    PROJECT_CHARTER_SOURCE_PATH,
+)
 from backend.app.domain.entities.agent_configuration import (
     AgentId,
     AgentTriggerSource,
@@ -962,8 +968,12 @@ class ProjectFactoryInitService:
         if not isinstance(manifest, dict):
             return False
         cloudflare = manifest.get("cloudflare")
-        resources = cloudflare.get("resources") if isinstance(cloudflare, dict) else None
-        worker_name = resources.get("worker_name") if isinstance(resources, dict) else None
+        resources = (
+            cloudflare.get("resources") if isinstance(cloudflare, dict) else None
+        )
+        worker_name = (
+            resources.get("worker_name") if isinstance(resources, dict) else None
+        )
         return not worker_name or str(worker_name) == "nienfos-preview-runtime"
 
     def _migrate_legacy_shared_worker_manifest(
@@ -3924,6 +3934,11 @@ class ProjectFactoryInitService:
                     kind="frontend_strategy_capabilities",
                     metadata=verification.get("capabilities", {}),
                 ),
+                ProjectFactoryInitArtifact(
+                    kind="project_charter",
+                    path=str(target / PROJECT_CHARTER_SOURCE_PATH),
+                    metadata=_project_charter_context(target),
+                ),
             ),
         )
         relationships = replace(
@@ -6028,15 +6043,8 @@ def _context_pack_result_payload(
         "llmOperationalGuidance": llm_guidance,
         "blockers": blockers,
         "remoteResources": remote_resources,
-        "artifacts": [
-            {
-                "phase": phase.name.value,
-                **artifact.to_payload(),
-            }
-            for phase in job.phases
-            for artifact in phase.artifacts
-        ],
-        "resources": _context_resource_summary(job),
+        "artifacts": _context_artifact_payloads(job, target=target),
+        "resources": _context_resource_summary(job, target=target),
         "businessPhaseRules": _business_phase_rules(),
     }
     return _redact_context_value(payload, sensitive_values)
@@ -6129,10 +6137,70 @@ def _llm_operational_guidance() -> list[str]:
         "Do not infer blockers from missing remote resources while the owning deterministic phase is queued or running.",
         "For github_repository, a missing GitHub repository before gh repo create completes is expected pending work, not a blocker.",
         "Ask the user for GitHub help only when blockers[] contains an explicit github_* blocker such as github_owner_missing, github_auth_required, github_repo_create_failed, or github_push_failed.",
+        "Treat resources.projectCharter as the first client-facing project document; preserve it, update it when scope changes, and expose its current status instead of assuming it is approved.",
     ]
 
 
-def _context_resource_summary(job: ProjectFactoryInitJob) -> dict[str, object]:
+def _context_artifact_payloads(
+    job: ProjectFactoryInitJob,
+    *,
+    target: Path,
+) -> list[dict[str, object]]:
+    payloads = [
+        {
+            "phase": phase.name.value,
+            **artifact.to_payload(),
+        }
+        for phase in job.phases
+        for artifact in phase.artifacts
+    ]
+    if not any(item.get("kind") == "project_charter" for item in payloads):
+        charter = _project_charter_context(target)
+        if charter["exists"]:
+            payloads.append(
+                {
+                    "phase": ProjectFactoryInitPhaseName.FLUTTER_OR_STRATEGY_BASELINE.value,
+                    "kind": "project_charter",
+                    "path": charter["sourcePath"],
+                    "metadata": charter,
+                }
+            )
+    return payloads
+
+
+def _project_charter_context(target: Path) -> dict[str, object]:
+    source_path = target / PROJECT_CHARTER_SOURCE_PATH
+    metadata_path = target / PROJECT_CHARTER_METADATA_PATH
+    render_path = target / PROJECT_CHARTER_RENDER_PATH
+    render_manifest_path = target / PROJECT_CHARTER_RENDER_MANIFEST_PATH
+    metadata: dict[str, object] = {}
+    if metadata_path.is_file():
+        try:
+            loaded = yaml.safe_load(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, yaml.YAMLError):
+            loaded = None
+        if isinstance(loaded, dict):
+            metadata = loaded
+    versions = metadata.get("versions")
+    versions = versions if isinstance(versions, dict) else {}
+    return {
+        "exists": source_path.is_file(),
+        "sourcePath": str(source_path),
+        "metadataPath": str(metadata_path),
+        "renderPath": str(render_path),
+        "renderManifestPath": str(render_manifest_path),
+        "renderExists": render_path.is_file(),
+        "status": str(metadata.get("status") or "available"),
+        "draftVersion": versions.get("draft"),
+        "deliveredVersion": versions.get("delivered"),
+    }
+
+
+def _context_resource_summary(
+    job: ProjectFactoryInitJob,
+    *,
+    target: Path,
+) -> dict[str, object]:
     resources = job.remote_resources
     github_repo = _first_resource(
         resources, ProjectFactoryInitRemoteResourceType.GITHUB_REPOSITORY
@@ -6198,6 +6266,7 @@ def _context_resource_summary(job: ProjectFactoryInitJob) -> dict[str, object]:
             if artifacts.get("feedback_updater_wiring")
             else None,
         },
+        "projectCharter": _project_charter_context(target),
     }
 
 
@@ -7089,6 +7158,7 @@ def _business_phase_rules() -> list[str]:
         "Do not switch to mock, demo, localhost, placeholder, or seeded local data unless the user explicitly asks for a demo/mock build.",
         "Do not recreate GitHub, Cloudflare Worker/route/D1, Android prerelease, Bridge installable, feedback, updater, or Workbench plumbing manually.",
         "Implement only product and business work on top of the initialized deterministic baseline.",
+        "Keep the Acta de Proyecto as the first client-facing source of truth; update its status and content when scope, objectives, or acceptance expectations change.",
         "Update specs, tasks, tests, and release evidence whenever product work changes behavior.",
     ]
 
@@ -7103,6 +7173,7 @@ def _context_pack_markdown(payload: dict[str, object]) -> str:
         resources.get("androidPreviewRelease") if isinstance(resources, dict) else {}
     )
     bridge = resources.get("bridgeInstallable") if isinstance(resources, dict) else {}
+    charter = resources.get("projectCharter") if isinstance(resources, dict) else {}
     blockers = (
         payload.get("blockers") if isinstance(payload.get("blockers"), list) else []
     )
@@ -7156,6 +7227,11 @@ def _context_pack_markdown(payload: dict[str, object]) -> str:
             f"- Android prerelease: {_markdown_value(android, 'releaseTag')}",
             f"- Android APK sha256: {_markdown_value(android, 'apkSha256')}",
             f"- Bridge installable status: {_markdown_value(bridge, 'status')}",
+            f"- Acta de Proyecto: {_markdown_value(charter, 'sourcePath')}",
+            f"- Acta status: {_markdown_value(charter, 'status')}",
+            f"- Acta draft version: {_markdown_value(charter, 'draftVersion')}",
+            f"- Acta delivered version: {_markdown_value(charter, 'deliveredVersion')}",
+            f"- Acta render: {_markdown_value(charter, 'renderPath')}",
             "",
             "## Business Phase Rules",
             "",

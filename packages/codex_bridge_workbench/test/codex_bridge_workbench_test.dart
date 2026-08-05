@@ -207,6 +207,31 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('Acta tab exposes the Project Charter directly', (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await _pumpWorkbench(
+      tester,
+      loader: (_) async => SddProject.fromJson(_projectJson()),
+    );
+    _openWorkbench(tester);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Acta').last);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('sdd-project-charter-tab')), findsOneWidget);
+    expect(find.text('Executive objective'), findsOneWidget);
+    expect(
+      find.textContaining('Replace manual port operations'),
+      findsOneWidget,
+    );
+    expect(find.text('Approved'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   test('SDD diagram model parses rendered SVG metadata', () {
     final diagram = SddDiagram.fromJson(<String, dynamic>{
       'path': 'specs/016/diagrams/browser-gateway.svg',

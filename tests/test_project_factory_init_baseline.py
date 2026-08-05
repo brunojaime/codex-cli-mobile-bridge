@@ -51,6 +51,11 @@ def test_frontend_baseline_generates_and_verifies_flutter_contracts(
     artifacts = {artifact.kind: artifact for artifact in phase.artifacts}
     assert artifacts["frontend_baseline"].metadata["status"] == "generated"
     assert artifacts["workbench_sdd_metadata"].metadata["sourceApp"] == "clinica-norte"
+    assert artifacts["project_charter"].path == str(
+        project / PROJECT_CHARTER_SOURCE_PATH
+    )
+    assert artifacts["project_charter"].metadata["exists"] is True
+    assert artifacts["project_charter"].metadata["status"] == "draft"
     feedback = artifacts["feedback_updater_wiring"].metadata
     assert feedback["feedbackTemplate"] is True
     assert feedback["appUpdater"] is True
@@ -62,12 +67,16 @@ def test_frontend_baseline_generates_and_verifies_flutter_contracts(
     assert runtime["dataPersistence"] == "cloudflare_d1"
     assert completed.relationships.generated_workspace_path == str(project)
     assert completed.relationships.workbench_scope_id == f"workspace:{project}"
-    assert completed.phase(
-        ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE
-    ).status == ProjectFactoryInitPhaseStatus.QUEUED
-    assert completed.phase(
-        ProjectFactoryInitPhaseName.BRIDGE_INSTALLABLE_REGISTRATION
-    ).status == ProjectFactoryInitPhaseStatus.QUEUED
+    assert (
+        completed.phase(ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE).status
+        == ProjectFactoryInitPhaseStatus.QUEUED
+    )
+    assert (
+        completed.phase(
+            ProjectFactoryInitPhaseName.BRIDGE_INSTALLABLE_REGISTRATION
+        ).status
+        == ProjectFactoryInitPhaseStatus.QUEUED
+    )
 
 
 def test_frontend_baseline_uses_real_project_factory_draft_contract(
@@ -98,13 +107,14 @@ def test_frontend_baseline_uses_real_project_factory_draft_contract(
     completed = service.run_frontend_baseline_phase(job.id)
 
     project = tmp_path / "projects/moldegom"
-    assert completed.phase(
-        ProjectFactoryInitPhaseName.FLUTTER_OR_STRATEGY_BASELINE
-    ).status == ProjectFactoryInitPhaseStatus.COMPLETED
+    assert (
+        completed.phase(ProjectFactoryInitPhaseName.FLUTTER_OR_STRATEGY_BASELINE).status
+        == ProjectFactoryInitPhaseStatus.COMPLETED
+    )
     manifest_text = (project / ".codex/project.yaml").read_text(encoding="utf-8")
     assert "name: Moldegom" in manifest_text
     assert "business_type: iot_manufacturing" in manifest_text
-    assert "primary_goal: \"Monitorear produccion con sensores IoT\"" in manifest_text
+    assert 'primary_goal: "Monitorear produccion con sensores IoT"' in manifest_text
     assert "business_type: project" not in manifest_text
     assert "Generated deterministic baseline" not in manifest_text
     acta = (project / PROJECT_CHARTER_SOURCE_PATH).read_text(encoding="utf-8")
@@ -255,15 +265,20 @@ def test_frontend_baseline_svelte_skips_android_and_installable_phases(
     project = tmp_path / "projects/clinica-norte"
     assert (project / "apps/web/package.json").is_file()
     assert not (project / "apps/mobile/pubspec.yaml").exists()
-    assert completed.phase(
-        ProjectFactoryInitPhaseName.FLUTTER_OR_STRATEGY_BASELINE
-    ).status == ProjectFactoryInitPhaseStatus.COMPLETED
-    assert completed.phase(
-        ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE
-    ).status == ProjectFactoryInitPhaseStatus.SKIPPED
-    assert completed.phase(
-        ProjectFactoryInitPhaseName.BRIDGE_INSTALLABLE_REGISTRATION
-    ).status == ProjectFactoryInitPhaseStatus.SKIPPED
+    assert (
+        completed.phase(ProjectFactoryInitPhaseName.FLUTTER_OR_STRATEGY_BASELINE).status
+        == ProjectFactoryInitPhaseStatus.COMPLETED
+    )
+    assert (
+        completed.phase(ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE).status
+        == ProjectFactoryInitPhaseStatus.SKIPPED
+    )
+    assert (
+        completed.phase(
+            ProjectFactoryInitPhaseName.BRIDGE_INSTALLABLE_REGISTRATION
+        ).status
+        == ProjectFactoryInitPhaseStatus.SKIPPED
+    )
     capabilities = next(
         artifact
         for artifact in completed.phase(
