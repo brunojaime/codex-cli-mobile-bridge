@@ -507,6 +507,7 @@ void main() {
 
     await controller.selectSession('context-only-session');
     await tester.pumpAndSettle();
+    await _scrollChatToProjectFactoryInit(tester);
 
     expect(apiClient.listDraftCalls, 0);
     expect(apiClient.getInitJobCalls, 1);
@@ -586,6 +587,7 @@ void main() {
 
     await controller.selectSession('resumable-session');
     await tester.pumpAndSettle();
+    await _scrollChatToProjectFactoryInit(tester);
 
     expect(find.text('Resumable'), findsOneWidget);
     expect(find.text('Continue'), findsOneWidget);
@@ -990,6 +992,12 @@ Future<void> _tapOkDaleProjectFactoryButton(
 
 Future<void> _pumpDeferredFullGenerationStart(WidgetTester tester) async {
   await tester.pumpAndSettle(const Duration(milliseconds: 10));
+}
+
+Future<void> _scrollChatToProjectFactoryInit(WidgetTester tester) async {
+  final scrollView = find.byType(CustomScrollView).first;
+  await tester.fling(scrollView, const Offset(0, 2400), 3000);
+  await tester.pumpAndSettle();
 }
 
 ProjectFactoryInitJob _initJob({
