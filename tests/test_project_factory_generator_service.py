@@ -136,6 +136,25 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     ]
     for relative_path in project_management_paths:
         assert (project / relative_path).is_file(), relative_path
+    charter = (project / PROJECT_CHARTER_SOURCE_PATH).read_text(encoding="utf-8")
+    charter_render = (
+        project / "docs/project-management/acta/current/render.html"
+    ).read_text(encoding="utf-8")
+    charter_readme = (
+        project / "docs/project-management/acta/README.md"
+    ).read_text(encoding="utf-8")
+    for internal_term in (
+        "Project Factory",
+        "Codex",
+        "Workbench",
+        "SDD",
+        "workspace",
+    ):
+        assert internal_term not in charter
+        assert internal_term not in charter_render
+    assert "Responsable: Equipo del proyecto" in charter
+    assert "Documento para revision del cliente" in charter_render
+    assert "Write every section from the client's perspective" in charter_readme
     assert result.git_status == "initialized_committed"
     assert _git(["log", "--oneline", "-1"], project).stdout
     assert (
@@ -278,6 +297,9 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
         encoding="utf-8"
     )
     main = (project / "apps/mobile/lib/main.dart").read_text(encoding="utf-8")
+    preview_main = (project / "apps/mobile/lib/main_preview.dart").read_text(
+        encoding="utf-8"
+    )
     pubspec = (project / "apps/mobile/pubspec.yaml").read_text(encoding="utf-8")
     assert "acceptPreviewInvite" in api_client
     assert "'/invites/accept'" in api_client
@@ -301,13 +323,21 @@ def test_generator_writes_foundation_and_rolls_no_secrets(tmp_path: Path) -> Non
     assert "CODEX_BRIDGE_WORKBENCH_URL" in main
     assert "CODEX_APP_UPDATER_ENABLED" in main
     assert "CODEX_APP_UPDATER_BRIDGE_URL" in main
+    assert "show kIsWeb" in main
+    assert main.count("enabled: !kIsWeb") >= 3
+    assert "defaultValue: true" not in main
+    assert "PackageInfo.fromPlatform" in main
+    assert "currentBuild: 1" not in main
+    assert "import 'main.dart' as product_app;" in preview_main
+    assert "product_app.main()" in preview_main
+    assert "Preview sign in" not in preview_main
     assert "workbenchBridgeUrl: apiBaseUrl" not in main
     assert "codex_developer_feedback_template:" in pubspec
     assert "ref: codex-developer-feedback-template-v0.4.7" in pubspec
     assert "codex_app_updater:" in pubspec
     assert "ref: 374f0e3180dc8d80214dcaa4374073d8e4ab1340" in pubspec
     assert "codex_bridge_workbench:" in pubspec
-    assert "ref: cb239d40e8fdd2edc4b9140dc2c63e1cc989a682" in pubspec
+    assert "package_info_plus: ^9.0.1" in pubspec
     android_manifest = (
         project / "apps/mobile/android/app/src/main/AndroidManifest.xml"
     ).read_text(encoding="utf-8")
@@ -835,7 +865,10 @@ def test_generator_writes_executable_publish_script(tmp_path: Path) -> None:
     web_build = (tmp_path / "clinica-norte/scripts/build_web_preview.sh").read_text(
         encoding="utf-8"
     )
-    assert 'CODEX_BRIDGE_DEV_MODE="${CODEX_BRIDGE_DEV_MODE:-false}"' in web_build
+    assert "--dart-define=CODEX_FEEDBACK_ENABLED=false" in web_build
+    assert "--dart-define=CODEX_BRIDGE_DEV_MODE=false" in web_build
+    assert "--dart-define=CODEX_APP_UPDATER_ENABLED=false" in web_build
+    assert "CODEX_FEEDBACK_ENABLED:-true" not in web_build
 
     android_preview = (
         tmp_path / "clinica-norte/.github/workflows/android-preview-release.yml"
@@ -2998,14 +3031,13 @@ def test_generator_writes_flutter_mobile_v1_template(tmp_path: Path) -> None:
     assert "APP_RUNTIME_PROFILE" in main
     assert "MockProjectApiClient" in main
     preview_main = (mobile / "lib/main_preview.dart").read_text(encoding="utf-8")
-    assert "ProjectApiClient" in preview_main
+    assert "product_app.main()" in preview_main
+    assert "DeveloperFeedbackTemplate" not in preview_main
     assert "MockProjectApiClient" not in preview_main
     assert "mock_api_client" not in preview_main
     assert "Enter demo as role" not in preview_main
     assert "seedRoles" not in preview_main
     assert "mock://local" not in preview_main
-    assert "CODEX_APP_UPDATER_ENABLED" in preview_main
-    assert "CodexAppUpdater" in preview_main
     api_client = (mobile / "lib/src/api_client.dart").read_text(encoding="utf-8")
     assert "/health" in api_client
     assert "/auth/register" in api_client
@@ -3108,6 +3140,9 @@ def test_generated_web_preview_bundle_is_validable_locally(tmp_path: Path) -> No
     assert "updatePreviewUserPassword" in worker_text
     assert "invite_credentials_updated" in worker_text
     assert "credential_persistence_failed" in worker_text
+    assert "body.rotateCredentials === true" in worker_text
+    assert "credentialStatus = 'preserved'" in worker_text
+    assert "admin_bootstrap_credentials_rotated" in worker_text
     assert "/api/admin/bootstrap" in worker_text
     assert "/api/app-updates/current" in worker_text
     assert "/api/business/records" in worker_text
@@ -3200,7 +3235,7 @@ def test_generated_web_preview_bundle_is_validable_locally(tmp_path: Path) -> No
     assert payload["access"]["migrations_dir"] == "deploy/web-preview/d1/migrations"
     assert payload["access"]["required_worker_secrets"] == [
         "PREVIEW_ADMIN_BOOTSTRAP_TOKEN",
-        "WEB_PREVIEW_INVITE_SECRET",
+        "WEB_PREVIEW_INVITE_SECRET"
     ]
     assert payload["access"]["access_path"] == "/__preview/access"
     assert payload["build"]["asset_entrypoint"] == "index.html"

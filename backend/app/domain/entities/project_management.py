@@ -16,6 +16,7 @@ PROJECT_CHARTER_METADATA_PATH = (
 )
 PROJECT_CHARTER_BRAND_PATH = "docs/project-management/acta/current/brand.yaml"
 PROJECT_CHARTER_RENDER_PATH = "docs/project-management/acta/current/render.html"
+PROJECT_CHARTER_PDF_PATH = "docs/project-management/acta/current/acta.pdf"
 PROJECT_CHARTER_RENDER_MANIFEST_PATH = (
     "docs/project-management/acta/current/render-manifest.json"
 )

@@ -2051,7 +2051,7 @@ async function handlePreviewBootstrap(request, env) {
     return apiError('admin_credentials_required', 'Admin email and password are required.', 400);
   }
   let user = await findPreviewUserByEmail(env, email);
-  let credentialStatus = 'verified';
+  let credentialStatus = 'preserved';
   if (!user) {
     const userCount = await countPreviewUsers(env);
     const roles = userCount === 0 ? ['owner', 'admin'] : ['admin'];
@@ -2066,15 +2066,16 @@ async function handlePreviewBootstrap(request, env) {
       roles,
     });
     credentialStatus = 'created';
-  } else {
-    const rotation = await rotatePreviewBootstrapUser(env, user, password);
-    user = rotation.user;
-    credentialStatus = rotation.changed ? 'rotated' : 'verified';
-    if (rotation.changed) {
-      await recordAuditEvent(env, 'admin_bootstrap_credentials_rotated', email, {
-        userId: user.user_id,
-      });
+  } else if (body.rotateCredentials === true) {
+    const refreshed = await updatePreviewUserPassword(env, user, password);
+    if (!refreshed.ok) {
+      return apiError('credential_persistence_failed', 'Preview credentials could not be saved.', 500);
     }
+    user = refreshed.user;
+    credentialStatus = 'rotated';
+    await recordAuditEvent(env, 'admin_bootstrap_credentials_rotated', email, {
+      userId: user.user_id,
+    });
   }
   const session = await createPreviewSession(env, user);
   await recordAuditEvent(env, 'admin_bootstrap_login', email, {
@@ -2936,21 +2937,6 @@ function fakeD1() {
                   failNextPreviewUserUpdate = false;
                   return { meta: { changes: 0 } };
                 }
-                if (normalized.includes('roles_json =')) {
-                  const [passwordHash, rolesJson, updatedAt, sourceApp, appSlug, email] = args;
-                  for (const [userId, row] of previewUsers.entries()) {
-                    if (row.source_app === sourceApp && row.app_slug === appSlug && row.email === email) {
-                      previewUsers.set(userId, {
-                        ...row,
-                        password_hash: passwordHash,
-                        roles_json: rolesJson,
-                        updated_at: updatedAt,
-                      });
-                      return { meta: { changes: 1 } };
-                    }
-                  }
-                  return { meta: { changes: 0 } };
-                }
                 const [passwordHash, updatedAt, sourceApp, appSlug, userId, email] = args;
                 const row = previewUsers.get(userId);
                 if (!row || row.source_app !== sourceApp || row.app_slug !== appSlug || row.email !== email) {
@@ -3127,16 +3113,20 @@ const repeatedBootstrap = await fetchJson('/__SOURCE_APP__/api/admin/bootstrap',
 assert.equal(repeatedBootstrap.status, 200);
 const repeatedBootstrapBody = await repeatedBootstrap.json();
 assert.equal(repeatedBootstrapBody.user.id, bootstrapBody.user.id);
+assert.equal(repeatedBootstrapBody.credentialStatus, 'preserved');
 assert.match(repeatedBootstrapBody.accessToken, /.+/);
 
-const login = await fetchJson('/__SOURCE_APP__/api/auth/login', {
+const preservedLogin = await fetchJson('/__SOURCE_APP__/api/auth/login', {
+  method: 'POST',
+  body: { email: 'admin@example.com', password: 'preview-password' },
+});
+assert.equal(preservedLogin.status, 200);
+
+const overwrittenLogin = await fetchJson('/__SOURCE_APP__/api/auth/login', {
   method: 'POST',
   body: { email: 'admin@example.com', password: 'refreshed-preview-password' },
 });
-assert.equal(login.status, 200);
-const loginBody = await login.json();
-assert.equal(loginBody.user.appSlug, '__SOURCE_APP__');
-const apiAuth = { authorization: `Bearer ${loginBody.access_token}` };
+assert.equal(overwrittenLogin.status, 401);
 
 const rotatedBootstrap = await fetchJson('/__SOURCE_APP__/api/admin/bootstrap', {
   method: 'POST',
@@ -3144,27 +3134,20 @@ const rotatedBootstrap = await fetchJson('/__SOURCE_APP__/api/admin/bootstrap', 
     bootstrapToken: 'local-bootstrap-token',
     email: 'admin@example.com',
     password: 'rotated-preview-password',
+    rotateCredentials: true,
   },
 });
 assert.equal(rotatedBootstrap.status, 200);
-const rotatedBootstrapBody = await rotatedBootstrap.json();
-assert.equal(rotatedBootstrapBody.credentialStatus, 'rotated');
-assert.equal(rotatedBootstrapBody.user.email, 'admin@example.com');
+assert.equal((await rotatedBootstrap.json()).credentialStatus, 'rotated');
 
-const staleLogin = await fetchJson('/__SOURCE_APP__/api/auth/login', {
-  method: 'POST',
-  body: { email: 'admin@example.com', password: 'preview-password' },
-});
-assert.equal(staleLogin.status, 401);
-assert.equal((await staleLogin.json()).error.code, 'invalid_credentials');
-
-const rotatedLogin = await fetchJson('/__SOURCE_APP__/api/auth/login', {
+const login = await fetchJson('/__SOURCE_APP__/api/auth/login', {
   method: 'POST',
   body: { email: 'admin@example.com', password: 'rotated-preview-password' },
 });
-assert.equal(rotatedLogin.status, 200);
-const rotatedLoginBody = await rotatedLogin.json();
-assert.equal(rotatedLoginBody.user.appSlug, '__SOURCE_APP__');
+assert.equal(login.status, 200);
+const loginBody = await login.json();
+assert.equal(loginBody.user.appSlug, '__SOURCE_APP__');
+const apiAuth = { authorization: `Bearer ${loginBody.access_token}` };
 
 const acceptedInvite = await fetchJson('/__SOURCE_APP__/api/invites/accept', {
   method: 'POST',
@@ -3205,12 +3188,12 @@ assert.equal(acceptedExistingUserInvite.status, 200);
 const acceptedExistingUserInviteBody = await acceptedExistingUserInvite.json();
 assert.equal(acceptedExistingUserInviteBody.user.id, bootstrapBody.user.id);
 
-const staleInvitePasswordLogin = await fetchJson('/__SOURCE_APP__/api/auth/login', {
+const stalePasswordLogin = await fetchJson('/__SOURCE_APP__/api/auth/login', {
   method: 'POST',
-  body: { email: 'admin@example.com', password: 'rotated-preview-password' },
+  body: { email: 'admin@example.com', password: 'refreshed-preview-password' },
 });
-assert.equal(staleInvitePasswordLogin.status, 401);
-assert.equal((await staleInvitePasswordLogin.json()).error.code, 'invalid_credentials');
+assert.equal(stalePasswordLogin.status, 401);
+assert.equal((await stalePasswordLogin.json()).error.code, 'invalid_credentials');
 
 const invitedPasswordLogin = await fetchJson('/__SOURCE_APP__/api/auth/login', {
   method: 'POST',
@@ -3463,12 +3446,12 @@ flutter build web --release \\
   --dart-define=API_RUNTIME="$API_RUNTIME" \\
   --dart-define=API_BASE_URL="$API_BASE_URL" \\
   --dart-define=APP_SLUG="$APP_SLUG" \\
-  --dart-define=CODEX_FEEDBACK_ENABLED="${{CODEX_FEEDBACK_ENABLED:-true}}" \\
-  --dart-define=CODEX_FEEDBACK_BRIDGE_URL="${{CODEX_FEEDBACK_BRIDGE_URL:-}}" \\
-  --dart-define=CODEX_BRIDGE_DEV_MODE="${{CODEX_BRIDGE_DEV_MODE:-false}}" \\
-  --dart-define=CODEX_BRIDGE_WORKBENCH_URL="${{CODEX_BRIDGE_WORKBENCH_URL:-}}" \\
-  --dart-define=CODEX_APP_UPDATER_ENABLED="${{CODEX_APP_UPDATER_ENABLED:-false}}" \\
-  --dart-define=CODEX_APP_UPDATER_BRIDGE_URL="${{CODEX_APP_UPDATER_BRIDGE_URL:-}}" \\
+  --dart-define=CODEX_FEEDBACK_ENABLED=false \\
+  --dart-define=CODEX_FEEDBACK_BRIDGE_URL= \\
+  --dart-define=CODEX_BRIDGE_DEV_MODE=false \\
+  --dart-define=CODEX_BRIDGE_WORKBENCH_URL= \\
+  --dart-define=CODEX_APP_UPDATER_ENABLED=false \\
+  --dart-define=CODEX_APP_UPDATER_BRIDGE_URL= \\
   --output "$WEB_PREVIEW_BUILD_DIR"
 
 printf 'web preview build completed: %s\\n' "$WEB_PREVIEW_BUILD_DIR"
@@ -3722,6 +3705,19 @@ else
   grep -q 'APP_RUNTIME_PROFILE' "$ROOT_DIR/apps/mobile/lib/main.dart" || fail "Flutter runtime profile define missing"
   grep -q 'API_RUNTIME' "$ROOT_DIR/apps/mobile/lib/main.dart" || fail "Flutter API runtime define missing"
   grep -q 'APP_SLUG' "$ROOT_DIR/apps/mobile/lib/main.dart" || fail "Flutter app slug define missing"
+  WEB_BUILD_SCRIPT="$ROOT_DIR/scripts/build_web_preview.sh"
+  grep -q 'show kIsWeb' "$ROOT_DIR/apps/mobile/lib/main.dart" || fail "Flutter web must import kIsWeb"
+  [[ "$(grep -c 'enabled: !kIsWeb' "$ROOT_DIR/apps/mobile/lib/main.dart")" -ge 3 ]] || \
+    fail "Flutter web must disable feedback, Workbench, and updater at runtime"
+  for define in \
+    'CODEX_FEEDBACK_ENABLED=false' \
+    'CODEX_BRIDGE_DEV_MODE=false' \
+    'CODEX_APP_UPDATER_ENABLED=false'; do
+    grep -q -- "--dart-define=$define" "$WEB_BUILD_SCRIPT" || \
+      fail "web build must force $define"
+  done
+  ! grep -Eq 'CODEX_(FEEDBACK|BRIDGE_DEV_MODE|APP_UPDATER_ENABLED).*:-true' "$WEB_BUILD_SCRIPT" || \
+    fail "web build must never enable Codex developer tooling"
 fi
 
 if command -v node >/dev/null 2>&1; then
@@ -5936,6 +5932,22 @@ EOF
 }}
 
 run_local_apk_build() {{
+  grep -q "import 'main.dart' as product_app;" "$ROOT_DIR/apps/mobile/lib/main_preview.dart" || {{
+    printf 'Preview entrypoint must delegate to the product app\\n' >&2
+    return 2
+  }}
+  ! grep -q "Preview sign in" "$ROOT_DIR/apps/mobile/lib/main_preview.dart" || {{
+    printf 'Preview APK still contains the obsolete scaffold login\\n' >&2
+    return 2
+  }}
+  grep -q "PackageInfo.fromPlatform" "$ROOT_DIR/apps/mobile/lib/main.dart" || {{
+    printf 'Product app updater must read the installed package version\\n' >&2
+    return 2
+  }}
+  ! grep -q "currentBuild: 1" "$ROOT_DIR/apps/mobile/lib/main.dart" || {{
+    printf 'Product app updater must not hardcode build 1\\n' >&2
+    return 2
+  }}
   configure_preview_signing
   cd "$ROOT_DIR/apps/mobile"
   flutter build apk --release --target=lib/main_preview.dart \\
@@ -9313,7 +9325,7 @@ def _mobile_files(name: str, slug: str) -> dict[str, str]:
         "apps/mobile/pubspec.yaml": _mobile_pubspec(package_name),
         "apps/mobile/README.md": _mobile_readme(name),
         "apps/mobile/lib/main.dart": _mobile_main_dart(name),
-        "apps/mobile/lib/main_preview.dart": _mobile_preview_main_dart(name),
+        "apps/mobile/lib/main_preview.dart": _mobile_preview_main_dart(),
         "apps/mobile/lib/src/config.dart": _mobile_config_dart(),
         "apps/mobile/lib/src/models.dart": _mobile_models_dart(),
         "apps/mobile/lib/src/api_client.dart": _mobile_api_client_dart(),
@@ -9436,6 +9448,7 @@ dependencies:
   flutter:
     sdk: flutter
   http: ^1.2.2
+  package_info_plus: ^9.0.1
   codex_developer_feedback_template:
     git:
       url: https://github.com/brunojaime/codex-cli-mobile-bridge.git
@@ -9567,11 +9580,13 @@ def _mobile_web_manifest_json(name: str) -> str:
 
 
 def _mobile_main_dart(name: str) -> str:
-    return f"""import 'package:flutter/material.dart';
+    return f"""import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/material.dart';
 import 'package:codex_app_updater/codex_app_updater.dart';
 import 'package:codex_bridge_workbench/codex_bridge_workbench.dart';
 import 'package:codex_developer_feedback_template/developer_feedback_template.dart';
 import 'package:http/http.dart' as http;
+import 'package:package_info_plus/package_info_plus.dart';
 
 import 'src/api_client.dart';
 import 'src/config.dart';
@@ -9579,7 +9594,9 @@ import 'src/mock_api_client.dart';
 import 'src/screens.dart';
 import 'src/session_controller.dart';
 
-void main() {{
+Future<void> main() async {{
+  WidgetsFlutterBinding.ensureInitialized();
+  final packageInfo = await PackageInfo.fromPlatform();
   const apiBaseUrl = String.fromEnvironment('API_BASE_URL');
   const runtimeProfile = String.fromEnvironment(
     'APP_RUNTIME_PROFILE',
@@ -9596,7 +9613,7 @@ void main() {{
   );
   const feedbackEnabled = bool.fromEnvironment(
     'CODEX_FEEDBACK_ENABLED',
-    defaultValue: true,
+    defaultValue: false,
   );
   const appUpdaterEnabled = bool.fromEnvironment(
     'CODEX_APP_UPDATER_ENABLED',
@@ -9617,13 +9634,24 @@ void main() {{
     workbenchBridgeUrl: workbenchBridgeUrl,
     updaterBridgeUrl: updaterBridgeUrl,
   );
-  runApp(ProjectApp(config: config));
+  runApp(ProjectApp(
+    config: config,
+    currentVersion: packageInfo.version,
+    currentBuild: int.tryParse(packageInfo.buildNumber) ?? 0,
+  ));
 }}
 
 class ProjectApp extends StatelessWidget {{
-  const ProjectApp({{super.key, required this.config}});
+  const ProjectApp({{
+    super.key,
+    required this.config,
+    this.currentVersion = '0.1.0',
+    this.currentBuild = 0,
+  }});
 
   final AppConfig config;
+  final String currentVersion;
+  final int currentBuild;
 
   @override
   Widget build(BuildContext context) {{
@@ -9649,7 +9677,8 @@ class ProjectApp extends StatelessWidget {{
       ),
     );
     final workbenchWrapped = CodexBridgeDevModeWrapper(
-      enabled: config.developerWorkbenchEnabled &&
+      enabled: !kIsWeb &&
+          config.developerWorkbenchEnabled &&
           config.workbenchBridgeUrl != null &&
           config.workbenchBridgeUrl!.isNotEmpty,
       bridgeUrl: config.workbenchBridgeUrl ?? '',
@@ -9658,25 +9687,29 @@ class ProjectApp extends StatelessWidget {{
     );
     final updaterWrapped = CodexAppUpdater(
       config: CodexAppUpdaterConfig(
-        enabled: config.appUpdaterEnabled &&
+        enabled: !kIsWeb &&
+            config.appUpdaterEnabled &&
             config.updaterBridgeUrl != null &&
             config.updaterBridgeUrl!.isNotEmpty,
         sourceApp: config.appSlug ?? 'generated-project',
         bridgeUrl: config.updaterBridgeUrl ?? '',
-        currentVersion: '0.1.0',
-        currentBuild: 1,
+        currentVersion: currentVersion,
+        currentBuild: currentBuild,
         channel: 'prerelease',
       ),
-      checkOnStart: config.appUpdaterEnabled &&
+      checkOnStart: !kIsWeb &&
+          config.appUpdaterEnabled &&
           config.updaterBridgeUrl != null &&
           config.updaterBridgeUrl!.isNotEmpty,
-      checkOnResume: config.appUpdaterEnabled &&
+      checkOnResume: !kIsWeb &&
+          config.appUpdaterEnabled &&
           config.updaterBridgeUrl != null &&
           config.updaterBridgeUrl!.isNotEmpty,
       child: workbenchWrapped,
     );
     final feedbackWrapped = DeveloperFeedbackTemplate(
-      enabled: config.feedbackEnabled &&
+      enabled: !kIsWeb &&
+          config.feedbackEnabled &&
           config.feedbackBridgeUrl != null &&
           config.feedbackBridgeUrl!.isNotEmpty,
       sourceApp: config.appSlug ?? 'generated-project',
@@ -9694,358 +9727,12 @@ class ProjectApp extends StatelessWidget {{
 """
 
 
-def _mobile_preview_main_dart(name: str) -> str:
-    return f"""import 'package:flutter/material.dart';
-import 'package:codex_app_updater/codex_app_updater.dart';
-import 'package:codex_bridge_workbench/codex_bridge_workbench.dart';
-import 'package:codex_developer_feedback_template/developer_feedback_template.dart';
-import 'package:http/http.dart' as http;
+def _mobile_preview_main_dart() -> str:
+    return """import 'main.dart' as product_app;
 
-import 'src/api_client.dart';
-import 'src/models.dart';
-
-void main() {{
-  const apiBaseUrl = String.fromEnvironment('API_BASE_URL');
-  const apiRuntime = String.fromEnvironment(
-    'API_RUNTIME',
-    defaultValue: 'cloudflare_preview',
-  );
-  const appSlug = String.fromEnvironment('APP_SLUG');
-  const developerWorkbenchEnabled = bool.fromEnvironment(
-    'CODEX_BRIDGE_DEV_MODE',
-    defaultValue: true,
-  );
-  const feedbackEnabled = bool.fromEnvironment(
-    'CODEX_FEEDBACK_ENABLED',
-    defaultValue: true,
-  );
-  const appUpdaterEnabled = bool.fromEnvironment(
-    'CODEX_APP_UPDATER_ENABLED',
-    defaultValue: true,
-  );
-  const feedbackBridgeUrl = String.fromEnvironment('CODEX_FEEDBACK_BRIDGE_URL');
-  const workbenchBridgeUrl = String.fromEnvironment('CODEX_BRIDGE_WORKBENCH_URL');
-  const updaterBridgeUrl = String.fromEnvironment('CODEX_APP_UPDATER_BRIDGE_URL');
-  runApp(PreviewEntrypoint(
-    apiBaseUrl: apiBaseUrl,
-    apiRuntime: apiRuntime,
-    appSlug: appSlug,
-    developerWorkbenchEnabled: developerWorkbenchEnabled,
-    feedbackEnabled: feedbackEnabled,
-    appUpdaterEnabled: appUpdaterEnabled,
-    feedbackBridgeUrl: feedbackBridgeUrl,
-    workbenchBridgeUrl: workbenchBridgeUrl,
-    updaterBridgeUrl: updaterBridgeUrl,
-  ));
-}}
-
-class PreviewEntrypoint extends StatelessWidget {{
-  const PreviewEntrypoint({{
-    super.key,
-    required this.apiBaseUrl,
-    required this.apiRuntime,
-    required this.appSlug,
-    required this.developerWorkbenchEnabled,
-    required this.feedbackEnabled,
-    required this.appUpdaterEnabled,
-    required this.feedbackBridgeUrl,
-    required this.workbenchBridgeUrl,
-    required this.updaterBridgeUrl,
-  }});
-
-  final String apiBaseUrl;
-  final String apiRuntime;
-  final String appSlug;
-  final bool developerWorkbenchEnabled;
-  final bool feedbackEnabled;
-  final bool appUpdaterEnabled;
-  final String feedbackBridgeUrl;
-  final String workbenchBridgeUrl;
-  final String updaterBridgeUrl;
-
-  @override
-  Widget build(BuildContext context) {{
-    final normalizedApiBaseUrl = apiBaseUrl.trim().replaceAll(RegExp(r'/$'), '');
-    final normalizedSlug = appSlug.trim();
-    final configured = normalizedApiBaseUrl.isNotEmpty &&
-        apiRuntime == 'cloudflare_preview' &&
-        normalizedSlug.isNotEmpty;
-    final home = configured
-        ? PreviewHome(
-            projectName: '{name}',
-            api: ProjectApiClient(
-              baseUrl: normalizedApiBaseUrl,
-              client: http.Client(),
-            ),
-          )
-        : const PreviewConfigMissing();
-    final workbenchWrapped = CodexBridgeDevModeWrapper(
-      enabled: developerWorkbenchEnabled && workbenchBridgeUrl.trim().isNotEmpty,
-      bridgeUrl: workbenchBridgeUrl.trim(),
-      workspacePath: normalizedSlug,
-      child: home,
-    );
-    final updaterWrapped = CodexAppUpdater(
-      config: CodexAppUpdaterConfig(
-        enabled: appUpdaterEnabled && updaterBridgeUrl.trim().isNotEmpty,
-        sourceApp: normalizedSlug.isEmpty ? 'generated-project' : normalizedSlug,
-        bridgeUrl: updaterBridgeUrl.trim(),
-        currentVersion: '0.1.0',
-        currentBuild: 1,
-        channel: 'prerelease',
-      ),
-      checkOnStart: appUpdaterEnabled && updaterBridgeUrl.trim().isNotEmpty,
-      checkOnResume: appUpdaterEnabled && updaterBridgeUrl.trim().isNotEmpty,
-      child: workbenchWrapped,
-    );
-    final feedbackWrapped = DeveloperFeedbackTemplate(
-      enabled: feedbackEnabled && feedbackBridgeUrl.trim().isNotEmpty,
-      sourceApp: normalizedSlug.isEmpty ? 'generated-project' : normalizedSlug,
-      sourceDisplayName: '{name}',
-      bridgeUrl: feedbackBridgeUrl.trim(),
-      child: updaterWrapped,
-    );
-    return MaterialApp(
-      title: '{name}',
-      theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.teal),
-      home: feedbackWrapped,
-    );
-  }}
-}}
-
-class PreviewConfigMissing extends StatelessWidget {{
-  const PreviewConfigMissing({{super.key}});
-
-  @override
-  Widget build(BuildContext context) {{
-    return const Scaffold(
-      body: Center(
-        child: Padding(
-          padding: EdgeInsets.all(24),
-          child: Text(
-            'API_BASE_URL, API_RUNTIME, and APP_SLUG are required for this preview build.',
-            textAlign: TextAlign.center,
-          ),
-        ),
-      ),
-    );
-  }}
-}}
-
-class PreviewHome extends StatefulWidget {{
-  const PreviewHome({{super.key, required this.projectName, required this.api}});
-
-  final String projectName;
-  final ProjectApiClient api;
-
-  @override
-  State<PreviewHome> createState() => _PreviewHomeState();
-}}
-
-class _PreviewHomeState extends State<PreviewHome> {{
-  final _email = TextEditingController();
-  final _password = TextEditingController();
-  final _passwordConfirmation = TextEditingController();
-  String? _token;
-  AppUser? _user;
-  List<AppNotification> _notifications = const [];
-  String? _error;
-  bool _loading = false;
-
-  @override
-  void initState() {{
-    super.initState();
-    final uri = Uri.base;
-    final invitedEmail = uri.queryParameters['email'] ?? '';
-    if (invitedEmail.isNotEmpty) {{
-      _email.text = invitedEmail;
-    }}
-  }}
-
-  @override
-  void dispose() {{
-    _email.dispose();
-    _password.dispose();
-    _passwordConfirmation.dispose();
-    super.dispose();
-  }}
-
-  @override
-  Widget build(BuildContext context) {{
-    final user = _user;
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.projectName),
-        actions: [
-          if (user != null)
-            IconButton(
-              tooltip: 'Sign out',
-              onPressed: _loading ? null : _logout,
-              icon: const Icon(Icons.logout),
-            ),
-        ],
-      ),
-      body: SafeArea(
-        child: LayoutBuilder(
-          builder: (context, constraints) {{
-            final minHeight =
-                constraints.maxHeight > 40 ? constraints.maxHeight - 40 : 0.0;
-            return SingleChildScrollView(
-              padding: const EdgeInsets.all(20),
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(maxWidth: 520, minHeight: minHeight),
-                  child: user == null ? _authForm(context) : _signedIn(context, user),
-                ),
-              ),
-            );
-          }},
-        ),
-      ),
-    );
-  }}
-
-  Widget _authForm(BuildContext context) {{
-    final uri = Uri.base;
-    final inviteToken = uri.queryParameters['invite_token'] ?? uri.queryParameters['token'];
-    final inviteState = uri.queryParameters['invite_state'] ?? (inviteToken == null ? 'login' : 'activate');
-    final acceptingInvite = inviteToken != null && inviteState != 'login';
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Text(
-          acceptingInvite ? 'Accept preview invite' : 'Preview sign in',
-          style: Theme.of(context).textTheme.titleLarge,
-        ),
-        const SizedBox(height: 16),
-        TextField(
-          controller: _email,
-          keyboardType: TextInputType.emailAddress,
-          decoration: const InputDecoration(labelText: 'Email'),
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: _password,
-          obscureText: true,
-          decoration: InputDecoration(
-            labelText: acceptingInvite ? 'Create password' : 'Password',
-          ),
-        ),
-        if (acceptingInvite) ...[
-          const SizedBox(height: 12),
-          TextField(
-            controller: _passwordConfirmation,
-            obscureText: true,
-            decoration: const InputDecoration(labelText: 'Repeat password'),
-          ),
-        ],
-        if (_error != null) ...[
-          const SizedBox(height: 12),
-          Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
-        ],
-        const SizedBox(height: 16),
-        FilledButton(
-          onPressed: _loading
-              ? null
-              : () => acceptingInvite
-                  ? _acceptInvite(inviteToken)
-                  : _login(),
-          child: Text(acceptingInvite ? 'Accept invite' : 'Sign in'),
-        ),
-      ],
-    );
-  }}
-
-  Widget _signedIn(BuildContext context, AppUser user) {{
-    return RefreshIndicator(
-      onRefresh: _loadNotifications,
-      child: ListView(
-        children: [
-          ListTile(
-            leading: const Icon(Icons.verified_user_outlined),
-            title: Text(user.email),
-            subtitle: Text(user.roles.join(', ')),
-          ),
-          const Divider(),
-          Text('Notifications', style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 8),
-          if (_notifications.isEmpty)
-            const ListTile(title: Text('No notifications yet.')),
-          for (final notification in _notifications)
-            ListTile(
-              leading: const Icon(Icons.notifications_outlined),
-              title: Text(notification.title),
-              subtitle: Text(notification.body),
-            ),
-        ],
-      ),
-    );
-  }}
-
-  Future<void> _login() async {{
-    await _run(() async {{
-      final auth = await widget.api.login(
-        email: _email.text.trim(),
-        password: _password.text,
-      );
-      _token = auth.accessToken;
-      _user = await widget.api.me(_token!);
-      await _loadNotifications();
-    }});
-  }}
-
-  Future<void> _acceptInvite(String inviteToken) async {{
-    if (_password.text != _passwordConfirmation.text) {{
-      setState(() => _error = 'Passwords must match.');
-      return;
-    }}
-    await _run(() async {{
-      final auth = await widget.api.acceptPreviewInvite(
-        inviteToken: inviteToken,
-        email: _email.text.trim(),
-        password: _password.text,
-        passwordConfirmation: _passwordConfirmation.text,
-      );
-      _token = auth.accessToken;
-      _user = await widget.api.me(_token!);
-      await _loadNotifications();
-    }});
-  }}
-
-  Future<void> _loadNotifications() async {{
-    final token = _token;
-    if (token == null) return;
-    _notifications = await widget.api.notifications(token);
-    if (mounted) setState(() {{}});
-  }}
-
-  Future<void> _logout() async {{
-    final token = _token;
-    setState(() {{
-      _token = null;
-      _user = null;
-      _notifications = const [];
-    }});
-    if (token != null) {{
-      await widget.api.logout(token);
-    }}
-  }}
-
-  Future<void> _run(Future<void> Function() action) async {{
-    setState(() {{
-      _loading = true;
-      _error = null;
-    }});
-    try {{
-      await action();
-    }} catch (err) {{
-      if (mounted) setState(() => _error = err.toString());
-    }} finally {{
-      if (mounted) setState(() => _loading = false);
-    }}
-  }}
-}}
+/// Preview releases run the same product app as web and standard Android.
+/// Runtime URLs and developer tools are selected through release dart-defines.
+Future<void> main() => product_app.main();
 """
 
 
@@ -13137,14 +12824,14 @@ def _initial_charter_markdown(seed: dict[str, object]) -> str:
 - Version de trabajo: v0.1
 - Version entregada: sin entrega inicial
 - Estado: draft
-- Responsable: Codex Project Factory
-- Logo: ver `brand.yaml`
+- Responsable: Equipo del proyecto
+- Identidad visual: pendiente de confirmacion
 
 ## Historial de revisiones
 
 | Fecha | Version | Estado | Descripcion | Autor | Entregada |
 | --- | --- | --- | --- | --- | --- |
-| Sin fecha de entrega | v0.1 | draft | Primera version de trabajo generada desde Project Factory. | Codex Project Factory | No |
+| Sin fecha de entrega | v0.1 | draft | Primera version para revision y validacion. | Equipo del proyecto | No |
 
 ## Indice
 
@@ -13157,7 +12844,10 @@ def _initial_charter_markdown(seed: dict[str, object]) -> str:
 
 ## Resumen ejecutivo
 
-Este documento inicia el marco formal del proyecto {project_name}. La informacion disponible proviene del contrato inicial de Project Factory y se mantendra como version de trabajo hasta que el usuario solicite una entrega al cliente.
+Este documento presenta el marco inicial del proyecto {project_name}. Reune los
+objetivos, beneficios, alcance preliminar y definiciones pendientes para alinear
+expectativas y facilitar la validacion conjunta con el cliente antes de la puesta
+en produccion.
 
 ## Objetivo del proyecto
 
@@ -13217,7 +12907,7 @@ def _charter_metadata(
         title="Acta de Proyecto",
         project_name=str(seed["project_name"]),
         client=seed["client"] if isinstance(seed["client"], str) else None,
-        author="Codex Project Factory",
+        author="Equipo del proyecto",
         status=ProjectCharterDocumentState.DRAFT,
         draft_version="v0.1",
         delivered_version=None,
@@ -13229,7 +12919,7 @@ def _charter_metadata(
             "project_objective": CharterFieldSource(
                 source=str(seed["source"]),
                 confidence=1.0,
-                notes="Mapped from the Project Factory primary goal.",
+                notes="Mapped from the initial project brief.",
             ),
             "product_objective": CharterFieldSource(
                 source=str(seed["source"])
@@ -13404,6 +13094,11 @@ The acta is the first client-facing project document. It explains why the projec
 
 Markdown is the source of truth. Rendered HTML/PDF artifacts are generated from the current source and must not be edited directly.
 
+Write every section from the client's perspective. Never mention Project Factory,
+Codex, Workbench, SDD, agents, generators, reviewers, internal file paths,
+implementation pipelines, test harnesses, or other production machinery in the
+acta. Keep that evidence in internal engineering and project-management files.
+
 ## Read This Module When
 
 - The user mentions acta, project charter, document, cover, client, logo, objectives, benefits, scope, pending definitions, revision history, render, export, or client delivery.
@@ -13438,7 +13133,11 @@ Unknown information must remain under pending definitions until the user provide
 def _charter_export_rules() -> str:
     return """# Charter Export Rules
 
-Export requires explicit user intent. Draft edits do not deliver a client version. Delivered versions are immutable and must be stored under `acta/releases/vX.Y/`.
+Export requires explicit user intent. Draft edits do not deliver a client version.
+
+Before client delivery, refresh `render.html`, generate and validate `current/acta.pdf`, and verify the configured logo. A client release without a fresh PDF must be blocked.
+
+Delivered versions are immutable and must be stored under `acta/releases/vX.Y/` with `acta.md`, `render.html`, `acta.pdf`, metadata, hashes, and the release manifest.
 """
 
 

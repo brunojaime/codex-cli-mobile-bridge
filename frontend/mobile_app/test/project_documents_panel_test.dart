@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:codex_mobile_frontend/src/models/project_documents.dart';
 import 'package:codex_mobile_frontend/src/services/api_client.dart';
 import 'package:codex_mobile_frontend/src/widgets/project_documents_panel.dart';
@@ -19,7 +21,7 @@ void main() {
       },
     );
 
-    expect(find.text('Project Charter'), findsWidgets);
+    expect(find.text('Acta de Proyecto'), findsWidgets);
     expect(_richTextContaining('Draft: v0.1'), findsOneWidget);
     expect(_richTextContaining('Validation: 1 blocking'), findsOneWidget);
     expect(find.text('logo_pending'), findsOneWidget);
@@ -135,6 +137,49 @@ void main() {
     expect(apiClient.sharedFullDocument, isTrue);
     expect(find.text('Acta enviada por correo.'), findsOneWidget);
   });
+
+  testWidgets('generates and downloads the client PDF', (
+    WidgetTester tester,
+  ) async {
+    final apiClient = _ProjectDocumentsPanelApiClient(pdfExists: false);
+    Uint8List? savedBytes;
+
+    await _pumpPanel(
+      tester,
+      apiClient: apiClient,
+      onSavePdf: (bytes, _) async => savedBytes = bytes,
+    );
+
+    await tester.ensureVisible(find.text('Generar PDF'));
+    await tester.tap(find.text('Generar PDF'));
+    await tester.pumpAndSettle();
+
+    expect(apiClient.generatePdfCalls, 1);
+    expect(find.text('Regenerar PDF'), findsOneWidget);
+    await tester.tap(find.text('Descargar'));
+    await tester.pumpAndSettle();
+    expect(savedBytes, isNotNull);
+    expect(String.fromCharCodes(savedBytes!.take(5)), '%PDF-');
+  });
+
+  testWidgets('keeps PDF actions usable on a narrow phone', (
+    WidgetTester tester,
+  ) async {
+    tester.view.physicalSize = const Size(360, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await _pumpPanel(
+      tester,
+      apiClient: _ProjectDocumentsPanelApiClient(),
+    );
+    await tester.ensureVisible(find.text('Entrega al cliente'));
+    expect(tester.takeException(), isNull);
+    expect(find.text('Regenerar PDF'), findsOneWidget);
+    expect(find.text('Descargar'), findsOneWidget);
+    expect(find.text('Compartir'), findsOneWidget);
+  });
 }
 
 Finder _richTextContaining(String value) {
@@ -147,6 +192,7 @@ Future<void> _pumpPanel(
   WidgetTester tester, {
   required _ProjectDocumentsPanelApiClient apiClient,
   ValueChanged<String>? onRequestChange,
+  ProjectDocumentPdfAction? onSavePdf,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
@@ -159,6 +205,7 @@ Future<void> _pumpPanel(
               apiClient: apiClient,
               workspacePath: '/workspace/a',
               onRequestCharterChange: onRequestChange ?? (_) {},
+              onSavePdf: onSavePdf,
             ),
           ),
         ),
@@ -172,18 +219,21 @@ class _ProjectDocumentsPanelApiClient extends ApiClient {
   _ProjectDocumentsPanelApiClient({
     this.validationOk = true,
     this.staleRender = false,
+    this.pdfExists = true,
     List<ProjectDocumentRelease> releases = const <ProjectDocumentRelease>[],
   })  : _releases = List<ProjectDocumentRelease>.from(releases),
         super(baseUrl: 'http://localhost:8000');
 
   bool validationOk;
   bool staleRender;
+  bool pdfExists;
   final List<ProjectDocumentRelease> _releases;
   final List<String> releaseVersions = <String>[];
   final List<String> openedReleaseVersions = <String>[];
   final List<String> sharedRecipients = <String>[];
   bool? sharedFullDocument;
   int renderCalls = 0;
+  int generatePdfCalls = 0;
 
   @override
   Future<ProjectDocuments> listProjectDocuments({
@@ -269,10 +319,50 @@ class _ProjectDocumentsPanelApiClient extends ApiClient {
         'render_hash': 'render-hash',
         'status': staleRender ? 'stale' : 'fresh',
       },
+      'pdf': <String, dynamic>{
+        'path': 'docs/project-management/acta/current/acta.pdf',
+        'exists': pdfExists,
+        'size_bytes': 48200,
+        'sha256': 'pdf-hash',
+        'page_count': 3,
+      },
       'validation': _validationPayload(),
       'latest_release': _releases.isEmpty ? null : _releases.last.version,
     });
   }
+
+  @override
+  Future<ProjectDocumentCharterPdfResponse> generateProjectDocumentCharterPdf({
+    String? workspacePath,
+    String? draftId,
+    String? jobId,
+  }) async {
+    generatePdfCalls += 1;
+    pdfExists = true;
+    return ProjectDocumentCharterPdfResponse.fromJson(<String, dynamic>{
+      'workspace_path': workspacePath ?? '/workspace/a',
+      'ok': true,
+      'status': 'generated',
+      'message': 'ready',
+      'pdf': <String, dynamic>{
+        'path': 'docs/project-management/acta/current/acta.pdf',
+        'exists': true,
+        'size_bytes': 9,
+        'sha256': 'pdf-hash',
+        'page_count': 1,
+      },
+      'validation': _validationPayload(),
+    });
+  }
+
+  @override
+  Future<Uint8List> downloadProjectDocumentCharterPdf({
+    String? workspacePath,
+    String? draftId,
+    String? jobId,
+    String? releaseVersion,
+  }) async =>
+      Uint8List.fromList('%PDF-test'.codeUnits);
 
   @override
   Future<ProjectDocumentCharterValidationResponse>

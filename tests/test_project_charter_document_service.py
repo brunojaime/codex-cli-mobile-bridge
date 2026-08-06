@@ -21,6 +21,7 @@ from backend.app.domain.entities.project_management import (
     PROJECT_CHARTER_METADATA_PATH,
     PROJECT_CHARTER_RENDER_MANIFEST_PATH,
     PROJECT_CHARTER_SOURCE_PATH,
+    PROJECT_CHARTER_PDF_PATH,
     ProjectCharterVersionImpact,
 )
 
@@ -32,6 +33,32 @@ def test_valid_generated_charter_passes_validation(tmp_path: Path) -> None:
 
     assert result.ok is True
     assert result.blocking_issues == ()
+
+
+def test_validation_blocks_internal_tooling_language_in_client_charter(
+    tmp_path: Path,
+) -> None:
+    project = _generated_project(tmp_path)
+    service = ProjectCharterDocumentService(workspace_root=project)
+    source_path = project / PROJECT_CHARTER_SOURCE_PATH
+    source = source_path.read_text(encoding="utf-8")
+    source = source.replace(
+        "## Resumen ejecutivo",
+        (
+            "## Nota interna\n\n"
+            "El Project Factory sincroniza Workbench y tareas SDD.\n\n"
+            "## Resumen ejecutivo"
+        ),
+    )
+    service.update_current_charter(
+        source,
+        changed_fields={"executive_summary"},
+    )
+
+    result = service.validate(client_export=False)
+
+    codes = {issue.code for issue in result.blocking_issues}
+    assert "internal_implementation_language" in codes
 
 
 def test_validation_blocks_missing_fields_status_revision_logo_and_placeholders(
@@ -122,6 +149,7 @@ def test_draft_edit_updates_hash_without_bumping_delivered_version(
 def test_first_release_creates_immutable_v1_snapshot(tmp_path: Path) -> None:
     project = _generated_project(tmp_path)
     service = ProjectCharterDocumentService(workspace_root=project)
+    assert service.export_pdf().ok is True
 
     result = service.release("v1.0")
 
@@ -137,6 +165,7 @@ def test_first_release_creates_immutable_v1_snapshot(tmp_path: Path) -> None:
     assert "| v1.0 | client_delivered |" in released_source
     assert released_metadata["status"] == "client_delivered"
     assert released_metadata["versions"]["delivered"] == "v1.0"
+    assert (release_dir / "acta.pdf").read_bytes().startswith(b"%PDF-")
     assert (release_dir / "source-hash.txt").read_text(encoding="utf-8").strip()
     manifest = json.loads(
         (release_dir / "release-manifest.json").read_text(encoding="utf-8")
@@ -178,6 +207,7 @@ def test_changelog_is_required_after_previous_delivered_release(
 ) -> None:
     project = _generated_project(tmp_path)
     service = ProjectCharterDocumentService(workspace_root=project)
+    assert service.export_pdf().ok is True
     assert service.release("v1.0").ok is True
     updated_source = (
         (project / PROJECT_CHARTER_SOURCE_PATH).read_text(encoding="utf-8")
@@ -193,8 +223,10 @@ def test_changelog_is_required_after_previous_delivered_release(
 
     assert blocked.ok is False
     assert {issue.code for issue in blocked.validation.blocking_issues} == {
-        "missing_changelog_entry"
+        "missing_changelog_entry",
+        "missing_client_pdf",
     }
+    assert service.export_pdf().ok is True
     released = service.release(
         "v1.1",
         changed_fields={"expected_benefits"},
@@ -288,7 +320,7 @@ def test_render_manifest_is_stable_except_timestamp(tmp_path: Path) -> None:
     assert second["generated_at"]
 
 
-def test_pdf_export_hook_is_unavailable_and_does_not_mutate_source(
+def test_pdf_export_generates_valid_traced_pdf_without_mutating_source(
     tmp_path: Path,
 ) -> None:
     project = _generated_project(tmp_path)
@@ -298,10 +330,16 @@ def test_pdf_export_hook_is_unavailable_and_does_not_mutate_source(
     result = service.export_pdf()
 
     after = (project / PROJECT_CHARTER_SOURCE_PATH).read_text(encoding="utf-8")
-    assert result.ok is False
-    assert result.status == "unavailable"
-    assert "PDF export backend is not configured" in result.message
-    assert result.output_path is None
+    assert result.ok is True
+    assert result.status == "generated"
+    assert result.output_path == PROJECT_CHARTER_PDF_PATH
+    assert result.page_count > 0
+    assert result.sha256
+    assert (project / PROJECT_CHARTER_PDF_PATH).read_bytes().startswith(b"%PDF-")
+    manifest = json.loads(
+        (project / PROJECT_CHARTER_RENDER_MANIFEST_PATH).read_text(encoding="utf-8")
+    )
+    assert manifest["pdf"]["sha256"] == result.sha256
     assert after == before
 
 
@@ -341,7 +379,15 @@ def _generated_project(tmp_path: Path) -> Path:
         )
     )
     ProjectFactoryGeneratorService().generate(manifest_plan)
-    return tmp_path / "clinica-norte"
+    project = tmp_path / "clinica-norte"
+    brand_path = project / PROJECT_CHARTER_BRAND_PATH
+    brand = _yaml(brand_path)
+    brand["logo_status"] = "not_required"
+    brand["logo_source"] = "none"
+    brand["client_pdf_requires_logo"] = False
+    brand["logo_path"] = None
+    _write_yaml(brand_path, brand)
+    return project
 
 
 def _yaml(path: Path) -> dict[str, object]:
