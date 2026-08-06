@@ -133,6 +133,7 @@ class ProjectDocumentCharterDetail {
     required this.sourceSummary,
     required this.render,
     required this.renderManifest,
+    required this.pdf,
     required this.validation,
     required this.latestRelease,
   });
@@ -147,6 +148,7 @@ class ProjectDocumentCharterDetail {
   final ProjectDocumentSourceSummary sourceSummary;
   final ProjectDocumentRenderState render;
   final Map<String, dynamic> renderManifest;
+  final ProjectDocumentPdfState pdf;
   final ProjectDocumentValidationResult validation;
   final String? latestRelease;
 
@@ -193,10 +195,38 @@ class ProjectDocumentCharterDetail {
       ),
       render: ProjectDocumentRenderState.fromJson(_map(json['render'])),
       renderManifest: _map(json['render_manifest']),
+      pdf: ProjectDocumentPdfState.fromJson(_map(json['pdf'])),
       validation: ProjectDocumentValidationResult.fromJson(
         _map(json['validation']),
       ),
       latestRelease: _nullableString(json['latest_release']),
+    );
+  }
+}
+
+class ProjectDocumentPdfState {
+  const ProjectDocumentPdfState({
+    required this.path,
+    required this.exists,
+    required this.sizeBytes,
+    required this.sha256,
+    required this.pageCount,
+  });
+
+  final String path;
+  final bool exists;
+  final int sizeBytes;
+  final String? sha256;
+  final int pageCount;
+
+  factory ProjectDocumentPdfState.fromJson(Map<String, dynamic> json) {
+    return ProjectDocumentPdfState(
+      path: _string(json['path'],
+          fallback: 'docs/project-management/acta/current/acta.pdf'),
+      exists: _bool(json['exists']),
+      sizeBytes: _int(json['size_bytes']),
+      sha256: _nullableString(json['sha256']),
+      pageCount: _int(json['page_count']),
     );
   }
 }
@@ -370,6 +400,37 @@ class ProjectDocumentCharterRenderResponse {
       workspacePath: _string(json['workspace_path']),
       render: ProjectDocumentRenderState.fromJson(_map(json['render'])),
       renderManifest: _map(json['render_manifest']),
+    );
+  }
+}
+
+class ProjectDocumentCharterPdfResponse {
+  const ProjectDocumentCharterPdfResponse({
+    required this.workspacePath,
+    required this.ok,
+    required this.status,
+    required this.message,
+    required this.pdf,
+    required this.validation,
+  });
+
+  final String workspacePath;
+  final bool ok;
+  final String status;
+  final String message;
+  final ProjectDocumentPdfState pdf;
+  final ProjectDocumentValidationResult validation;
+
+  factory ProjectDocumentCharterPdfResponse.fromJson(
+      Map<String, dynamic> json) {
+    return ProjectDocumentCharterPdfResponse(
+      workspacePath: _string(json['workspace_path']),
+      ok: _bool(json['ok']),
+      status: _string(json['status']),
+      message: _string(json['message']),
+      pdf: ProjectDocumentPdfState.fromJson(_map(json['pdf'])),
+      validation:
+          ProjectDocumentValidationResult.fromJson(_map(json['validation'])),
     );
   }
 }

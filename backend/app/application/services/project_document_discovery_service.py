@@ -16,6 +16,7 @@ from backend.app.domain.entities.project_management import (
     DEFAULT_PROJECT_MANAGEMENT_MODULES,
     PROJECT_CHARTER_BRAND_PATH,
     PROJECT_CHARTER_METADATA_PATH,
+    PROJECT_CHARTER_PDF_PATH,
     PROJECT_CHARTER_RENDER_MANIFEST_PATH,
     PROJECT_CHARTER_RENDER_PATH,
     PROJECT_CHARTER_SOURCE_PATH,
@@ -130,6 +131,10 @@ class ProjectDocumentDiscoveryService:
                 include_content=include_render_content,
             ),
             "render_manifest": render_manifest,
+            "pdf": self._binary_file_payload(
+                target.workspace,
+                self._safe_path(target.workspace, PROJECT_CHARTER_PDF_PATH),
+            ),
             "validation": validation.to_payload(),
             "latest_release": self._latest_release(target.workspace, metadata),
         }
@@ -188,6 +193,82 @@ class ProjectDocumentDiscoveryService:
             },
             "render_manifest": manifest,
         }
+
+    def generate_charter_pdf(
+        self,
+        *,
+        workspace_path: str | None = None,
+        draft_id: str | None = None,
+        job_id: str | None = None,
+    ) -> dict[str, object]:
+        target = self.resolve_workspace(
+            workspace_path=workspace_path,
+            draft_id=draft_id,
+            job_id=job_id,
+        )
+        result = ProjectCharterDocumentService(
+            workspace_root=target.workspace,
+        ).export_pdf()
+        return {
+            "kind": "codex.projectDocumentCharterPdf",
+            "version": 1,
+            "workspace_path": str(target.workspace),
+            "ok": result.ok,
+            "status": result.status,
+            "message": result.message,
+            "pdf": {
+                "path": result.output_path,
+                "exists": result.ok,
+                "sha256": result.sha256,
+                "size_bytes": result.size_bytes,
+                "page_count": result.page_count,
+            },
+            "validation": result.validation.to_payload(),
+        }
+
+    def current_charter_pdf_path(
+        self,
+        *,
+        workspace_path: str | None = None,
+        draft_id: str | None = None,
+        job_id: str | None = None,
+    ) -> Path:
+        target = self.resolve_workspace(
+            workspace_path=workspace_path,
+            draft_id=draft_id,
+            job_id=job_id,
+        )
+        try:
+            return ProjectCharterDocumentService(
+                workspace_root=target.workspace,
+            ).current_pdf_path()
+        except RuntimeError as exc:
+            raise ProjectDocumentNotFoundError(str(exc)) from exc
+
+    def release_charter_pdf_path(
+        self,
+        release_version: str,
+        *,
+        workspace_path: str | None = None,
+        draft_id: str | None = None,
+        job_id: str | None = None,
+    ) -> Path:
+        target = self.resolve_workspace(
+            workspace_path=workspace_path,
+            draft_id=draft_id,
+            job_id=job_id,
+        )
+        version = self._validate_release_version(release_version)
+        releases_root = self._safe_path(
+            target.workspace,
+            "docs/project-management/acta/releases",
+        )
+        pdf_path = self._safe_child(releases_root, version) / "acta.pdf"
+        if not pdf_path.is_file():
+            raise ProjectDocumentNotFoundError(
+                f"Charter release PDF not found: {version}"
+            )
+        return pdf_path
 
     def release_charter(
         self,
@@ -548,6 +629,19 @@ class ProjectDocumentDiscoveryService:
             "sha256": _sha256_text(path.read_text(encoding="utf-8", errors="replace")),
             "content": content,
             "truncated": truncated,
+        }
+
+    def _binary_file_payload(self, workspace: Path, path: Path) -> dict[str, object]:
+        if not _is_relative_to(path.resolve(), workspace):
+            raise ProjectDocumentWorkspaceError("Document path escaped workspace.")
+        if not path.is_file():
+            return {"path": path.relative_to(workspace).as_posix(), "exists": False}
+        payload = path.read_bytes()
+        return {
+            "path": path.relative_to(workspace).as_posix(),
+            "exists": True,
+            "size_bytes": len(payload),
+            "sha256": hashlib.sha256(payload).hexdigest(),
         }
 
     def _release_payload(

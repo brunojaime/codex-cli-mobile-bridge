@@ -2,19 +2,26 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import base64
 import hashlib
 import html
 import json
+import mimetypes
+import os
 from pathlib import Path
 import re
 import shutil
+import subprocess
+import tempfile
 
+from pypdf import PdfReader
 import yaml
 
 from backend.app.domain.entities.project_management import (
     PROJECT_CHARTER_BRAND_PATH,
     PROJECT_CHARTER_CHANGELOG_PATH,
     PROJECT_CHARTER_METADATA_PATH,
+    PROJECT_CHARTER_PDF_PATH,
     PROJECT_CHARTER_RENDER_MANIFEST_PATH,
     PROJECT_CHARTER_RENDER_PATH,
     PROJECT_CHARTER_SOURCE_PATH,
@@ -32,7 +39,21 @@ PLACEHOLDER_PATTERN = re.compile(
     r"\b(todo|lorem ipsum|placeholder|generated deterministic baseline)\b",
     re.IGNORECASE,
 )
+CLIENT_INTERNAL_LANGUAGE_PATTERN = re.compile(
+    r"\b(Project Factory|Codex(?: Mobile Bridge)?|Workbench|SDD|"
+    r"Generator pass|Reviewer pass|curator|workspace)\b|"
+    r"(?:^|[\s`])\.codex/|(?:^|[\s`])specs/",
+    re.IGNORECASE | re.MULTILINE,
+)
 PROJECT_CHARTER_RENDERER_VERSION = "charter-markdown-html/v1"
+PROJECT_CHARTER_PDF_RENDERER_VERSION = "headless-chromium/v1"
+SUPPORTED_LOGO_MIME_TYPES = {
+    "image/svg+xml",
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+}
+MAX_LOGO_BYTES = 2_000_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +88,9 @@ class ProjectCharterPdfExportResult:
     message: str
     output_path: str | None
     validation: ProjectCharterValidationResult
+    sha256: str | None = None
+    size_bytes: int = 0
+    page_count: int = 0
 
 
 class ProjectCharterDocumentService:
@@ -130,6 +154,7 @@ class ProjectCharterDocumentService:
         metadata = self._load_yaml(metadata_path)
         manifest = self._load_yaml(manifest_path) if manifest_path.exists() else {}
         source_path.write_text(content, encoding="utf-8")
+        self._invalidate_pdf()
         source_hash = _sha256_text(content)
         metadata = _metadata_with_hash(metadata, source_hash)
         metadata["status"] = ProjectCharterDocumentState.DRAFT.value
@@ -155,7 +180,10 @@ class ProjectCharterDocumentService:
     def refresh_render(self) -> ProjectCharterRenderedHtml:
         source_path = self._path(PROJECT_CHARTER_SOURCE_PATH)
         source = source_path.read_text(encoding="utf-8")
-        rendered = render_charter_markdown_to_html(source)
+        rendered = render_charter_markdown_to_html(
+            source,
+            logo_data_uri=self._logo_data_uri(),
+        )
         render_path = self._path(PROJECT_CHARTER_RENDER_PATH)
         render_path.write_text(rendered.html, encoding="utf-8")
         validation = _without_render_freshness_issues(
@@ -179,6 +207,7 @@ class ProjectCharterDocumentService:
         timestamps = _ensure_mapping(metadata, "timestamps")
         timestamps["updated_at"] = _now_iso()
         self._write_yaml(metadata_path, metadata)
+        self._invalidate_pdf()
         return rendered
 
     def validate_export(self) -> ProjectCharterValidationResult:
@@ -242,16 +271,70 @@ class ProjectCharterDocumentService:
         )
 
     def export_pdf(self) -> ProjectCharterPdfExportResult:
+        if self._reconcile_logo_path():
+            self.refresh_render()
         validation = self.validate_export()
+        if not validation.ok:
+            return ProjectCharterPdfExportResult(
+                ok=False,
+                status="blocked",
+                message="PDF generation is blocked by charter validation.",
+                output_path=None,
+                validation=validation,
+            )
+
+        render_path = self._path(PROJECT_CHARTER_RENDER_PATH)
+        output_path = self._path(PROJECT_CHARTER_PDF_PATH)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with tempfile.TemporaryDirectory(prefix="charter-pdf-") as temp_dir:
+                temporary_pdf = Path(temp_dir) / "acta.pdf"
+                self._render_pdf_with_chrome(render_path, temporary_pdf)
+                pdf_info = self._validate_pdf_file(temporary_pdf)
+                os.replace(temporary_pdf, output_path)
+        except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+            return ProjectCharterPdfExportResult(
+                ok=False,
+                status="failed",
+                message=f"PDF generation failed: {exc}",
+                output_path=None,
+                validation=validation,
+            )
+
+        pdf_hash = _sha256_bytes(output_path.read_bytes())
+        manifest_path = self._path(PROJECT_CHARTER_RENDER_MANIFEST_PATH)
+        manifest = self._read_json_file(
+            manifest_path,
+            PROJECT_CHARTER_RENDER_MANIFEST_PATH,
+            [],
+        ) or {}
+        manifest["pdf"] = {
+            "path": PROJECT_CHARTER_PDF_PATH,
+            "sha256": pdf_hash,
+            "size_bytes": output_path.stat().st_size,
+            "page_count": pdf_info["page_count"],
+            "source_hash": manifest.get("source_hash"),
+            "render_hash": manifest.get("render_hash"),
+            "generated_at": _now_iso(),
+            "renderer": PROJECT_CHARTER_PDF_RENDERER_VERSION,
+        }
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        metadata_path = self._path(PROJECT_CHARTER_METADATA_PATH)
+        metadata = self._load_yaml(metadata_path)
+        _ensure_mapping(metadata, "hashes")["pdf"] = pdf_hash
+        self._write_yaml(metadata_path, metadata)
         return ProjectCharterPdfExportResult(
-            ok=False,
-            status="unavailable",
-            message=(
-                "PDF export backend is not configured. Markdown remains the "
-                "source of truth and render.html is the current preview artifact."
-            ),
-            output_path=None,
+            ok=True,
+            status="generated",
+            message="Client PDF generated and validated.",
+            output_path=PROJECT_CHARTER_PDF_PATH,
             validation=validation,
+            sha256=pdf_hash,
+            size_bytes=output_path.stat().st_size,
+            page_count=pdf_info["page_count"],
         )
 
     def recommend_release_impact(
@@ -299,6 +382,8 @@ class ProjectCharterDocumentService:
             else self.validate(client_export=False)
         )
         validation_issues.extend(validation.issues)
+        if client_export:
+            validation_issues.extend(self._pdf_delivery_issues())
         if validation_issues:
             return ProjectCharterReleaseResult(
                 ok=False,
@@ -321,8 +406,8 @@ class ProjectCharterDocumentService:
         )
         if self._path(PROJECT_CHARTER_RENDER_PATH).is_file():
             self._copy_release_file(PROJECT_CHARTER_RENDER_PATH, release_dir / "render.html")
-        pdf_path = self._path("docs/project-management/acta/current/acta.pdf")
-        if pdf_path.is_file():
+        pdf_path = self._path(PROJECT_CHARTER_PDF_PATH)
+        if client_export:
             shutil.copyfile(pdf_path, release_dir / "acta.pdf")
         source_hash = _sha256_text(
             self._path(PROJECT_CHARTER_SOURCE_PATH).read_text(encoding="utf-8")
@@ -338,12 +423,24 @@ class ProjectCharterDocumentService:
             "created_at": _now_iso(),
             "recommended_impact": recommended.value,
             "changed_fields": sorted(changed_fields),
+            "pdf": {
+                "path": "acta.pdf",
+                "sha256": _sha256_bytes(pdf_path.read_bytes()),
+                "size_bytes": pdf_path.stat().st_size,
+                "page_count": len(PdfReader(str(pdf_path)).pages),
+            }
+            if client_export
+            else None,
         }
         (release_dir / "release-manifest.json").write_text(
             json.dumps(release_manifest, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
         self._mark_delivered(version, source_hash)
+        self._copy_release_file(
+            PROJECT_CHARTER_METADATA_PATH,
+            release_dir / "metadata.yaml",
+        )
         return ProjectCharterReleaseResult(
             ok=True,
             version=version,
@@ -444,6 +541,21 @@ class ProjectCharterDocumentService:
                     affected_file=PROJECT_CHARTER_BRAND_PATH,
                 )
             )
+        if client_export and brand.get("client_pdf_requires_logo") is True:
+            if logo_status in {"provided", "generated"}:
+                logo_path = str(brand.get("logo_path") or "").strip()
+                if not logo_path:
+                    issues.append(
+                        _issue(
+                            code="required_logo_missing",
+                            field="logo_path",
+                            message="Client export requires a logo file.",
+                            next_action="Set logo_path to an existing supported image.",
+                            affected_file=PROJECT_CHARTER_BRAND_PATH,
+                        )
+                    )
+                else:
+                    self._validate_logo_path(logo_path, issues)
 
     def _validate_source_text(
         self,
@@ -467,6 +579,22 @@ class ProjectCharterDocumentService:
                     field="source",
                     message="The charter contains a client-visible placeholder marker.",
                     next_action="Replace generic placeholder text before client export.",
+                    affected_file=PROJECT_CHARTER_SOURCE_PATH,
+                )
+            )
+        if CLIENT_INTERNAL_LANGUAGE_PATTERN.search(source):
+            issues.append(
+                _issue(
+                    code="internal_implementation_language",
+                    field="source",
+                    message=(
+                        "The charter contains internal tooling or implementation "
+                        "language that must not be exposed to the client."
+                    ),
+                    next_action=(
+                        "Rewrite the content in client-facing project language "
+                        "and keep implementation evidence in internal documents."
+                    ),
                     affected_file=PROJECT_CHARTER_SOURCE_PATH,
                 )
             )
@@ -613,6 +741,180 @@ class ProjectCharterDocumentService:
         if source.is_file():
             shutil.copyfile(source, target)
 
+    def _logo_data_uri(self) -> str | None:
+        self._reconcile_logo_path()
+        brand = self._load_yaml(self._path(PROJECT_CHARTER_BRAND_PATH))
+        logo_path = str(brand.get("logo_path") or "").strip()
+        if not logo_path:
+            return None
+        logo = self._path(logo_path)
+        if not logo.is_file() or logo.stat().st_size > MAX_LOGO_BYTES:
+            return None
+        mime_type = mimetypes.guess_type(logo.name)[0]
+        if mime_type not in SUPPORTED_LOGO_MIME_TYPES:
+            return None
+        encoded = base64.b64encode(logo.read_bytes()).decode("ascii")
+        return f"data:{mime_type};base64,{encoded}"
+
+    def _reconcile_logo_path(self) -> bool:
+        brand_path = self._path(PROJECT_CHARTER_BRAND_PATH)
+        brand = self._load_yaml(brand_path)
+        if str(brand.get("logo_path") or "").strip():
+            return False
+        if str(brand.get("logo_status") or "") not in {"generated", "provided"}:
+            return False
+        for relative_path in (
+            "assets/brand/logo.svg",
+            "assets/brand/logo.png",
+            "assets/brand/logo.jpg",
+            "assets/brand/logo.jpeg",
+            "assets/brand/logo.webp",
+        ):
+            if self._path(relative_path).is_file():
+                brand["logo_path"] = relative_path
+                self._write_yaml(brand_path, brand)
+                return True
+        return False
+
+    def _validate_logo_path(
+        self,
+        relative_path: str,
+        issues: list[ProjectCharterValidationIssue],
+    ) -> None:
+        try:
+            logo = self._path(relative_path)
+        except ValueError:
+            logo = None
+        mime_type = mimetypes.guess_type(relative_path)[0]
+        if (
+            logo is None
+            or not logo.is_file()
+            or mime_type not in SUPPORTED_LOGO_MIME_TYPES
+            or logo.stat().st_size > MAX_LOGO_BYTES
+        ):
+            issues.append(
+                _issue(
+                    code="invalid_logo_file",
+                    field="logo_path",
+                    message="The configured client logo is missing or unsupported.",
+                    next_action="Use an SVG, PNG, JPEG, or WebP logo under the project workspace.",
+                    affected_file=PROJECT_CHARTER_BRAND_PATH,
+                )
+            )
+
+    def _invalidate_pdf(self) -> None:
+        pdf_path = self._path(PROJECT_CHARTER_PDF_PATH)
+        if pdf_path.is_file():
+            pdf_path.unlink()
+        manifest_path = self._path(PROJECT_CHARTER_RENDER_MANIFEST_PATH)
+        if manifest_path.is_file():
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                manifest = None
+            if isinstance(manifest, dict) and manifest.pop("pdf", None) is not None:
+                manifest_path.write_text(
+                    json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+        metadata_path = self._path(PROJECT_CHARTER_METADATA_PATH)
+        if metadata_path.is_file():
+            metadata = self._load_yaml(metadata_path)
+            hashes = metadata.get("hashes")
+            if isinstance(hashes, dict) and hashes.pop("pdf", None) is not None:
+                self._write_yaml(metadata_path, metadata)
+
+    def _render_pdf_with_chrome(self, render_path: Path, output_path: Path) -> None:
+        configured = os.environ.get("CHARTER_PDF_CHROME", "").strip()
+        chrome = configured or next(
+            (
+                candidate
+                for candidate in ("google-chrome", "chromium", "chromium-browser")
+                if shutil.which(candidate)
+            ),
+            "",
+        )
+        if not chrome:
+            raise RuntimeError("a Chromium/Chrome executable is not available")
+        profile_dir = output_path.parent / "chrome-profile"
+        command = [
+            chrome,
+            "--headless=new",
+            "--disable-gpu",
+            "--no-sandbox",
+            "--no-pdf-header-footer",
+            f"--user-data-dir={profile_dir}",
+            f"--print-to-pdf={output_path}",
+            render_path.as_uri(),
+        ]
+        completed = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if completed.returncode != 0 or not output_path.is_file():
+            detail = (completed.stderr or completed.stdout).strip()[-600:]
+            raise RuntimeError(detail or "Chromium did not produce a PDF")
+
+    def _validate_pdf_file(self, path: Path) -> dict[str, int]:
+        payload = path.read_bytes()
+        if len(payload) < 1_000 or not payload.startswith(b"%PDF-"):
+            raise RuntimeError("generated output is not a valid PDF")
+        try:
+            page_count = len(PdfReader(str(path)).pages)
+        except Exception as exc:  # pypdf normalizes malformed-document failures.
+            raise RuntimeError("generated PDF could not be parsed") from exc
+        if page_count < 1:
+            raise RuntimeError("generated PDF has no pages")
+        return {"page_count": page_count}
+
+    def _pdf_delivery_issues(self) -> list[ProjectCharterValidationIssue]:
+        issues: list[ProjectCharterValidationIssue] = []
+        pdf_path = self._path(PROJECT_CHARTER_PDF_PATH)
+        manifest_path = self._path(PROJECT_CHARTER_RENDER_MANIFEST_PATH)
+        manifest = self._read_json_file(
+            manifest_path,
+            PROJECT_CHARTER_RENDER_MANIFEST_PATH,
+            issues,
+        ) if manifest_path.is_file() else None
+        pdf_manifest = manifest.get("pdf") if isinstance(manifest, dict) else None
+        if not pdf_path.is_file() or not isinstance(pdf_manifest, dict):
+            issues.append(
+                _issue(
+                    code="missing_client_pdf",
+                    field="pdf",
+                    message="A current, validated PDF is required for client delivery.",
+                    next_action="Generate the PDF before creating the client version.",
+                    affected_file=PROJECT_CHARTER_PDF_PATH,
+                )
+            )
+            return issues
+        actual_hash = _sha256_bytes(pdf_path.read_bytes())
+        render_manifest = manifest
+        if (
+            pdf_manifest.get("sha256") != actual_hash
+            or pdf_manifest.get("source_hash") != render_manifest.get("source_hash")
+            or pdf_manifest.get("render_hash") != render_manifest.get("render_hash")
+        ):
+            issues.append(
+                _issue(
+                    code="stale_client_pdf",
+                    field="pdf",
+                    message="The client PDF is stale or its integrity check failed.",
+                    next_action="Regenerate the PDF before creating the client version.",
+                    affected_file=PROJECT_CHARTER_PDF_PATH,
+                )
+            )
+        return issues
+
+    def current_pdf_path(self) -> Path:
+        issues = [*self.validate_export().blocking_issues, *self._pdf_delivery_issues()]
+        if issues:
+            raise RuntimeError(issues[0].message)
+        return self._path(PROJECT_CHARTER_PDF_PATH)
+
     def _mark_delivered(self, version: str, source_hash: str) -> None:
         metadata_path = self._path(PROJECT_CHARTER_METADATA_PATH)
         metadata = self._load_yaml(metadata_path)
@@ -680,9 +982,19 @@ def _issue(
     )
 
 
-def render_charter_markdown_to_html(markdown: str) -> ProjectCharterRenderedHtml:
-    body = _render_markdown_blocks(markdown)
+def render_charter_markdown_to_html(
+    markdown: str,
+    *,
+    logo_data_uri: str | None = None,
+) -> ProjectCharterRenderedHtml:
+    body = _render_markdown_blocks(_without_top_level_title(markdown))
     title = _document_title(markdown)
+    logo_markup = (
+        f'<img class="brand-logo" src="{html.escape(logo_data_uri, quote=True)}" '
+        'alt="Logo del proyecto">\n'
+        if logo_data_uri
+        else '<div class="logo-slot" aria-hidden="true"></div>\n'
+    )
     html_text = (
         "<!doctype html>\n"
         '<html lang="es">\n'
@@ -695,9 +1007,9 @@ def render_charter_markdown_to_html(markdown: str) -> ProjectCharterRenderedHtml
         "<body>\n"
         '<main class="document-page">\n'
         '<section class="cover-block">\n'
-        f'<div class="logo-slot">Logo</div>\n'
+        f"{logo_markup}"
         f"<h1>{html.escape(title)}</h1>\n"
-        '<p class="document-subtitle">Project Charter client document preview</p>\n'
+        '<p class="document-subtitle">Documento para revision del cliente</p>\n'
         "</section>\n"
         f"{body}\n"
         "</main>\n"
@@ -755,9 +1067,22 @@ def _render_markdown_blocks(markdown: str) -> str:
             continue
         if stripped.startswith("- "):
             items: list[str] = []
-            while index < len(lines) and lines[index].strip().startswith("- "):
-                items.append(lines[index].strip()[2:].strip())
-                index += 1
+            while index < len(lines):
+                candidate = lines[index].strip()
+                if candidate.startswith("- "):
+                    items.append(candidate[2:].strip())
+                    index += 1
+                    continue
+                if (
+                    candidate
+                    and items
+                    and not candidate.startswith(("#", "|"))
+                    and not re.match(r"^\d+\.\s+", candidate)
+                ):
+                    items[-1] = f"{items[-1]} {candidate}"
+                    index += 1
+                    continue
+                break
             rendered.append(
                 "<ul>\n"
                 + "\n".join(f"<li>{_inline_markdown(item)}</li>" for item in items)
@@ -849,6 +1174,17 @@ def _document_title(markdown: str) -> str:
     return "Acta de Proyecto"
 
 
+def _without_top_level_title(markdown: str) -> str:
+    lines = markdown.splitlines()
+    for index, line in enumerate(lines):
+        if not line.strip():
+            continue
+        if line.startswith("# "):
+            return "\n".join((*lines[:index], *lines[index + 1 :]))
+        break
+    return markdown
+
+
 def _print_stylesheet() -> str:
     return """
 @page {
@@ -888,12 +1224,28 @@ body {
   text-transform: uppercase;
   color: #4b5563;
 }
+.brand-logo {
+  display: block;
+  width: auto;
+  max-width: 150px;
+  height: auto;
+  max-height: 72px;
+  object-fit: contain;
+  margin-bottom: 18px;
+}
 .document-subtitle {
   color: #4b5563;
 }
 .section-heading {
   break-after: avoid;
   margin-top: 22px;
+}
+p, li {
+  orphans: 3;
+  widows: 3;
+}
+li {
+  break-inside: avoid;
 }
 .toc-list {
   padding-left: 24px;
@@ -920,6 +1272,8 @@ code {
 @media print {
   body {
     background: #ffffff;
+    font-size: 10.5pt;
+    line-height: 1.42;
   }
   .document-page {
     width: auto;
@@ -927,6 +1281,9 @@ code {
     margin: 0;
     padding: 0;
     box-shadow: none;
+  }
+  .section-heading {
+    margin-top: 16px;
   }
 }
 """.strip()
@@ -987,6 +1344,10 @@ def _manifest_latest_release(manifest: dict[str, object]) -> str | None:
 
 def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _sha256_bytes(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest()
 
 
 def _now_iso() -> str:

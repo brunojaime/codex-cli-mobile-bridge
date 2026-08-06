@@ -1,9 +1,17 @@
 import 'dart:async';
+import 'dart:typed_data';
 
+import 'package:file_saver/file_saver.dart';
 import 'package:flutter/material.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../models/project_documents.dart';
 import '../services/api_client.dart';
+
+typedef ProjectDocumentPdfAction = Future<void> Function(
+  Uint8List bytes,
+  String filename,
+);
 
 class ProjectDocumentsPanel extends StatefulWidget {
   const ProjectDocumentsPanel({
@@ -11,11 +19,15 @@ class ProjectDocumentsPanel extends StatefulWidget {
     required this.apiClient,
     required this.workspacePath,
     required this.onRequestCharterChange,
+    this.onSavePdf,
+    this.onSharePdf,
   });
 
   final ApiClient apiClient;
   final String workspacePath;
   final ValueChanged<String> onRequestCharterChange;
+  final ProjectDocumentPdfAction? onSavePdf;
+  final ProjectDocumentPdfAction? onSharePdf;
 
   @override
   State<ProjectDocumentsPanel> createState() => _ProjectDocumentsPanelState();
@@ -34,6 +46,9 @@ class _ProjectDocumentsPanelState extends State<ProjectDocumentsPanel> {
   bool _isRefreshingRender = false;
   bool _isReleasing = false;
   bool _isLoadingRelease = false;
+  bool _isGeneratingPdf = false;
+  bool _isDownloadingPdf = false;
+  bool _isSharingPdf = false;
 
   @override
   void initState() {
@@ -177,6 +192,74 @@ class _ProjectDocumentsPanelState extends State<ProjectDocumentsPanel> {
     }
   }
 
+  Future<void> _generatePdf() async {
+    if (_isGeneratingPdf) return;
+    setState(() {
+      _isGeneratingPdf = true;
+      _errorText = null;
+    });
+    try {
+      if (_charter?.hasFreshRender != true) {
+        await widget.apiClient.renderProjectDocumentCharter(
+          workspacePath: widget.workspacePath,
+        );
+      }
+      await widget.apiClient.generateProjectDocumentCharterPdf(
+        workspacePath: widget.workspacePath,
+      );
+      await _load();
+      if (mounted) _showSuccess('PDF listo para descargar o compartir.');
+    } catch (error) {
+      if (mounted) setState(() => _errorText = '$error');
+    } finally {
+      if (mounted) setState(() => _isGeneratingPdf = false);
+    }
+  }
+
+  Future<void> _downloadPdf() async {
+    if (_isDownloadingPdf || _charter?.pdf.exists != true) return;
+    setState(() {
+      _isDownloadingPdf = true;
+      _errorText = null;
+    });
+    try {
+      final bytes = await widget.apiClient.downloadProjectDocumentCharterPdf(
+        workspacePath: widget.workspacePath,
+      );
+      final filename = _pdfFilename(_charter!.workspaceName);
+      await (widget.onSavePdf ?? _savePdf)(bytes, filename);
+      if (mounted) _showSuccess('PDF guardado correctamente.');
+    } catch (error) {
+      if (mounted) setState(() => _errorText = '$error');
+    } finally {
+      if (mounted) setState(() => _isDownloadingPdf = false);
+    }
+  }
+
+  Future<void> _sharePdf() async {
+    if (_isSharingPdf || _charter?.pdf.exists != true) return;
+    setState(() {
+      _isSharingPdf = true;
+      _errorText = null;
+    });
+    try {
+      final bytes = await widget.apiClient.downloadProjectDocumentCharterPdf(
+        workspacePath: widget.workspacePath,
+      );
+      final filename = _pdfFilename(_charter!.workspaceName);
+      await (widget.onSharePdf ?? _sharePdfFile)(bytes, filename);
+    } catch (error) {
+      if (mounted) setState(() => _errorText = '$error');
+    } finally {
+      if (mounted) setState(() => _isSharingPdf = false);
+    }
+  }
+
+  void _showSuccess(String message) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
   Future<void> _openRelease(ProjectDocumentRelease release) async {
     if (_isLoadingRelease) {
       return;
@@ -218,7 +301,7 @@ class _ProjectDocumentsPanelState extends State<ProjectDocumentsPanel> {
     if (charter == null || validation == null) {
       return false;
     }
-    return validation.ok && charter.hasFreshRender;
+    return validation.ok && charter.hasFreshRender && charter.pdf.exists;
   }
 
   @override
@@ -278,7 +361,15 @@ class _ProjectDocumentsPanelState extends State<ProjectDocumentsPanel> {
           releaseDisabledReason: releaseDisabledReason,
           isRefreshingRender: _isRefreshingRender,
           isReleasing: _isReleasing,
+          isGeneratingPdf: _isGeneratingPdf,
+          isDownloadingPdf: _isDownloadingPdf,
+          isSharingPdf: _isSharingPdf,
+          hasPdf: charter.pdf.exists,
+          pdfSizeBytes: charter.pdf.sizeBytes,
           onRefreshRender: _refreshRender,
+          onGeneratePdf: _generatePdf,
+          onDownloadPdf: _downloadPdf,
+          onSharePdf: _sharePdf,
           onRelease: _releaseCharter,
           onRequestChange: () {
             widget.onRequestCharterChange(
@@ -310,6 +401,9 @@ class _ProjectDocumentsPanelState extends State<ProjectDocumentsPanel> {
     }
     if (!charter.hasFreshRender) {
       return 'Refresh render before creating a client-delivered version.';
+    }
+    if (!charter.pdf.exists) {
+      return 'Genera el PDF antes de crear la version para el cliente.';
     }
     return null;
   }
@@ -354,7 +448,7 @@ class _HeaderSection extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
                     Text(
-                      'Project Charter',
+                      'Acta de Proyecto',
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(
                             color: Colors.white,
                             fontWeight: FontWeight.w800,
@@ -535,7 +629,15 @@ class _ActionsSection extends StatelessWidget {
     required this.releaseDisabledReason,
     required this.isRefreshingRender,
     required this.isReleasing,
+    required this.isGeneratingPdf,
+    required this.isDownloadingPdf,
+    required this.isSharingPdf,
+    required this.hasPdf,
+    required this.pdfSizeBytes,
     required this.onRefreshRender,
+    required this.onGeneratePdf,
+    required this.onDownloadPdf,
+    required this.onSharePdf,
     required this.onRelease,
     required this.onRequestChange,
   });
@@ -545,7 +647,15 @@ class _ActionsSection extends StatelessWidget {
   final String? releaseDisabledReason;
   final bool isRefreshingRender;
   final bool isReleasing;
+  final bool isGeneratingPdf;
+  final bool isDownloadingPdf;
+  final bool isSharingPdf;
+  final bool hasPdf;
+  final int pdfSizeBytes;
   final VoidCallback onRefreshRender;
+  final VoidCallback onGeneratePdf;
+  final VoidCallback onDownloadPdf;
+  final VoidCallback onSharePdf;
   final VoidCallback onRelease;
   final VoidCallback onRequestChange;
 
@@ -576,6 +686,60 @@ class _ActionsSection extends StatelessWidget {
                       )
                     : const Icon(Icons.refresh),
                 label: const Text('Refresh render'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          const _SectionTitle(
+            icon: Icons.picture_as_pdf_outlined,
+            title: 'Entrega al cliente',
+          ),
+          const SizedBox(height: 6),
+          Text(
+            hasPdf
+                ? 'PDF listo · ${_formatBytes(pdfSizeBytes)}'
+                : 'Genera un PDF validado antes de crear la version entregable.',
+            style: TextStyle(
+              color: hasPdf ? const Color(0xFF55D6BE) : const Color(0xFF9CA8C7),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: <Widget>[
+              FilledButton.icon(
+                onPressed: isGeneratingPdf ? null : onGeneratePdf,
+                icon: isGeneratingPdf
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.auto_awesome_outlined),
+                label: Text(hasPdf ? 'Regenerar PDF' : 'Generar PDF'),
+              ),
+              OutlinedButton.icon(
+                onPressed: hasPdf && !isDownloadingPdf ? onDownloadPdf : null,
+                icon: isDownloadingPdf
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.download_outlined),
+                label: const Text('Descargar'),
+              ),
+              OutlinedButton.icon(
+                onPressed: hasPdf && !isSharingPdf ? onSharePdf : null,
+                icon: isSharingPdf
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.share_outlined),
+                label: const Text('Compartir'),
               ),
             ],
           ),
@@ -615,6 +779,44 @@ class _ActionsSection extends StatelessWidget {
       ),
     );
   }
+}
+
+Future<void> _savePdf(Uint8List bytes, String filename) async {
+  final stem =
+      filename.replaceFirst(RegExp(r'\.pdf$', caseSensitive: false), '');
+  await FileSaver.instance.saveFile(
+    name: stem,
+    bytes: bytes,
+    fileExtension: 'pdf',
+    mimeType: MimeType.pdf,
+  );
+}
+
+Future<void> _sharePdfFile(Uint8List bytes, String filename) async {
+  await SharePlus.instance.share(
+    ShareParams(
+      subject: 'Acta de Proyecto',
+      text: 'Acta de Proyecto para revision.',
+      files: <XFile>[
+        XFile.fromData(bytes, mimeType: 'application/pdf', name: filename),
+      ],
+      fileNameOverrides: <String>[filename],
+    ),
+  );
+}
+
+String _pdfFilename(String workspaceName) {
+  final safe = workspaceName
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
+      .replaceAll(RegExp(r'^-+|-+$'), '');
+  return 'acta-de-proyecto-${safe.isEmpty ? 'proyecto' : safe}.pdf';
+}
+
+String _formatBytes(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+  return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
 }
 
 class _ReleasesSection extends StatelessWidget {

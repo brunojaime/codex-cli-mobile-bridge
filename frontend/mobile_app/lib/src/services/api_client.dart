@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:cross_file/cross_file.dart';
 import 'package:http/http.dart' as http;
@@ -567,6 +568,55 @@ class ApiClient {
     return ProjectDocumentCharterRenderResponse.fromJson(
       jsonDecode(response.body) as Map<String, dynamic>,
     );
+  }
+
+  Future<ProjectDocumentCharterPdfResponse> generateProjectDocumentCharterPdf({
+    String? workspacePath,
+    String? draftId,
+    String? jobId,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/project-documents/charter/pdf'),
+      headers: <String, String>{'Content-Type': 'application/json'},
+      body: jsonEncode(_projectDocumentsRequestBody(
+        workspacePath: workspacePath,
+        draftId: draftId,
+        jobId: jobId,
+      )),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('No se pudo generar el PDF: ${response.body}');
+    }
+    return ProjectDocumentCharterPdfResponse.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<Uint8List> downloadProjectDocumentCharterPdf({
+    String? workspacePath,
+    String? draftId,
+    String? jobId,
+    String? releaseVersion,
+  }) async {
+    final endpoint = releaseVersion == null
+        ? '/project-documents/charter/pdf/download'
+        : '/project-documents/charter/releases/$releaseVersion/pdf';
+    final response = await _client.get(
+      _projectDocumentsUri(
+        endpoint,
+        workspacePath: workspacePath,
+        draftId: draftId,
+        jobId: jobId,
+      ),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('No se pudo descargar el PDF: ${response.body}');
+    }
+    final bytes = response.bodyBytes;
+    if (bytes.length < 5 || String.fromCharCodes(bytes.take(5)) != '%PDF-') {
+      throw Exception('El servidor devolvio un archivo PDF invalido.');
+    }
+    return bytes;
   }
 
   Future<ProjectDocumentCharterReleaseResponse> releaseProjectDocumentCharter({

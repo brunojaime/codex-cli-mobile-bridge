@@ -88,6 +88,13 @@ def test_validate_render_release_and_releases_endpoints_are_stable(
     assert validate.status_code == 200
     assert validate.json()["validation"]["ok"] is True
 
+    pdf = client.post(
+        "/project-documents/charter/pdf",
+        json={"workspacePath": str(project)},
+    )
+    assert pdf.status_code == 200
+    assert pdf.json()["pdf"]["page_count"] > 0
+
     source_path = project / PROJECT_CHARTER_SOURCE_PATH
     updated_source = (
         source_path.read_text(encoding="utf-8")
@@ -107,6 +114,18 @@ def test_validate_render_release_and_releases_endpoints_are_stable(
     assert render_payload["render_manifest"]["source_hash"] == render_payload[
         "render"
     ]["source_hash"]
+    regenerated_pdf = client.post(
+        "/project-documents/charter/pdf",
+        json={"workspacePath": str(project)},
+    )
+    assert regenerated_pdf.status_code == 200
+    current_pdf = client.get(
+        "/project-documents/charter/pdf/download",
+        params={"workspacePath": str(project)},
+    )
+    assert current_pdf.status_code == 200
+    assert current_pdf.headers["content-type"] == "application/pdf"
+    assert current_pdf.content.startswith(b"%PDF-")
 
     release = client.post(
         "/project-documents/charter/release",
@@ -117,6 +136,12 @@ def test_validate_render_release_and_releases_endpoints_are_stable(
         },
     )
     assert release.status_code == 200
+    released_pdf = client.get(
+        "/project-documents/charter/releases/v1.0/pdf",
+        params={"workspacePath": str(project)},
+    )
+    assert released_pdf.status_code == 200
+    assert released_pdf.content.startswith(b"%PDF-")
     assert release.json()["ok"] is True
     assert release.json()["release_path"].endswith("/v1.0")
 
@@ -355,7 +380,19 @@ def _generated_project(projects_root: Path) -> Path:
         )
     )
     ProjectFactoryGeneratorService().generate(manifest_plan)
-    return projects_root / "clinica-norte"
+    project = projects_root / "clinica-norte"
+    brand_path = project / "docs/project-management/acta/current/brand.yaml"
+    brand = _read_yaml(brand_path)
+    brand.update(
+        {
+            "logo_status": "not_required",
+            "logo_source": "none",
+            "client_pdf_requires_logo": False,
+            "logo_path": None,
+        }
+    )
+    brand_path.write_text(yaml.safe_dump(brand, sort_keys=False), encoding="utf-8")
+    return project
 
 
 def _read_yaml(path: Path) -> dict[str, object]:

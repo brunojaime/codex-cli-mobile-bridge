@@ -143,6 +143,8 @@ from backend.app.api.schemas import (
     ProjectDocumentCharterReleaseResponse,
     ProjectDocumentCharterRenderRequest,
     ProjectDocumentCharterRenderResponse,
+    ProjectDocumentCharterPdfRequest,
+    ProjectDocumentCharterPdfResponse,
     ProjectDocumentCharterReleasesResponse,
     ProjectDocumentCharterResponse,
     ProjectDocumentCharterValidationRequest,
@@ -2487,6 +2489,52 @@ async def render_project_document_charter(
 
 
 @router.post(
+    "/project-documents/charter/pdf",
+    response_model=ProjectDocumentCharterPdfResponse,
+)
+async def generate_project_document_charter_pdf(
+    request: ProjectDocumentCharterPdfRequest,
+    container: AppContainer = Depends(get_container),
+) -> ProjectDocumentCharterPdfResponse:
+    try:
+        payload = await run_in_threadpool(
+            container.project_document_discovery_service.generate_charter_pdf,
+            workspace_path=request.workspace_path,
+            draft_id=request.draft_id,
+            job_id=request.job_id,
+        )
+    except ProjectDocumentWorkspaceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not payload.get("ok"):
+        raise HTTPException(status_code=409, detail=payload)
+    return ProjectDocumentCharterPdfResponse(**payload)
+
+
+@router.get("/project-documents/charter/pdf/download")
+async def download_project_document_charter_pdf(
+    workspace_path: str | None = Query(default=None),
+    workspace_path_alias: str | None = Query(default=None, alias="workspacePath"),
+    draft_id: str | None = Query(default=None),
+    draft_id_alias: str | None = Query(default=None, alias="draftId"),
+    job_id: str | None = Query(default=None),
+    job_id_alias: str | None = Query(default=None, alias="jobId"),
+    container: AppContainer = Depends(get_container),
+) -> FileResponse:
+    try:
+        path = await run_in_threadpool(
+            container.project_document_discovery_service.current_charter_pdf_path,
+            workspace_path=workspace_path or workspace_path_alias,
+            draft_id=draft_id or draft_id_alias,
+            job_id=job_id or job_id_alias,
+        )
+    except ProjectDocumentWorkspaceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ProjectDocumentNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return FileResponse(path, media_type="application/pdf", filename="acta-de-proyecto.pdf")
+
+
+@router.post(
     "/project-documents/charter/release",
     response_model=ProjectDocumentCharterReleaseResponse,
 )
@@ -2566,6 +2614,36 @@ async def get_project_document_charter_release(
     except ProjectDocumentNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return ProjectDocumentCharterReleaseResponse(**payload)
+
+
+@router.get("/project-documents/charter/releases/{release_version}/pdf")
+async def download_project_document_charter_release_pdf(
+    release_version: str,
+    workspace_path: str | None = Query(default=None),
+    workspace_path_alias: str | None = Query(default=None, alias="workspacePath"),
+    draft_id: str | None = Query(default=None),
+    draft_id_alias: str | None = Query(default=None, alias="draftId"),
+    job_id: str | None = Query(default=None),
+    job_id_alias: str | None = Query(default=None, alias="jobId"),
+    container: AppContainer = Depends(get_container),
+) -> FileResponse:
+    try:
+        path = await run_in_threadpool(
+            container.project_document_discovery_service.release_charter_pdf_path,
+            release_version,
+            workspace_path=workspace_path or workspace_path_alias,
+            draft_id=draft_id or draft_id_alias,
+            job_id=job_id or job_id_alias,
+        )
+    except ProjectDocumentWorkspaceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ProjectDocumentNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return FileResponse(
+        path,
+        media_type="application/pdf",
+        filename=f"acta-de-proyecto-{release_version}.pdf",
+    )
 
 
 @router.get("/sdd/projects", response_model=SddProjectsResponse)

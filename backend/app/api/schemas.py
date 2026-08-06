@@ -1875,6 +1875,10 @@ class ProjectDocumentCharterRenderRequest(ProjectDocumentWorkspaceRequest):
     pass
 
 
+class ProjectDocumentCharterPdfRequest(ProjectDocumentWorkspaceRequest):
+    pass
+
+
 class ProjectDocumentCharterReleaseRequest(ProjectDocumentWorkspaceRequest):
     version: str = Field(..., min_length=1, max_length=32)
     changed_fields: list[str] = Field(default_factory=list, alias="changedFields")
@@ -1929,6 +1933,17 @@ class ProjectDocumentCharterRenderResponse(BaseModel):
     workspace_path: str
     render: dict[str, Any] = Field(default_factory=dict)
     render_manifest: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectDocumentCharterPdfResponse(BaseModel):
+    kind: str = "codex.projectDocumentCharterPdf"
+    version: int = 1
+    workspace_path: str
+    ok: bool
+    status: str
+    message: str
+    pdf: dict[str, Any] = Field(default_factory=dict)
+    validation: dict[str, Any] = Field(default_factory=dict)
 
 
 class ProjectDocumentCharterReleaseResponse(BaseModel):

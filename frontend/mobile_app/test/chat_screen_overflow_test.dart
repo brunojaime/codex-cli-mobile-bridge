@@ -90,12 +90,12 @@ void main() {
     );
 
     expect(find.text('Documents'), findsOneWidget);
-    expect(find.text('Project Charter'), findsNothing);
+    expect(find.text('Acta de Proyecto'), findsNothing);
 
     await tester.tap(find.text('Documents'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Project Charter'), findsWidgets);
+    expect(find.text('Acta de Proyecto'), findsWidgets);
     expect(find.text('Latest Preview'), findsOneWidget);
     expect(documentClient.listCalls, 1);
     expect(documentClient.detailCalls, 1);

@@ -1,7 +1,7 @@
 name: codex_mobile_frontend
 description: Mobile chat frontend for the local Codex bridge.
 publish_to: "none"
-version: 1.0.0+131
+version: 1.0.0+135
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -14,6 +14,7 @@ dependencies:
     path: ../../packages/codex_bridge_workbench
   cross_file: ^0.3.5+2
   file_picker: ^10.3.10
+  file_saver: ^0.4.0
   flutter:
     sdk: flutter
   flutter_local_notifications: ^19.4.2
@@ -25,6 +26,7 @@ dependencies:
   path_provider: ^2.1.5
   record: ^6.2.0
   shared_preferences: ^2.5.3
+  share_plus: ^11.1.0
   url_launcher: ^6.3.2
   web: ^1.1.1
   web_socket_channel: ^3.0.3
