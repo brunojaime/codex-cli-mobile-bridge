@@ -21,6 +21,7 @@ from backend.app.application.services.project_factory_manifest_service import (
     ProjectFactoryManifestService,
 )
 from backend.app.domain.entities.project_factory_init import (
+    ProjectFactoryInitBlocker,
     ProjectFactoryInitPhaseName,
     ProjectFactoryInitPhaseStatus,
     ProjectFactoryInitRemoteResourceType,
@@ -165,12 +166,10 @@ def test_cloudflare_init_existing_resources_urls_deploy_and_smoke_success(
     assert preview.url == "https://preview.nienfos.com/clinica-norte"
     assert api.url == "https://preview.nienfos.com/clinica-norte/api"
     assert worker.status == "updated"
-    assert route.status == "existing"
+    assert route.status == "updated"
     assert d1.status == "existing"
-    metadata = fake.worker_metadata["nienfos-preview-runtime"]
-    assert {"type": "d1", "name": "PREVIEW_DB", "id": "d1-1"} in metadata["bindings"]
     assert fake.calls.index("list_d1_databases:acct-1") < fake.calls.index(
-        "deploy_worker_script:acct-1:nienfos-preview-runtime:module"
+        "get_worker_script:acct-1:nienfos-preview-clinica-norte"
     )
     generated_wrangler = project / ".codex/factory/cloudflare/wrangler.toml"
     assert any(
@@ -178,6 +177,13 @@ def test_cloudflare_init_existing_resources_urls_deploy_and_smoke_success(
         for call in service._command_runner.calls
     )
     assert 'binding = "ASSETS"' in generated_wrangler.read_text()
+    assert 'name = "nienfos-preview-clinica-norte"' in generated_wrangler.read_text()
+    assert '[version_metadata]' in generated_wrangler.read_text()
+    assert 'PREVIEW_BUILD_ID = "' in generated_wrangler.read_text()
+    assert sorted(fake.worker_secrets["nienfos-preview-clinica-norte"]) == [
+        "PREVIEW_ADMIN_BOOTSTRAP_TOKEN",
+        "WEB_PREVIEW_INVITE_SECRET",
+    ]
     assert any(
         call.startswith("fetch_url:https://preview.nienfos.com/clinica-norte")
         for call in fake.calls
@@ -260,7 +266,7 @@ def test_cloudflare_init_retries_transient_preview_health_status(
     smoke = completed.phase(ProjectFactoryInitPhaseName.PREVIEW_SMOKE)
     assert smoke.status == ProjectFactoryInitPhaseStatus.COMPLETED
     assert len(smoke.artifacts[0].metadata["checks"]) == 2
-    assert sum(call.startswith("fetch_url:") for call in fake.calls) == 10
+    assert sum(call.startswith("fetch_url:") for call in fake.calls) == 14
 
 
 def test_cloudflare_init_builds_web_preview_before_deploy(
@@ -365,6 +371,57 @@ def test_cloudflare_init_resets_blocked_phase_for_retry(
     assert build_attempts == 2
     assert (
         completed.phase(ProjectFactoryInitPhaseName.CLOUDFLARE_PREVIEW_PROVISION).status
+        == ProjectFactoryInitPhaseStatus.COMPLETED
+    )
+
+
+def test_retry_migrates_legacy_shared_worker_before_android_retry(
+    tmp_path: Path,
+) -> None:
+    fake = _FakeCloudflareClient(resources_exist=True)
+    service = _service(tmp_path, cloudflare_client=fake)
+    project = _generated_project(tmp_path)
+    job = _job(service, project)
+    deployed = service.run_cloudflare_preview_phases(job.id)
+    manifest_path = project / "deploy/web-preview/web-preview-manifest.yaml"
+    manifest_path.write_text(
+        manifest_path.read_text(encoding="utf-8").replace(
+            "worker_name: nienfos-preview-clinica-norte",
+            "worker_name: nienfos-preview-runtime",
+        ),
+        encoding="utf-8",
+    )
+    blocked = service.block_phase(
+        deployed.id,
+        ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE.value,
+        blocker=ProjectFactoryInitBlocker(
+            code="android_preview_release_publish_failed",
+            message="Release credentials failed.",
+            phase=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+            next_action="Fix credentials and retry.",
+        ),
+        context_available=True,
+    )
+
+    reset = service._reset_blocked_phase_for_retry(blocked.id)
+
+    for phase_name in (
+        ProjectFactoryInitPhaseName.CLOUDFLARE_PREVIEW_PROVISION,
+        ProjectFactoryInitPhaseName.CLOUDFLARE_PREVIEW_DEPLOY,
+        ProjectFactoryInitPhaseName.PREVIEW_SMOKE,
+        ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+        ProjectFactoryInitPhaseName.BRIDGE_INSTALLABLE_REGISTRATION,
+    ):
+        assert reset.phase(phase_name).status == ProjectFactoryInitPhaseStatus.QUEUED
+
+    migrated = service.run_cloudflare_preview_phases(reset.id)
+    worker = _resource(
+        migrated,
+        ProjectFactoryInitRemoteResourceType.CLOUDFLARE_WORKER,
+    )
+    assert worker.identifier == "nienfos-preview-clinica-norte"
+    assert (
+        migrated.phase(ProjectFactoryInitPhaseName.PREVIEW_SMOKE).status
         == ProjectFactoryInitPhaseStatus.COMPLETED
     )
 
@@ -604,6 +661,7 @@ def _settings(tmp_path: Path, *, configured: bool = True) -> Settings:
         preview_d1_database_name="nienfos-preview",
         preview_pages_project_name="nienfos-preview-web",
         preview_r2_bucket_name=None,
+        preview_admin_bootstrap_token="test-preview-bootstrap-token-value-32",
         web_preview_invite_secret="test-web-preview-invite-secret-value-32",
         web_preview_email_provider="manual",
     )
@@ -640,6 +698,7 @@ class _FakeCloudflareClient:
         self.health_fetch_counts: dict[str, int] = {}
         self.worker_scripts: dict[str, str] = {}
         self.worker_metadata: dict[str, dict[str, Any]] = {}
+        self.worker_secrets: dict[str, dict[str, str]] = {}
         self.d1_columns: dict[str, set[str]] = {
             "preview_invites": {
                 "invite_id",
@@ -756,6 +815,28 @@ class _FakeCloudflareClient:
             )
         self.worker_scripts[script_name] = script_content
         return CloudflareLookupResult(ok=True, payload={"result": {"id": script_name}})
+
+    def put_worker_secret(
+        self,
+        *,
+        account_id: str,
+        script_name: str,
+        name: str,
+        text: str,
+    ) -> CloudflareLookupResult:
+        self.calls.append(f"put_worker_secret:{account_id}:{script_name}:{name}")
+        if self.fail_worker:
+            return CloudflareLookupResult(
+                ok=False,
+                status_code=500,
+                error="Bearer secret-token worker secret failed",
+            )
+        self.worker_scripts.setdefault(
+            script_name,
+            "export default { async fetch() { return new Response('deployed'); } };",
+        )
+        self.worker_secrets.setdefault(script_name, {})[name] = text
+        return CloudflareLookupResult(ok=True, payload={"result": {"name": name}})
 
     def list_worker_routes(
         self,
@@ -914,7 +995,23 @@ class _FakeCloudflareClient:
             status_code=200,
             payload={
                 "ok": True,
+                "source_app": _source_app_from_preview_url(url),
+                "app_slug": _source_app_from_preview_url(url),
                 "d1_bound": self.health_d1_bound,
                 "assets_bound": self.health_assets_bound,
+                "worker_name": (
+                    f"nienfos-preview-{_source_app_from_preview_url(url)}"
+                ),
+                "worker_version_id": "worker-version-test",
+                "worker_version_tag": None,
+                "build_id": (headers or {}).get(
+                    "Cloudflare-Workers-Version-Key",
+                    "",
+                ),
             },
         )
+
+
+def _source_app_from_preview_url(url: str) -> str:
+    path = url.split("preview.nienfos.com/", 1)[-1]
+    return path.split("/", 1)[0]

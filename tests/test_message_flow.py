@@ -95,12 +95,17 @@ def build_test_client() -> TestClient:
     return TestClient(app)
 
 
-def build_session_client(*, projects_root: str = "..") -> TestClient:
+def build_session_client(
+    *,
+    projects_root: str = "..",
+    codex_workdir: str | None = None,
+) -> TestClient:
     settings = Settings(
         codex_command=(
             f"python3 {Path('tests/fixtures/fake_codex_session.py').resolve()}"
         ),
         codex_use_exec=True,
+        **({"codex_workdir": codex_workdir} if codex_workdir else {}),
         projects_root=projects_root,
         chat_store_backend="memory",
         bridge_environment="dev",
@@ -10589,7 +10594,7 @@ def test_text_message_route_rejects_unhealthy_repo_backed_mcp_server_selection(
             monkeypatch.setenv(env_key, "project-catalog")
         _write_fake_mcp_state(home_dir, server_state)
 
-        client = build_session_client()
+        client = build_session_client(codex_workdir=str(Path.cwd()))
         response = client.post(
             "/message",
             json={
@@ -10805,7 +10810,7 @@ def test_text_message_route_rejects_unhealthy_external_mcp_server_selection(
         if env_key is not None:
             monkeypatch.setenv(env_key, "github")
 
-        client = build_session_client()
+        client = build_session_client(codex_workdir=str(Path.cwd()))
         response = client.post(
             "/message",
             json={
@@ -10867,7 +10872,7 @@ def test_text_message_route_accepts_matching_repo_backed_mcp_server(
             },
         )
 
-        client = build_session_client()
+        client = build_session_client(codex_workdir=str(Path.cwd()))
         try:
             response = client.post(
                 "/message",

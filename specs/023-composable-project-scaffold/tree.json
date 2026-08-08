@@ -1,0 +1,185 @@
+{
+  "spec_id": "023-composable-project-scaffold",
+  "title": "Composable Project Scaffold",
+  "status": "completed",
+  "plans": [
+    {
+      "id": "plan-1",
+      "title": "Creation Modes And Manifest V2",
+      "status": "completed",
+      "tasks": [
+        {"id": "T001", "title": "Add scaffold and product creation modes.", "status": "completed"},
+        {"id": "T002", "title": "Define manifest v2 schemas.", "status": "completed"},
+        {"id": "T003", "title": "Define composable stack presets.", "status": "completed"},
+        {"id": "T004", "title": "Define buildable neutral bootstrap rules.", "status": "completed"},
+        {"id": "T005", "title": "Define scaffold lifecycle states.", "status": "completed"},
+        {"id": "T006", "title": "Implement read-only manifest v1 compatibility.", "status": "completed"},
+        {"id": "T007", "title": "Prevent compatibility reads from rewriting projects.", "status": "completed"},
+        {"id": "T008", "title": "Define capability evidence states.", "status": "completed"},
+        {"id": "T009", "title": "Test manifest v2 and v1 compatibility.", "status": "completed"}
+      ]
+    },
+    {
+      "id": "plan-2",
+      "title": "Provider Registry And Shared Contracts",
+      "status": "completed",
+      "tasks": [
+        {"id": "T010", "title": "Define target provider protocols.", "status": "completed"},
+        {"id": "T011", "title": "Implement provider registry.", "status": "completed"},
+        {"id": "T012", "title": "Register mobile providers.", "status": "completed"},
+        {"id": "T013", "title": "Register web providers.", "status": "completed"},
+        {"id": "T014", "title": "Register API providers.", "status": "completed"},
+        {"id": "T015", "title": "Register infrastructure readiness providers.", "status": "completed"},
+        {"id": "T016", "title": "Define logical runtime configuration mappings.", "status": "completed"},
+        {"id": "T017", "title": "Use provider capabilities for new phase selection.", "status": "completed"},
+        {"id": "T018", "title": "Test registry capabilities doctor and redaction.", "status": "completed"}
+      ]
+    },
+    {
+      "id": "plan-3",
+      "title": "Scaffold API Persistence And Mobile Intake",
+      "status": "completed",
+      "tasks": [
+        {"id": "T019", "title": "Expose modes providers presets and infrastructure options.", "status": "completed"},
+        {"id": "T020", "title": "Define scaffold draft and preview models.", "status": "completed"},
+        {"id": "T021", "title": "Add scaffold draft and confirmation endpoints.", "status": "completed"},
+        {"id": "T022", "title": "Add scaffold job APIs and compatibility aliases.", "status": "completed"},
+        {"id": "T023", "title": "Persist scaffold contracts jobs and relationships.", "status": "completed"},
+        {"id": "T024", "title": "Add New Project creation mode choice.", "status": "completed"},
+        {"id": "T025", "title": "Build minimal scaffold intake UI.", "status": "completed"},
+        {"id": "T026", "title": "Show scaffold confirmation and skipped work.", "status": "completed"},
+        {"id": "T027", "title": "Render progress links blockers and Start Product.", "status": "completed"},
+        {"id": "T028", "title": "Test API UI persistence and recovery.", "status": "completed"}
+      ]
+    },
+    {
+      "id": "plan-4",
+      "title": "Deterministic Scaffold Runner And Shared Baseline",
+      "status": "completed",
+      "tasks": [
+        {"id": "T029", "title": "Implement scaffold phase state machine.", "status": "completed"},
+        {"id": "T030", "title": "Implement scaffold preflight.", "status": "completed"},
+        {"id": "T031", "title": "Persist resolved scaffold contract.", "status": "completed"},
+        {"id": "T032", "title": "Generate shared scaffold repository shape.", "status": "completed"},
+        {"id": "T033", "title": "Generate infrastructure-only scaffold SDD package.", "status": "completed"},
+        {"id": "T034", "title": "Make Project Charter scaffold-aware.", "status": "completed"},
+        {"id": "T035", "title": "Invoke target providers and track file ownership.", "status": "completed"},
+        {"id": "T036", "title": "Implement cross-target validation.", "status": "completed"},
+        {"id": "T037", "title": "Reuse and harden Git and GitHub publication.", "status": "completed"},
+        {"id": "T038", "title": "Verify Workbench and write scaffold context pack.", "status": "completed"},
+        {"id": "T039", "title": "Test runner idempotency blockers and context.", "status": "completed"}
+      ]
+    },
+    {
+      "id": "plan-5",
+      "title": "React Native Expo And Framework-Neutral Android",
+      "status": "completed",
+      "tasks": [
+        {"id": "T040", "title": "Implement React Native Expo provider.", "status": "completed"},
+        {"id": "T041", "title": "Generate neutral Expo Router bootstrap.", "status": "completed"},
+        {"id": "T042", "title": "Generate Expo config metadata and validation scripts.", "status": "completed"},
+        {"id": "T043", "title": "Generate Android native sources deterministically.", "status": "completed"},
+        {"id": "T044", "title": "Validate React Native scaffold and Android build.", "status": "completed"},
+        {"id": "T045", "title": "Create reusable React Native Bridge package.", "status": "completed"},
+        {"id": "T046", "title": "Add React Native product feedback support.", "status": "completed"},
+        {"id": "T047", "title": "Add React Native Workbench launch support.", "status": "completed"},
+        {"id": "T048", "title": "Add React Native updater support.", "status": "completed"},
+        {"id": "T049", "title": "Define framework-neutral Android build adapters.", "status": "completed"},
+        {"id": "T050", "title": "Refactor Android release around normalized artifacts.", "status": "completed"},
+        {"id": "T051", "title": "Test React Native Android release and Flutter regression.", "status": "completed"}
+      ]
+    },
+    {
+      "id": "plan-6",
+      "title": "SvelteKit FastAPI Go And OpenAPI Parity",
+      "status": "completed",
+      "tasks": [
+        {"id": "T052", "title": "Implement SvelteKit provider.", "status": "completed"},
+        {"id": "T053", "title": "Generate neutral SvelteKit scaffold.", "status": "completed"},
+        {"id": "T054", "title": "Validate SvelteKit output and capability claims.", "status": "completed"},
+        {"id": "T055", "title": "Define scaffold OpenAPI contract.", "status": "completed"},
+        {"id": "T056", "title": "Generate shared TypeScript API client types.", "status": "completed"},
+        {"id": "T057", "title": "Refactor FastAPI generator into provider.", "status": "completed"},
+        {"id": "T058", "title": "Limit FastAPI scaffold to technical contract.", "status": "completed"},
+        {"id": "T059", "title": "Implement real Go provider.", "status": "completed"},
+        {"id": "T060", "title": "Ensure Go selection emits no FastAPI output.", "status": "completed"},
+        {"id": "T061", "title": "Build shared API conformance suite.", "status": "completed"},
+        {"id": "T062", "title": "Persist honest API deployment status.", "status": "completed"},
+        {"id": "T063", "title": "Test SvelteKit FastAPI Go and OpenAPI parity.", "status": "completed"}
+      ]
+    },
+    {
+      "id": "plan-7",
+      "title": "Cloudflare And AWS Terraform Readiness",
+      "status": "completed",
+      "tasks": [
+        {"id": "T064", "title": "Define Cloudflare scaffold schemas.", "status": "completed"},
+        {"id": "T065", "title": "Generate neutral infrastructure scaffold page.", "status": "completed"},
+        {"id": "T066", "title": "Generate provider-aware Cloudflare manifests.", "status": "completed"},
+        {"id": "T067", "title": "Implement zero-write Cloudflare generate-only mode.", "status": "completed"},
+        {"id": "T068", "title": "Implement idempotent Cloudflare provisioning and smoke.", "status": "completed"},
+        {"id": "T069", "title": "Enforce honest Cloudflare scaffold readiness.", "status": "completed"},
+        {"id": "T070", "title": "Make D1 opt-in after scaffold.", "status": "completed"},
+        {"id": "T071", "title": "Generate AWS architecture-docs readiness.", "status": "completed"},
+        {"id": "T072", "title": "Generate resource-neutral Terraform readiness.", "status": "completed"},
+        {"id": "T073", "title": "Test Cloudflare writes and Terraform non-apply.", "status": "completed"}
+      ]
+    },
+    {
+      "id": "plan-8",
+      "title": "Scaffold Completion And Start Product Transition",
+      "status": "completed",
+      "tasks": [
+        {"id": "T074", "title": "Derive scaffold-ready completion.", "status": "completed"},
+        {"id": "T075", "title": "Derive blocked-with-context completion.", "status": "completed"},
+        {"id": "T076", "title": "Skip product and release work on scaffold completion.", "status": "completed"},
+        {"id": "T077", "title": "Complete scaffold result and context fields.", "status": "completed"},
+        {"id": "T078", "title": "Add explicit Start Product API.", "status": "completed"},
+        {"id": "T079", "title": "Reuse scaffold resources for Domain Factory.", "status": "completed"},
+        {"id": "T080", "title": "Teach Domain Factory manifest v2 scaffold context.", "status": "completed"},
+        {"id": "T081", "title": "Assign product UX domain and release ownership.", "status": "completed"},
+        {"id": "T082", "title": "Test explicit product transition and resource reuse.", "status": "completed"}
+      ]
+    },
+    {
+      "id": "plan-9",
+      "title": "Compatibility Matrix Security And Rollout",
+      "status": "completed",
+      "tasks": [
+        {"id": "T083", "title": "Test legacy migration fixtures and old clients.", "status": "completed"},
+        {"id": "T084", "title": "Test React Native SvelteKit FastAPI scaffold end to end.", "status": "completed"},
+        {"id": "T085", "title": "Test React Native SvelteKit Go scaffold end to end.", "status": "completed"},
+        {"id": "T086", "title": "Test Flutter SvelteKit Go scaffold end to end.", "status": "completed"},
+        {"id": "T087", "title": "Test SvelteKit web-only scaffold end to end.", "status": "completed"},
+        {"id": "T088", "title": "Reject product content and forbidden scaffold side effects.", "status": "completed"},
+        {"id": "T089", "title": "Test security paths locks workflows and worktrees.", "status": "completed"},
+        {"id": "T090", "title": "Test real-data Flutter and React Native releases.", "status": "completed"},
+        {"id": "T091", "title": "Add feature flags and staged rollout.", "status": "completed"},
+        {"id": "T092", "title": "Document scaffold operator workflows.", "status": "completed"},
+        {"id": "T093", "title": "Document compatibility migration and provider authoring.", "status": "completed"},
+        {"id": "T094", "title": "Run and record full focused validation.", "status": "completed"}
+      ]
+    }
+  ],
+  "independent_audit": {
+    "date": "2026-08-08",
+    "status": "completed",
+    "clean_generated_matrices": [
+      "react_native_expo+sveltekit+fastapi+terraform_ready",
+      "none+sveltekit+go+generate_only",
+      "flutter+flutter_web+none+generate_only"
+    ],
+    "negative_coverage": [
+      "feature_gate_bypass",
+      "workspace_symlink_traversal",
+      "provider_generated_file_conflict",
+      "unsafe_provider_command",
+      "blocked_product_transition",
+      "product_transition_partial_failure_rollback",
+      "remote_origin_mismatch",
+      "protected_preview_public_fallback",
+      "android_signature_package_checksum"
+    ],
+    "tracked_generated_artifacts": false
+  }
+}

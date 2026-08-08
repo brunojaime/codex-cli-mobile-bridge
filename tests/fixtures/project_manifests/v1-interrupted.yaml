@@ -1,0 +1,11 @@
+schema_version: 1
+name: Legacy Interrupted
+slug: legacy-interrupted
+frontend_strategy: flutter
+backend:
+  framework: fastapi
+lifecycle:
+  state: initializing
+init_job:
+  current_phase: cloudflare_preview
+  status: interrupted

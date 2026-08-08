@@ -8,7 +8,12 @@ import re
 import subprocess
 from typing import Any
 
-from backend.app.application.services.sdd_standard_service import parse_simple_yaml
+import yaml
+
+from backend.app.application.services.sdd_standard_service import (
+    SddInvalidStandardError,
+    parse_simple_yaml,
+)
 from backend.app.domain.entities.agent_configuration import (
     AgentConfiguration,
     AgentDisplayMode,
@@ -50,8 +55,17 @@ PROTECTED_FOUNDATION_AREAS = (
     "initial project identity, slug, repo, and baseline release",
 )
 
+SCAFFOLD_PROTECTED_TECHNICAL_AREAS = (
+    "workspace, repository, and source-app identity",
+    "selected mobile, web, API, Cloudflare, and AWS provider bootstraps",
+    "normalized runtime and Android artifact contracts",
+    "Bridge-owned Workbench scope and SDD metadata",
+    "validated scaffold resources and evidence",
+)
+
 ALLOWED_DOMAIN_MODIFICATION_AREAS = (
-    "Flutter UI, visuals, layout, navigation, empty states, and assets",
+    "Flutter UI, visuals, layout, information architecture, navigation, empty states, and assets",
+    "domain-specific color system, logo treatment, and app icon source",
     "domain backend modules, services, repositories, and migrations",
     "domain-specific admin modules",
     "domain roles and explicit permissions",
@@ -80,7 +94,7 @@ DOMAIN_INTAKE_FIELDS = (
     "notifications and business events",
     "integrations",
     "visual identity, colors, style, and reference images",
-    "screens, navigation, mobile behavior, and empty states",
+    "information architecture, screens, navigation, mobile behavior, and empty states",
     "release acceptance criteria",
 )
 
@@ -127,7 +141,7 @@ DOMAIN_FOLLOW_UP_QUESTIONS = (
     {
         "id": "visual_direction",
         "field": "visual identity",
-        "prompt": "What visual direction, reference images, colors, and mobile empty states should guide the UI?",
+        "prompt": "What visual direction, reference images, colors, identity, app icon, and mobile empty states should guide the UI?",
         "options": (
             "use attached references",
             "clean operational UI",
@@ -249,6 +263,8 @@ class DomainFactoryContext:
     preview_runtime: dict[str, Any] = field(default_factory=dict)
     bridge_manifest: dict[str, Any] = field(default_factory=dict)
     llm_start_context_excerpt: str | None = None
+    creation_mode: str = "product"
+    scaffold_result: dict[str, Any] = field(default_factory=dict)
 
     @property
     def status(self) -> str:
@@ -291,6 +307,8 @@ class DomainFactoryContext:
             ),
             "domainIntakeFields": list(DOMAIN_INTAKE_FIELDS),
             "baselineIntakeFieldsToAvoid": list(BASELINE_INTAKE_FIELDS_TO_AVOID),
+            "creationMode": self.creation_mode,
+            "scaffold": _scaffold_context_summary(self.scaffold_result),
             "followUpQuestions": list(DOMAIN_FOLLOW_UP_QUESTIONS),
             "rolePermissionModel": DOMAIN_ROLE_PERMISSION_MODEL,
             "releaseGuardrails": DOMAIN_RELEASE_GUARDRAILS,
@@ -395,15 +413,44 @@ class DomainFactoryService:
         workspace = self._validate_workspace_path(
             workspace_path or session.workspace_path
         )
-        bridge_manifest = _read_yaml(workspace / "codex-bridge.yaml")
-        init_result = _read_json(workspace / ".codex/factory/init-result.json")
         project_manifest = _read_yaml(workspace / ".codex/project.yaml")
-        preview_runtime = _read_json(workspace / "release/preview-runtime.json")
+        creation = project_manifest.get("creation")
+        creation_mode = (
+            str(creation.get("mode") or "product")
+            if isinstance(creation, dict)
+            else "product"
+        )
+        is_scaffold = creation_mode == "scaffold"
+        bridge_manifest = _read_yaml(workspace / "codex-bridge.yaml")
+        scaffold_result = (
+            _read_json(workspace / ".codex/factory/scaffold-result.json")
+            if is_scaffold
+            else {}
+        )
+        init_result = (
+            scaffold_result
+            if is_scaffold
+            else _read_json(workspace / ".codex/factory/init-result.json")
+        )
+        preview_runtime = (
+            {} if is_scaffold else _read_json(workspace / "release/preview-runtime.json")
+        )
         llm_start_context = _read_text(
-            workspace / ".codex/factory/llm-start-context.md",
+            workspace
+            / (
+                ".codex/factory/scaffold-context.md"
+                if is_scaffold
+                else ".codex/factory/llm-start-context.md"
+            ),
             max_chars=_MAX_CONTEXT_MARKDOWN_CHARS,
         )
-        baseline_files, missing_baseline_files = _baseline_file_status(workspace)
+        baseline_files, missing_baseline_files = _baseline_file_status(
+            workspace, scaffold=is_scaffold
+        )
+
+        manifest_project = project_manifest.get("project")
+        if not isinstance(manifest_project, dict):
+            manifest_project = {}
 
         source_app = _first_text(
             init_result.get("sourceApp"),
@@ -411,6 +458,7 @@ class DomainFactoryService:
             bridge_manifest.get("sourceApp"),
             project_manifest.get("source_app"),
             project_manifest.get("sourceApp"),
+            manifest_project.get("slug"),
             preview_runtime.get("sourceApp"),
             workspace.name,
         )
@@ -420,6 +468,7 @@ class DomainFactoryService:
             bridge_manifest.get("displayName"),
             project_manifest.get("name"),
             project_manifest.get("displayName"),
+            manifest_project.get("name"),
             source_app,
         )
         preview = _nested_dict(init_result, "resources", "cloudflarePreview")
@@ -464,15 +513,23 @@ class DomainFactoryService:
             preview_runtime.get("API_RUNTIME"),
             preview_runtime.get("api_runtime"),
         )
-        blockers = _context_blockers(
-            missing_baseline_files=missing_baseline_files,
-            init_result=init_result,
-            llm_start_context=llm_start_context,
-            runtime_profile=runtime_profile,
-            api_runtime=api_runtime,
-            api_url=api_url,
-            source_app=source_app,
-            preview_runtime=preview_runtime,
+        blockers = (
+            _scaffold_context_blockers(
+                missing_baseline_files=missing_baseline_files,
+                scaffold_result=scaffold_result,
+                scaffold_context=llm_start_context,
+            )
+            if is_scaffold
+            else _context_blockers(
+                missing_baseline_files=missing_baseline_files,
+                init_result=init_result,
+                llm_start_context=llm_start_context,
+                runtime_profile=runtime_profile,
+                api_runtime=api_runtime,
+                api_url=api_url,
+                source_app=source_app,
+                preview_runtime=preview_runtime,
+            )
         )
 
         return DomainFactoryContext(
@@ -511,6 +568,13 @@ class DomainFactoryService:
             preview_runtime=preview_runtime,
             bridge_manifest=bridge_manifest,
             llm_start_context_excerpt=llm_start_context,
+            creation_mode=creation_mode,
+            scaffold_result=scaffold_result,
+            protected_foundation_areas=(
+                SCAFFOLD_PROTECTED_TECHNICAL_AREAS
+                if is_scaffold
+                else PROTECTED_FOUNDATION_AREAS
+            ),
         )
 
     def start(
@@ -1099,61 +1163,110 @@ class DomainFactoryService:
         return reserved.id
 
 
+def _scaffold_context_summary(result: dict[str, Any]) -> dict[str, Any]:
+    if not result:
+        return {}
+    keys = (
+        "status",
+        "creationMode",
+        "project",
+        "github",
+        "cloudflare",
+        "workbench",
+        "apiDeployment",
+        "awsReadiness",
+        "pendingProduct",
+        "android",
+        "blockers",
+        "nextActions",
+    )
+    return {key: result[key] for key in keys if key in result}
+
+
 def _domain_generator_prompt(context: DomainFactoryContext) -> str:
     context_json = json.dumps(context.to_payload(), indent=2, sort_keys=True)
+    foundation_rule = (
+        "The manifest-v2 scaffold intentionally has no product foundation. Own and implement product navigation, design, auth, roles/RBAC, admin, persistence, notifications, feedback/updater wiring, and releases while reusing its selected providers and technical resources."
+        if context.creation_mode == "scaffold"
+        else "Preserve generic auth, the RBAC engine, the admin shell, updater plumbing, Bridge plumbing, and Workbench plumbing."
+    )
+    infrastructure_rule = (
+        "Do not recreate the workspace, repository, selected target providers, Cloudflare scaffold, or Workbench scope. Resolve pending API deployment, persistence/D1, and release decisions from product requirements before provisioning them."
+        if context.creation_mode == "scaffold"
+        else "Do not recreate New Project deterministic init, GitHub setup, Cloudflare preview setup, D1 baseline identity, Bridge installable setup, Workbench setup, or the initial preview release."
+    )
+    runtime_rule = (
+        "Scaffold is not a runtime profile. Select a real preview/staging/production runtime during Product work; never use localhost, placeholders, seed users, or mock/demo data unless explicitly requested."
+        if context.creation_mode == "scaffold"
+        else f'Keep preview runtime real: APP_RUNTIME_PROFILE=preview, API_RUNTIME=cloudflare_preview, API URL {context.api_url or "https://preview.nienfos.com/<slug>/api"}.'
+    )
+    release_rule = (
+        "Define and validate the first product release explicitly; Scaffold did not publish or register an APK."
+        if context.creation_mode == "scaffold"
+        else "Once implementation starts, finish by preparing a new real preview release after the initial build. Do not overwrite build 1."
+    )
     return f"""
 You are the Domain Factory generator for the current initialized project.
 
 You are not creating a new project. Work only in the current workspace:
 {context.workspace_path}
 
-Baseline context:
-{context_json}
-
 Rules:
 - Consume the baseline context before editing.
 - Implement business/domain behavior on top of the initialized baseline.
-- Do not recreate New Project deterministic init, GitHub setup, Cloudflare preview setup, D1 baseline identity, Bridge installable setup, Workbench setup, or the initial preview release.
-- Preserve generic auth, the RBAC engine, the admin shell, updater plumbing, Bridge plumbing, and Workbench plumbing.
+- {infrastructure_rule}
+- {foundation_rule}
 - Add domain-specific roles and explicit permissions as required by the business. Owner/admin must retain access to every domain capability.
 - Ask only missing domain/product questions. Do not ask for baseline setup fields: {", ".join(BASELINE_INTAKE_FIELDS_TO_AVOID)}.
 - Intake must cover: {", ".join(DOMAIN_INTAKE_FIELDS)}.
 - Generate follow-up questions only from the Domain Factory intake fields and include recommended/default/inferred options.
 - Produce a domain contract preview before implementation using the role permission model where owner/admin have all access and domain roles get explicit permissions.
 - Visual implementation is first-class: prioritize real product look and feel, mobile ergonomics, empty states, navigation, and reference-image fidelity.
+- The deterministic scaffold is infrastructure only. Do not inherit its clean shell, placeholder screens, default colors, or any scaffold-owned navigation as product direction.
+- Define the product information architecture, navigation model, primary screens, color direction, visual hierarchy, logo treatment, and app icon source from the domain brief, attached assets, and comparable-product research.
+- If a user-supplied logo or app icon exists, preserve and use it. If none exists, create a minimal domain-appropriate identity and app icon source as part of implementation.
 - You may modify UI, colors, layout, navigation, backend domain code, migrations, tests, SDD artifacts, diagrams, and release evidence.
 - Never switch to mock/demo/local/placeholder data unless the user explicitly asks for a demo/mock release.
-- Keep preview runtime real: APP_RUNTIME_PROFILE=preview, API_RUNTIME=cloudflare_preview, API URL {context.api_url or "https://preview.nienfos.com/<slug>/api"}.
+- {runtime_rule}
 - Before implementation, produce a domain contract preview with roles, permissions, entities, workflows, screens, visual direction, backend scope, tests, SDD/diagram requirements, and release target.
-- Once implementation starts, finish by preparing a new real preview release after the initial build. Do not overwrite build 1.
+- {release_rule}
 - Remote destructive operations need explicit approval: {", ".join(DESTRUCTIVE_OPERATION_APPROVAL_REQUIRED)}.
 - Update SDD evidence before claiming readiness: spec, plan, tasks, traceability, DER/ERD, class, sequence, component, and deployment diagrams.
+
+Baseline context:
+{context_json}
 """.strip()
 
 
 def _domain_reviewer_prompt(context: DomainFactoryContext) -> str:
     context_json = json.dumps(context.to_payload(), indent=2, sort_keys=True)
+    foundation_review = (
+        "Manifest-v2 providers and scaffold resources were reused; product navigation, design, auth, roles/RBAC, admin, persistence, feedback/updater wiring, and release behavior were implemented rather than assumed to exist."
+        if context.creation_mode == "scaffold"
+        else "Generic auth, RBAC engine, admin shell, Bridge plumbing, Workbench plumbing, updater plumbing, preview runtime, and initial project identity are intact."
+    )
     return f"""
 You are the Domain Factory reviewer for the current initialized project.
-
-Review with the same baseline context:
-{context_json}
 
 Return only the next concrete prompt for the generator unless the work is truly release-ready.
 
 Verify:
 - Generator did not recreate New Project baseline infrastructure.
-- Generic auth, RBAC engine, admin shell, Bridge plumbing, Workbench plumbing, updater plumbing, preview runtime, and initial project identity are intact.
+- {foundation_review}
 - Domain roles and permissions match the requested business and are testable.
 - Owner/admin retain all access across domain capabilities.
 - Domain intake avoided baseline setup questions and produced a contract preview before implementation.
-- UI quality, visual hierarchy, mobile ergonomics, empty states, navigation, and reference-image fidelity are strong.
+- UI quality, product information architecture, visual hierarchy, mobile ergonomics, empty states, navigation, color direction, logo/app icon treatment, and reference-image fidelity are strong.
+- The product does not remain a generic authenticated shell and does not inherit scaffold/default navigation or colors as final UX.
 - Backend domain behavior, persistence, migrations, and seed data are real preview paths, not mock/demo/local defaults.
 - SDD spec, plan, tasks, traceability, DER/ERD, class, sequence, component, and deployment diagrams are updated.
 - Relevant tests pass and release evidence exists for the new preview release.
 - The release increments after the initial preview build and Bridge/app updater metadata points at the new build.
 
 If anything is missing, produce an actionable next generator prompt with exact files, tests, and evidence to fix.
+
+Review with the same baseline context:
+{context_json}
 """.strip()
 
 
@@ -1177,6 +1290,11 @@ Blocked context:
 
 Domain Factory only runs after the deterministic baseline context exists. Fix the blocked baseline context, then start Domain Factory again from this same chat.
 """
+    baseline_note = (
+        "I will reuse the selected providers and scaffold resources. Product persistence/D1, auth, navigation, UX, and the first release are intentionally undecided and belong to this intake."
+        if context.creation_mode == "scaffold"
+        else "I will not ask again for project slug, GitHub, Cloudflare, D1, initial APK, Bridge, or Workbench setup."
+    )
     return f"""Domain Factory mode is active for the current project.
 
 Workspace: {context.workspace_path}
@@ -1188,7 +1306,7 @@ SDD run: {spec_root or "pending"}
 
 Send the business/domain brief here. You can paste a long description and attach visual references, logo/icon ideas, screenshots, or exact assets.
 
-I will ask only for missing domain decisions: roles and permissions, entities, workflows, screens, visual direction, integrations, notifications, persisted data, admin modules, and release acceptance criteria. I will not ask again for project slug, GitHub, Cloudflare, D1, initial APK, Bridge, or Workbench setup.
+I will ask only for missing domain decisions: roles and permissions, entities, workflows, screens, visual direction, integrations, notifications, persisted data, admin modules, and release acceptance criteria. {baseline_note}
 """
 
 
@@ -1764,12 +1882,85 @@ def _context_blockers(
     return tuple(blockers)
 
 
-def _baseline_file_status(workspace: Path) -> tuple[tuple[str, ...], tuple[str, ...]]:
+def _scaffold_context_blockers(
+    *,
+    missing_baseline_files: tuple[str, ...],
+    scaffold_result: dict[str, Any],
+    scaffold_context: str | None,
+) -> tuple[DomainFactoryBlockedReason, ...]:
+    messages = {
+        "codex-bridge.yaml": (
+            "missing_bridge_manifest",
+            "The Bridge workspace manifest is missing.",
+        ),
+        ".codex/project.yaml": (
+            "missing_project_manifest",
+            "The composable project manifest is missing.",
+        ),
+        ".codex/factory/scaffold-result.json": (
+            "missing_scaffold_result",
+            "The Scaffold result is missing.",
+        ),
+        ".codex/factory/scaffold-context.md": (
+            "missing_scaffold_context",
+            "The Scaffold context pack is missing.",
+        ),
+    }
+    blockers = [
+        DomainFactoryBlockedReason(
+            code=messages[path][0],
+            message=messages[path][1],
+            next_action="Retry the Scaffold context-pack phase before Start Product.",
+        )
+        for path in missing_baseline_files
+    ]
+    if not scaffold_result and ".codex/factory/scaffold-result.json" not in missing_baseline_files:
+        blockers.append(
+            DomainFactoryBlockedReason(
+                code="invalid_scaffold_result",
+                message="The Scaffold result is unreadable or empty.",
+                next_action="Regenerate .codex/factory/scaffold-result.json.",
+            )
+        )
+    allowed_states = {"scaffold_ready"}
+    status = scaffold_result.get("status")
+    if scaffold_result and status not in allowed_states:
+        blockers.append(
+            DomainFactoryBlockedReason(
+                code="scaffold_not_terminal",
+                message=f"Scaffold must be terminal before Start Product, got {status}.",
+                next_action="Finish or retry Scaffold before starting Product.",
+            )
+        )
+    if not scaffold_context and ".codex/factory/scaffold-context.md" not in missing_baseline_files:
+        blockers.append(
+            DomainFactoryBlockedReason(
+                code="invalid_scaffold_context",
+                message="The Scaffold context pack is unreadable or empty.",
+                next_action="Regenerate .codex/factory/scaffold-context.md.",
+            )
+        )
+    return tuple(blockers)
+
+
+def _baseline_file_status(
+    workspace: Path, *, scaffold: bool = False
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    required_files = (
+        (
+            "codex-bridge.yaml",
+            ".codex/project.yaml",
+            ".codex/factory/scaffold-result.json",
+            ".codex/factory/scaffold-context.md",
+        )
+        if scaffold
+        else CRITICAL_BASELINE_FILES
+    )
     present = tuple(
-        path for path in CRITICAL_BASELINE_FILES if (workspace / path).exists()
+        path for path in required_files if (workspace / path).exists()
     )
     missing = tuple(
-        path for path in CRITICAL_BASELINE_FILES if not (workspace / path).exists()
+        path for path in required_files if not (workspace / path).exists()
     )
     return present, missing
 
@@ -1856,8 +2047,12 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     try:
-        payload = parse_simple_yaml(path.read_text(encoding="utf-8"))
-    except OSError:
+        content = path.read_text(encoding="utf-8")
+        try:
+            payload = parse_simple_yaml(content)
+        except SddInvalidStandardError:
+            payload = yaml.safe_load(content)
+    except (OSError, yaml.YAMLError):
         return {}
     return payload if isinstance(payload, dict) else {}
 

@@ -47,6 +47,17 @@ from backend.app.application.services.project_factory_reference_asset_service im
     ProjectFactoryReferenceAsset,
     ProjectFactoryReferenceAssetService,
 )
+from backend.app.application.services.project_scaffold_providers import (
+    STACK_PRESETS,
+    default_provider_registry,
+)
+from backend.app.domain.entities.project_scaffold import (
+    AwsReadinessMode,
+    CloudflareMode,
+    CreationMode,
+    SCAFFOLD_SKIPPED_PRODUCT_WORK,
+    TargetKind,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +76,7 @@ class ProjectFactoryDraft:
             "created_at": self.created_at,
             "first_release_mode": self.request.first_release_mode,
             "frontend_strategy": self.request.frontend_strategy,
+            "creation_mode": self.request.creation_mode.value,
             "manifest_plan": self.manifest_plan.to_payload(),
             "guided_intake": self.guided_intake.to_payload(),
             "initial_preview_release": _initial_preview_release_status(
@@ -168,6 +180,7 @@ class ProjectFactoryJob:
             "frontend_strategy": _frontend_strategy_from_manifest_plan(
                 self.manifest_plan,
             ),
+            "creation_mode": _creation_mode_from_manifest_plan(self.manifest_plan),
             "manifest_plan": self.manifest_plan.to_payload(),
             "step_logs": logs,
             "initial_preview_release": _initial_preview_release_status(
@@ -249,8 +262,10 @@ class ProjectFactoryService:
         self._draft_state_dir = self._state_root / "drafts"
         self._job_state_dir = self._state_root / "jobs"
         self._draft_asset_state_dir = self._state_root / "draft_assets"
+        self._provider_registry = default_provider_registry()
         self._manifest_service = ProjectFactoryManifestService(
             projects_root=self._projects_root,
+            provider_registry=self._provider_registry,
         )
         self._reference_asset_service = ProjectFactoryReferenceAssetService(
             storage_root=reference_asset_storage_root,
@@ -312,6 +327,48 @@ class ProjectFactoryService:
                 "mode": "generator_reviewer_pairs",
                 "generator_runs": DEFAULT_CREATION_GENERATOR_RUNS,
                 "reviewer_runs": DEFAULT_CREATION_REVIEWER_RUNS,
+            },
+            "default_creation_mode": CreationMode.PRODUCT.value,
+            "creation_modes": [
+                {
+                    "id": CreationMode.SCAFFOLD.value,
+                    "display_name": "Scaffold",
+                    "description": "Technical foundation only; stops before product work.",
+                    "auto_start_domain_factory": False,
+                },
+                {
+                    "id": CreationMode.PRODUCT.value,
+                    "display_name": "Build product",
+                    "description": "Existing product-oriented flow.",
+                    "default": True,
+                },
+            ],
+            "target_providers": {
+                kind.value: [
+                    item.to_payload()
+                    for item in self._provider_registry.descriptors(kind)
+                    if item.selectable_for_scaffold
+                ]
+                for kind in (
+                    TargetKind.MOBILE,
+                    TargetKind.WEB,
+                    TargetKind.API,
+                    TargetKind.WEB_EDGE,
+                    TargetKind.AWS_READINESS,
+                    TargetKind.ANDROID_ARTIFACT,
+                )
+            },
+            "stack_presets": [dict(item) for item in STACK_PRESETS],
+            "cloudflare_modes": [item.value for item in CloudflareMode],
+            "default_cloudflare_mode": CloudflareMode.PROVISION_SCAFFOLD.value,
+            "aws_readiness_modes": [item.value for item in AwsReadinessMode],
+            "default_aws_readiness_mode": AwsReadinessMode.NONE.value,
+            "scaffold": {
+                "bootstrap_level": "buildable",
+                "d1_default": False,
+                "terraform_apply": False,
+                "publish_android": False,
+                "skipped_product_work": list(SCAFFOLD_SKIPPED_PRODUCT_WORK),
             },
         }
 
@@ -1080,6 +1137,13 @@ class ProjectFactoryService:
             ),
             project_assets=tuple(asset.to_manifest_item() for asset in project_assets),
             guided_intake_enabled=draft.request.guided_intake_enabled,
+            creation_mode=draft.request.creation_mode,
+            mobile_provider=draft.request.mobile_provider,
+            web_provider=draft.request.web_provider,
+            api_provider=draft.request.api_provider,
+            cloudflare_mode=draft.request.cloudflare_mode,
+            aws_mode=draft.request.aws_mode,
+            stack_preset=draft.request.stack_preset,
         )
         manifest_plan = self._manifest_service.plan_manifest(request)
         return _manifest_plan_with_charter_seed(
@@ -1270,6 +1334,7 @@ def _draft_summary(draft: ProjectFactoryDraft) -> dict[str, object]:
         "error": _summary_error(draft.manifest_plan.errors),
         "first_release_mode": draft.request.first_release_mode,
         "frontend_strategy": draft.request.frontend_strategy,
+        "creation_mode": draft.request.creation_mode.value,
         "guided_intake": draft.guided_intake.to_payload(),
         "initial_preview_release": _initial_preview_release_status(
             manifest=manifest,
@@ -1288,8 +1353,8 @@ def _job_summary(job: ProjectFactoryJob) -> dict[str, object]:
         "id": job.id,
         "job_id": job.id,
         "draft_id": job.draft_id,
-        "name": manifest.get("name"),
-        "slug": manifest.get("slug"),
+        "name": _manifest_identity(manifest)[0],
+        "slug": _manifest_identity(manifest)[1],
         "status": job.status,
         "current_phase": job.current_phase,
         "progress": job.progress,
@@ -1303,6 +1368,7 @@ def _job_summary(job: ProjectFactoryJob) -> dict[str, object]:
         "manual_next_step": _manual_next_step(job),
         "first_release_mode": _first_release_mode_from_manifest_plan(job.manifest_plan),
         "frontend_strategy": _frontend_strategy_from_manifest_plan(job.manifest_plan),
+        "creation_mode": _creation_mode_from_manifest_plan(job.manifest_plan),
         "initial_preview_release": _initial_preview_release_status(
             manifest=manifest,
             status=job.status,
@@ -1371,6 +1437,11 @@ def _guided_missing_fields(
     missing: list[dict[str, object]] = []
     if not request.name.strip():
         missing.append(_missing_field("name", "Project name is required.", "local"))
+    if request.creation_mode is CreationMode.SCAFFOLD:
+        for error in manifest_plan.errors:
+            if not any(item["field"] == error.field for item in missing):
+                missing.append(_missing_field(error.field, error.message, "local"))
+        return missing
     if not request.business_type.strip():
         missing.append(_missing_field("business_type", "Business type is required.", "local"))
     if not request.primary_goal.strip():
@@ -1653,6 +1724,22 @@ def _frontend_strategy_from_manifest_plan(plan: ProjectFactoryManifestPlan) -> s
     return DEFAULT_FRONTEND_STRATEGY
 
 
+def _creation_mode_from_manifest_plan(plan: ProjectFactoryManifestPlan) -> str:
+    creation = plan.manifest.get("creation")
+    if isinstance(creation, dict):
+        mode = creation.get("mode")
+        if isinstance(mode, str) and mode:
+            return mode
+    return CreationMode.PRODUCT.value
+
+
+def _manifest_identity(manifest: dict[str, object]) -> tuple[object, object]:
+    project = manifest.get("project")
+    if isinstance(project, dict):
+        return project.get("name"), project.get("slug")
+    return manifest.get("name"), manifest.get("slug")
+
+
 def _manual_next_step(job: ProjectFactoryJob) -> str | None:
     if job.status == "ready":
         return None
@@ -1675,7 +1762,38 @@ def _initial_preview_release_status(
     blocker_text: str | None = None,
     step_logs: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
-    slug = str(manifest.get("slug") or "")
+    creation = manifest.get("creation")
+    creation_mode = (
+        str(creation.get("mode") or "product")
+        if isinstance(creation, dict)
+        else "product"
+    )
+    identity = manifest.get("project")
+    slug = str(
+        (identity.get("slug") if isinstance(identity, dict) else manifest.get("slug"))
+        or ""
+    )
+    if creation_mode == CreationMode.SCAFFOLD.value:
+        return {
+            "sourceApp": slug,
+            "creationMode": CreationMode.SCAFFOLD.value,
+            "previewUrl": None,
+            "apiBaseUrl": None,
+            "installableAndroid": False,
+            "bridgeRegistrationRequired": False,
+            "runtimeProfile": None,
+            "releaseChannel": None,
+            "productionReady": False,
+            "productReady": False,
+            "apiReady": False,
+            "d1": False,
+            "mockOrDemo": False,
+            "status": "not_requested",
+            "currentPhase": "scaffold",
+            "phaseStatuses": {},
+            "blockerText": None,
+            "manualCommandHints": [],
+        }
     frontend_strategy = str(manifest.get("frontend_strategy") or DEFAULT_FRONTEND_STRATEGY)
     frontend = manifest.get("frontend") if isinstance(manifest.get("frontend"), dict) else {}
     capabilities = (
@@ -1874,6 +1992,13 @@ def _draft_storage_payload(draft: ProjectFactoryDraft) -> dict[str, object]:
             ],
             "project_assets": [dict(item) for item in draft.request.project_assets],
             "guided_intake_enabled": draft.request.guided_intake_enabled,
+            "creation_mode": draft.request.creation_mode.value,
+            "mobile_provider": draft.request.mobile_provider,
+            "web_provider": draft.request.web_provider,
+            "api_provider": draft.request.api_provider,
+            "cloudflare_mode": draft.request.cloudflare_mode.value,
+            "aws_mode": draft.request.aws_mode.value,
+            "stack_preset": draft.request.stack_preset,
         },
         "manifest_plan": draft.manifest_plan.to_payload(),
         "guided_intake": draft.guided_intake.to_payload(),
@@ -1982,6 +2107,15 @@ def _request_from_payload(payload: dict[str, object]) -> ProjectFactoryManifestI
             if isinstance(item, dict)
         ),
         guided_intake_enabled=bool(payload.get("guided_intake_enabled") or False),
+        creation_mode=CreationMode(str(payload.get("creation_mode") or "product")),
+        mobile_provider=_optional_str(payload.get("mobile_provider")),
+        web_provider=_optional_str(payload.get("web_provider")),
+        api_provider=_optional_str(payload.get("api_provider")),
+        cloudflare_mode=CloudflareMode(
+            str(payload.get("cloudflare_mode") or "provision_scaffold")
+        ),
+        aws_mode=AwsReadinessMode(str(payload.get("aws_mode") or "none")),
+        stack_preset=_optional_str(payload.get("stack_preset")),
     )
 
 
@@ -1994,6 +2128,32 @@ def _manifest_plan_with_charter_seed(
     if not manifest_plan.ok:
         return manifest_plan
     manifest = dict(manifest_plan.manifest)
+    if request.creation_mode is CreationMode.SCAFFOLD:
+        manifest["project_management"] = {
+            "enabled": True,
+            "standard": "project-charter/v1",
+            "mode": "technical_identity_only",
+            "client_export_enabled": False,
+            "charter_seed": {
+                "source": "scaffold_contract",
+                "project_name": request.name,
+                "creation_mode": CreationMode.SCAFFOLD.value,
+                "stack": {
+                    "mobile": request.mobile_provider or "react_native_expo",
+                    "web": request.web_provider or "sveltekit",
+                    "api": request.api_provider or "fastapi",
+                },
+                "product_definition": "pending_explicit_start_product",
+                "must_not_infer": [
+                    "objective",
+                    "benefits",
+                    "scope",
+                    "brand",
+                    "client claims",
+                ],
+            },
+        }
+        return replace(manifest_plan, manifest=manifest)
     project_management = dict(manifest.get("project_management") or {})
     charter_seed: dict[str, object] = {
         "source": "project_factory_draft",

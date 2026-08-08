@@ -1,0 +1,6 @@
+schema_version: 1
+name: Legacy Svelte
+slug: legacy-svelte
+frontend_strategy: svelte
+backend:
+  framework: fastapi

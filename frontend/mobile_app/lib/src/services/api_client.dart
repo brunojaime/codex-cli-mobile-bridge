@@ -277,6 +277,97 @@ class ApiClient {
     );
   }
 
+  Future<ProjectScaffoldDraft> createProjectScaffoldDraft(
+    ProjectScaffoldDraftRequest request,
+  ) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/project-factory/scaffolds'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(request.toJson()),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Failed to create scaffold draft: ${response.body}');
+    }
+    return ProjectScaffoldDraft.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<ProjectScaffoldDraft> confirmProjectScaffoldDraft(
+    ProjectScaffoldDraft draft,
+  ) async {
+    final response = await _client.post(
+      Uri.parse(
+        '$baseUrl/project-factory/scaffolds/${draft.draftId}/confirm',
+      ),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{
+        'expectedContractHash': draft.contractHash,
+      }),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Failed to confirm scaffold draft: ${response.body}');
+    }
+    return ProjectScaffoldDraft.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<ProjectScaffoldJob> startProjectScaffoldJob(String draftId) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/project-factory/scaffolds/$draftId/jobs'),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Failed to start scaffold job: ${response.body}');
+    }
+    return ProjectScaffoldJob.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<ProjectScaffoldJob> getProjectScaffoldJob(String jobId) async {
+    final response = await _client.get(
+      Uri.parse('$baseUrl/project-factory/scaffold-jobs/$jobId'),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Failed to fetch scaffold job: ${response.body}');
+    }
+    return ProjectScaffoldJob.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<ProjectScaffoldJob> retryProjectScaffoldJob(String jobId) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/project-factory/scaffold-jobs/$jobId/retry'),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Failed to retry scaffold job: ${response.body}');
+    }
+    return ProjectScaffoldJob.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<ProjectScaffoldJob> startProductFromScaffold({
+    required String jobId,
+    required String sessionId,
+  }) async {
+    final response = await _client.post(
+      Uri.parse(
+        '$baseUrl/project-factory/scaffold-jobs/$jobId/start-product',
+      ),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{'sessionId': sessionId}),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Failed to start product: ${response.body}');
+    }
+    return ProjectScaffoldJob.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
   Future<ProjectFactoryDraft> createProjectFactoryDraft(
     ProjectFactoryDraftRequest request,
   ) async {

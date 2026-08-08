@@ -9,6 +9,23 @@ from typing import Any, Mapping
 from backend.app.domain.entities.project_management import (
     default_project_management_manifest,
 )
+from backend.app.domain.entities.project_scaffold import (
+    ApiDeploymentStatus,
+    AwsReadinessMode,
+    CapabilityEvidence,
+    CapabilityEvidenceState,
+    CloudflareMode,
+    CreationMode,
+    ProjectManifestV2,
+    ScaffoldLifecycleState,
+    TargetKind,
+    TargetSelection,
+)
+from backend.app.application.services.project_scaffold_providers import (
+    ProviderRegistry,
+    ProviderRegistryError,
+    default_provider_registry,
+)
 
 
 DEFAULT_PLATFORMS = ("ios", "android", "web")
@@ -88,6 +105,13 @@ class ProjectFactoryManifestInput:
     visual_reference_assets: tuple[Mapping[str, object], ...] = ()
     project_assets: tuple[Mapping[str, object], ...] = ()
     guided_intake_enabled: bool = False
+    creation_mode: CreationMode = CreationMode.PRODUCT
+    mobile_provider: str | None = None
+    web_provider: str | None = None
+    api_provider: str | None = None
+    cloudflare_mode: CloudflareMode = CloudflareMode.PROVISION_SCAFFOLD
+    aws_mode: AwsReadinessMode = AwsReadinessMode.NONE
+    stack_preset: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +141,7 @@ class ProjectFactoryManifestPlan:
             "manifest_path": self.manifest_path,
             "first_release_mode": _first_release_mode_from_manifest(self.manifest),
             "frontend_strategy": _frontend_strategy_from_manifest(self.manifest),
+            "creation_mode": _creation_mode_from_manifest(self.manifest),
             "manifest": self.manifest,
             "errors": [
                 {
@@ -131,8 +156,14 @@ class ProjectFactoryManifestPlan:
 
 
 class ProjectFactoryManifestService:
-    def __init__(self, *, projects_root: str | Path) -> None:
+    def __init__(
+        self,
+        *,
+        projects_root: str | Path,
+        provider_registry: ProviderRegistry | None = None,
+    ) -> None:
         self._projects_root = Path(projects_root).expanduser().resolve()
+        self._provider_registry = provider_registry or default_provider_registry()
 
     def plan_manifest(
         self,
@@ -147,26 +178,39 @@ class ProjectFactoryManifestService:
         slug = request.slug.strip() if request.slug is not None else _normalize_slug(name)
 
         self._validate_name(name, errors)
-        self._validate_business_type(business_type, errors)
-        self._validate_primary_goal(primary_goal, errors)
+        if request.creation_mode is CreationMode.PRODUCT:
+            self._validate_business_type(business_type, errors)
+            self._validate_primary_goal(primary_goal, errors)
         self._validate_slug(slug, errors)
-        self._validate_platforms(request.platforms, errors)
-        self._validate_backend(request.backend, errors)
-        frontend_strategy = normalize_frontend_strategy(
-            request.frontend_strategy,
-            request.platforms,
-            errors,
-        )
-        self._validate_logo_mode(request.logo_mode, errors)
-        first_release_mode = normalize_first_release_mode(
-            request.first_release_mode,
-            errors,
-        )
-        initial_admin_emails = _normalize_admin_emails(
-            request.initial_admin_emails,
-            errors,
-        )
-        self._validate_visual_reference_paths(request.visual_reference_paths, errors)
+        if request.creation_mode is CreationMode.PRODUCT:
+            self._validate_platforms(request.platforms, errors)
+            self._validate_backend(request.backend, errors)
+            frontend_strategy = normalize_frontend_strategy(
+                request.frontend_strategy,
+                request.platforms,
+                errors,
+            )
+            self._validate_logo_mode(request.logo_mode, errors)
+            first_release_mode = normalize_first_release_mode(
+                request.first_release_mode,
+                errors,
+            )
+            initial_admin_emails = _normalize_admin_emails(
+                request.initial_admin_emails,
+                errors,
+            )
+            self._validate_visual_reference_paths(
+                request.visual_reference_paths,
+                errors,
+            )
+        else:
+            frontend_strategy = request.frontend_strategy
+            first_release_mode = DEFAULT_FIRST_RELEASE_MODE
+            initial_admin_emails = _normalize_admin_emails(
+                request.initial_admin_emails,
+                errors,
+            )
+            self._validate_scaffold_providers(request, errors)
 
         target_path: Path | None = None
         if slug:
@@ -189,7 +233,10 @@ class ProjectFactoryManifestService:
                 )
 
         manifest = (
-            _build_manifest(
+            (
+                self._build_scaffold_manifest(request=request, name=name, slug=slug)
+                if request.creation_mode is CreationMode.SCAFFOLD
+                else _build_manifest(
                 name=name,
                 slug=slug,
                 business_type=business_type,
@@ -203,6 +250,7 @@ class ProjectFactoryManifestService:
                 visual_reference_paths=request.visual_reference_paths,
                 visual_reference_assets=request.visual_reference_assets,
                 project_assets=request.project_assets,
+            )
             )
             if not errors
             else {}
@@ -224,6 +272,100 @@ class ProjectFactoryManifestService:
             if ok
             else ("Fix validation errors before creating project files.",),
         )
+
+    def _validate_scaffold_providers(
+        self,
+        request: ProjectFactoryManifestInput,
+        errors: list[ProjectFactoryValidationError],
+    ) -> None:
+        selections = (
+            (TargetKind.MOBILE, request.mobile_provider or "react_native_expo"),
+            (TargetKind.WEB, request.web_provider or "sveltekit"),
+            (TargetKind.API, request.api_provider or "fastapi"),
+            (
+                TargetKind.WEB_EDGE,
+                "none"
+                if request.cloudflare_mode is CloudflareMode.DISABLED
+                else "cloudflare",
+            ),
+            (
+                TargetKind.AWS_READINESS,
+                request.aws_mode.value,
+            ),
+        )
+        for kind, provider_id in selections:
+            try:
+                self._provider_registry.get(kind, provider_id)
+            except ProviderRegistryError as exc:
+                errors.append(
+                    ProjectFactoryValidationError(
+                        "unsupported_target_provider",
+                        f"targets.{kind.value}.provider",
+                        str(exc),
+                    )
+                )
+
+    def _build_scaffold_manifest(
+        self,
+        *,
+        request: ProjectFactoryManifestInput,
+        name: str,
+        slug: str,
+    ) -> dict[str, Any]:
+        mobile_id = request.mobile_provider or "react_native_expo"
+        web_id = request.web_provider or "sveltekit"
+        api_id = request.api_provider or "fastapi"
+        targets: dict[TargetKind, TargetSelection] = {}
+        for kind, provider_id in (
+            (TargetKind.MOBILE, mobile_id),
+            (TargetKind.WEB, web_id),
+            (TargetKind.API, api_id),
+        ):
+            descriptor = self._provider_registry.get(kind, provider_id).descriptor
+            targets[kind] = TargetSelection(
+                kind=kind,
+                provider=provider_id,
+                enabled=provider_id != "none",
+                source_root=descriptor.source_root,
+                platforms=("android", "ios")
+                if kind is TargetKind.MOBILE and provider_id != "none"
+                else (),
+                deployment_status=(
+                    ApiDeploymentStatus.PREPARED
+                    if kind is TargetKind.API and provider_id != "none"
+                    else None
+                ),
+            )
+        capabilities = tuple(
+            CapabilityEvidence(
+                capability=capability,
+                state=(
+                    CapabilityEvidenceState.DECLARED
+                    if supported
+                    else CapabilityEvidenceState.UNSUPPORTED
+                ),
+                provider=descriptor.id,
+            )
+            for kind, provider_id in (
+                (TargetKind.MOBILE, mobile_id),
+                (TargetKind.WEB, web_id),
+                (TargetKind.API, api_id),
+            )
+            for descriptor in (self._provider_registry.get(kind, provider_id).descriptor,)
+            for capability, supported in sorted(descriptor.capabilities.items())
+        )
+        return ProjectManifestV2(
+            name=name,
+            slug=slug,
+            creation_mode=CreationMode.SCAFFOLD,
+            mobile=targets[TargetKind.MOBILE],
+            web=targets[TargetKind.WEB],
+            api=targets[TargetKind.API],
+            cloudflare_mode=request.cloudflare_mode,
+            aws_mode=request.aws_mode,
+            lifecycle_state=ScaffoldLifecycleState.DRAFT,
+            capabilities=capabilities,
+        ).to_payload()
 
     def _validate_name(
         self,
@@ -766,6 +908,15 @@ def _frontend_strategy_from_manifest(manifest: Mapping[str, Any]) -> str:
         if isinstance(strategy, str) and strategy.strip():
             return strategy
     return DEFAULT_FRONTEND_STRATEGY
+
+
+def _creation_mode_from_manifest(manifest: Mapping[str, Any]) -> str:
+    creation = manifest.get("creation")
+    if isinstance(creation, Mapping):
+        mode = creation.get("mode")
+        if isinstance(mode, str) and mode:
+            return mode
+    return CreationMode.PRODUCT.value
 
 
 def _strategy_payload(strategy: str, slug: str) -> dict[str, Any]:

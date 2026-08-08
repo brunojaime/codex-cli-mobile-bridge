@@ -1,0 +1,12 @@
+stateDiagram-v2
+  [*] --> draft
+  draft --> scaffold_contract_ready: approve scaffold contract
+  scaffold_contract_ready --> scaffold_initializing: start or resume
+  scaffold_initializing --> scaffold_blocked_with_context: recoverable blocker
+  scaffold_blocked_with_context --> scaffold_initializing: retry
+  scaffold_initializing --> scaffold_ready: requested phases satisfied
+  scaffold_ready --> domain_intake: explicit Start Product
+  scaffold_blocked_with_context --> domain_intake: explicit continue with context
+  domain_intake --> product_foundation: approve domain contract
+  product_foundation --> preview_ready: product validation and release
+  scaffold_ready --> [*]: stop after technical foundation

@@ -1,8 +1,8 @@
 kind: codex.sdd.index
 standard_id: workbench-sdd/v1
 standard_version: 1
-fingerprint: 3c377897e0fb765d9cf82788474cdaf779568e107151ba03c4b72a4981dff4f0
-generated_at_epoch: 1783527392
+fingerprint: 736da175707adae075c1dfef8847f5dab1c44f24ec04dbd58cbf16d531bf1d0e
+generated_at_epoch: 1786162567
 read_policy: prefix_only_no_full_spec_body
 index_type: context
 candidate_limits:

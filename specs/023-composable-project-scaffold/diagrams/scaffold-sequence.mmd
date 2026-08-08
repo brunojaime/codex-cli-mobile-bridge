@@ -1,0 +1,31 @@
+sequenceDiagram
+  actor User
+  participant Mobile as Codex Mobile
+  participant Factory as Project Factory API
+  participant Runner as Scaffold Runner
+  participant Providers as Target Providers
+  participant GitHub
+  participant Cloudflare
+  participant Workbench
+  participant Domain as Domain Factory
+
+  User->>Mobile: New Project / Scaffold
+  Mobile->>Factory: Load modes, presets, providers
+  Factory-->>Mobile: Recommended stack and infrastructure choices
+  User->>Mobile: Name, stack, Cloudflare, AWS readiness
+  Mobile->>Factory: Create scaffold draft
+  Factory-->>Mobile: Contract preview and remote effects
+  User->>Mobile: Confirm scaffold
+  Mobile->>Factory: Start or resume scaffold job
+  Factory->>Runner: Execute approved contract
+  Runner->>Providers: Plan, scaffold, validate targets
+  Providers-->>Runner: Evidence, artifacts, blockers
+  Runner->>GitHub: Create/verify and push when configured
+  Runner->>Cloudflare: Generate/provision neutral preview when selected
+  Runner->>Workbench: Verify workspace and SDD discovery
+  Runner-->>Factory: scaffold_ready or blocked_with_context
+  Factory-->>Mobile: Result, links, pending product work
+  Mobile-->>User: Open workspace or Start Product
+  User->>Mobile: Start Product
+  Mobile->>Factory: Explicit start-product action
+  Factory->>Domain: Reuse scaffold context and workspace

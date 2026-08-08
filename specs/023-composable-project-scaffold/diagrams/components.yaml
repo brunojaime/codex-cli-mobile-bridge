@@ -1,0 +1,9 @@
+diagram_id: components
+diagram_type: component-impact
+scope: feature
+status: completed
+owner: project
+source: specs/023-composable-project-scaffold/diagrams/components.mmd
+related_specs:
+  - 023-composable-project-scaffold
+baseline_impact: none

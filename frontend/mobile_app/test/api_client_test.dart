@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:codex_mobile_frontend/src/models/chat_session_summary.dart';
@@ -17,6 +18,34 @@ import 'package:cross_file/cross_file.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+
+String _scaffoldDraftJson(String status) => '''
+{
+  "draftId": "scaffold-draft-1",
+  "status": "$status",
+  "request": {"name": "Neutral"},
+  "manifest": {"schema_version": 2},
+  "contractPreview": {"publishAndroid": false},
+  "contractHash": "sha256",
+  "readyForConfirmation": true
+}
+''';
+
+String _scaffoldJobJson(String status) => '''
+{
+  "scaffoldJobId": "scaffold-job-1",
+  "draftId": "scaffold-draft-1",
+  "status": "$status",
+  "currentPhase": "scaffold_context_pack",
+  "workspacePath": "/projects/neutral",
+  "phases": [],
+  "blockers": [],
+  "resources": [],
+  "canRetry": false,
+  "canStartProduct": true,
+  "result": {"creationMode": "scaffold"}
+}
+''';
 
 void main() {
   test('installable app model parses install metadata', () {
@@ -484,6 +513,105 @@ void main() {
       'POST /project-factory/drafts/pf-draft-1/intake/preview',
       'POST /project-factory/drafts/pf-draft-1/intake/confirm',
     ]);
+  });
+
+  test('old project factory options remain product-default compatible',
+      () async {
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8000',
+      client: MockClient((request) async => http.Response(
+            '''
+            {
+              "default_platforms": ["ios", "android", "web"],
+              "platforms": ["ios", "android", "web"],
+              "default_backend": "fastapi",
+              "backends": ["fastapi", "go", "none"],
+              "logo_modes": ["generate"],
+              "business_types": ["other"],
+              "creation_workflow": {}
+            }
+            ''',
+            200,
+            headers: <String, String>{'content-type': 'application/json'},
+          )),
+    );
+
+    final options = await client.getProjectFactoryOptions();
+
+    expect(options.defaultCreationMode, 'product');
+    expect(options.scaffoldEnabled, isFalse);
+    expect(options.defaultFrontendStrategy, 'flutter');
+    expect(options.creationModes, isEmpty);
+    expect(options.targetProviders, isEmpty);
+  });
+
+  test('scaffold API methods preserve structured job state', () async {
+    final calls = <String>[];
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8000',
+      client: MockClient((request) async {
+        calls.add('${request.method} ${request.url.path}');
+        if (request.url.path.endsWith('/confirm')) {
+          expect(request.body, contains('"expectedContractHash":"sha256"'));
+          return http.Response(
+              _scaffoldDraftJson('scaffold_contract_ready'), 200);
+        }
+        if (request.url.path.endsWith('/start-product')) {
+          expect(request.body, contains('"sessionId":"session-1"'));
+          return http.Response(_scaffoldJobJson('domain_intake'), 200);
+        }
+        if (request.url.path.endsWith('/jobs') ||
+            request.url.path.endsWith('/retry') ||
+            request.method == 'GET') {
+          return http.Response(_scaffoldJobJson('scaffold_ready'), 200);
+        }
+        expect(request.body, contains('"name":"Neutral"'));
+        expect(request.body, isNot(contains('businessType')));
+        return http.Response(_scaffoldDraftJson('draft'), 200);
+      }),
+    );
+
+    final draft = await client.createProjectScaffoldDraft(
+      const ProjectScaffoldDraftRequest(
+        name: 'Neutral',
+        githubMode: 'disabled',
+      ),
+    );
+    final confirmed = await client.confirmProjectScaffoldDraft(draft);
+    final started = await client.startProjectScaffoldJob(draft.draftId);
+    final loaded = await client.getProjectScaffoldJob(started.scaffoldJobId);
+    final retried = await client.retryProjectScaffoldJob(started.scaffoldJobId);
+    final product = await client.startProductFromScaffold(
+      jobId: started.scaffoldJobId,
+      sessionId: 'session-1',
+    );
+
+    expect(confirmed.status, 'scaffold_contract_ready');
+    expect(loaded.isTerminal, isTrue);
+    expect(retried.canStartProduct, isTrue);
+    expect(product.status, 'domain_intake');
+    expect(calls, <String>[
+      'POST /project-factory/scaffolds',
+      'POST /project-factory/scaffolds/scaffold-draft-1/confirm',
+      'POST /project-factory/scaffolds/scaffold-draft-1/jobs',
+      'GET /project-factory/scaffold-jobs/scaffold-job-1',
+      'POST /project-factory/scaffold-jobs/scaffold-job-1/retry',
+      'POST /project-factory/scaffold-jobs/scaffold-job-1/start-product',
+    ]);
+  });
+
+  test('cancelled scaffold job is terminal and retryable', () {
+    final payload = jsonDecode(
+      _scaffoldJobJson('scaffold_initializing'),
+    ) as Map<String, dynamic>;
+    payload['cancelled'] = true;
+    payload['canRetry'] = true;
+
+    final job = ProjectScaffoldJob.fromJson(payload);
+
+    expect(job.cancelled, isTrue);
+    expect(job.isTerminal, isTrue);
+    expect(job.canRetry, isTrue);
   });
 
   test('project factory init API starts and fetches deterministic init job',

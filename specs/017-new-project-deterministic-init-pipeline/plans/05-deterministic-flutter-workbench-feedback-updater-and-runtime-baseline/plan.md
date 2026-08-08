@@ -13,6 +13,9 @@ Status: completed
 - Codex developer feedback template wiring.
 - Updater Bridge URL wiring.
 - Frontend strategy capability enforcement.
+- Clean authenticated Flutter shell with no scaffold-imposed product
+  navigation, scaffold-owned business screens, colors, logo, or app icon
+  decisions.
 
 ## Tasks
 
@@ -21,3 +24,5 @@ Status: completed
 - [x] T024 Wire Codex developer feedback template, source app identity, updater Bridge URL, and feedback queue routing during init.
 - [x] T025 Validate that preview runtime uses real Cloudflare Preview API/D1 and does not use mock/demo or placeholder URLs.
 - [x] T026 Enforce frontend strategy capability limits before Android/installable phases.
+- [x] T042 Remove scaffold-imposed product navigation and leave navigation,
+  screens, colors, logo, and app icon decisions to UX/Domain generation.

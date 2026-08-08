@@ -64,6 +64,9 @@ class Settings(BaseSettings):
         "private"
     )
     project_factory_github_default_branch: str = "main"
+    project_scaffold_enabled: bool = False
+    project_scaffold_execute_commands: bool = False
+    project_scaffold_remote_writes_enabled: bool = False
     feedback_source_workspace_aliases: str = ""
     tailscale_socket: str | None = None
     execution_timeout_seconds: int = 0
@@ -135,6 +138,7 @@ class Settings(BaseSettings):
     cloudflare_timeout_seconds: float = 10.0
     preview_base_domain: str = "preview.nienfos.com"
     preview_worker_name: str = "nienfos-preview-runtime"
+    preview_admin_bootstrap_token: str | None = None
     preview_d1_database_name: str = "nienfos-preview"
     preview_pages_project_name: str = "nienfos-preview-web"
     preview_r2_bucket_name: str | None = None

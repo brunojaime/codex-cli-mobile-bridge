@@ -1,0 +1,36 @@
+flowchart LR
+  UI[Codex Mobile New Project UI]
+  API[Project Factory API]
+  MODE[Creation Mode and Manifest V2]
+  RUNNER[Deterministic Scaffold Runner]
+  REGISTRY[Provider Registry]
+  MOBILE[Mobile Provider\nFlutter or React Native Expo]
+  WEB[Web Provider\nFlutter Web or SvelteKit]
+  BACKEND[API Provider\nFastAPI or Go]
+  EDGE[Cloudflare Provider]
+  AWS[AWS Readiness Provider]
+  GIT[Git and GitHub]
+  WB[Workbench and SDD]
+  RESULT[Scaffold Result and Context Pack]
+  DOMAIN[Domain Factory and UX Lane]
+  ANDROID[Framework-neutral Android Artifact]
+  BRIDGE[Bridge Apps and Updater]
+
+  UI --> API
+  API --> MODE
+  MODE --> RUNNER
+  RUNNER --> REGISTRY
+  REGISTRY --> MOBILE
+  REGISTRY --> WEB
+  REGISTRY --> BACKEND
+  REGISTRY --> EDGE
+  REGISTRY --> AWS
+  RUNNER --> GIT
+  RUNNER --> WB
+  RUNNER --> RESULT
+  RESULT -->|explicit Start Product| DOMAIN
+  DOMAIN --> MOBILE
+  DOMAIN --> WEB
+  DOMAIN --> BACKEND
+  MOBILE -->|product release only| ANDROID
+  ANDROID --> BRIDGE

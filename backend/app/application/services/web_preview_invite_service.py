@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 import base64
 from email.message import EmailMessage
-from email.utils import formatdate, make_msgid
+from email.utils import formatdate, make_msgid, parseaddr
 from html import escape
 import hashlib
 import hmac
@@ -585,7 +585,7 @@ class WebPreviewInviteService:
                 manual_delivery_required=True,
             )
         message = EmailMessage()
-        message_id = make_msgid(domain="codex-mobile-bridge.local")
+        message_id = make_msgid(domain=_email_domain(sender))
         message["From"] = sender
         message["To"] = email
         message["Subject"] = _invite_email_subject(invite)
@@ -893,6 +893,13 @@ def _safe_email_error(message: str, *secrets_to_redact: str | None) -> str:
 def _invite_email_subject(invite: dict[str, Any]) -> str:
     source_app = str(invite.get("source_app") or "preview").replace("-", " ").title()
     return f"Invitacion al Preview de {source_app}"
+
+
+def _email_domain(sender: str) -> str:
+    address = parseaddr(sender)[1] or sender
+    if "@" not in address:
+        return "nienfos.com"
+    return address.rsplit("@", 1)[1].strip().lower() or "nienfos.com"
 
 
 def _invite_email_body(invite: dict[str, Any]) -> str:

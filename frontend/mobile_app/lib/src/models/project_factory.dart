@@ -9,6 +9,14 @@ class ProjectFactoryOptions {
     required this.logoModes,
     required this.businessTypes,
     required this.creationWorkflow,
+    this.defaultCreationMode = 'product',
+    this.creationModes = const <Map<String, dynamic>>[],
+    this.targetProviders = const <String, List<Map<String, dynamic>>>{},
+    this.stackPresets = const <Map<String, dynamic>>[],
+    this.cloudflareModes = const <String>[],
+    this.awsReadinessModes = const <String>[],
+    this.scaffoldEnabled = false,
+    this.scaffold = const <String, dynamic>{},
   });
 
   final List<String> defaultPlatforms;
@@ -20,6 +28,14 @@ class ProjectFactoryOptions {
   final List<String> logoModes;
   final List<String> businessTypes;
   final Map<String, dynamic> creationWorkflow;
+  final String defaultCreationMode;
+  final List<Map<String, dynamic>> creationModes;
+  final Map<String, List<Map<String, dynamic>>> targetProviders;
+  final List<Map<String, dynamic>> stackPresets;
+  final List<String> cloudflareModes;
+  final List<String> awsReadinessModes;
+  final bool scaffoldEnabled;
+  final Map<String, dynamic> scaffold;
 
   factory ProjectFactoryOptions.fromJson(Map<String, dynamic> json) {
     return ProjectFactoryOptions(
@@ -39,6 +55,194 @@ class ProjectFactoryOptions {
       businessTypes: _stringList(json['business_types']),
       creationWorkflow: (json['creation_workflow'] as Map<String, dynamic>?) ??
           <String, dynamic>{},
+      defaultCreationMode: json['defaultCreationMode'] as String? ??
+          json['default_creation_mode'] as String? ??
+          'product',
+      creationModes: _mapList(
+        json['creationModes'] ?? json['creation_modes'],
+      ),
+      targetProviders: _targetProviderMap(
+        json['targetProviders'] ?? json['target_providers'],
+      ),
+      stackPresets: _mapList(
+        json['stackPresets'] ?? json['stack_presets'],
+      ),
+      cloudflareModes: _stringList(
+        json['cloudflareModes'] ?? json['cloudflare_modes'],
+      ),
+      awsReadinessModes: _stringList(
+        json['awsReadinessModes'] ?? json['aws_readiness_modes'],
+      ),
+      scaffoldEnabled: json['scaffoldEnabled'] as bool? ??
+          json['scaffold_enabled'] as bool? ??
+          false,
+      scaffold: _mapFromJson(json['scaffold']),
+    );
+  }
+}
+
+class ProjectScaffoldDraftRequest {
+  const ProjectScaffoldDraftRequest({
+    required this.name,
+    this.slug,
+    this.stackPreset = 'expo-sveltekit-fastapi',
+    this.mobileProvider,
+    this.webProvider,
+    this.apiProvider,
+    this.cloudflareMode = 'provision_scaffold',
+    this.awsReadinessMode = 'none',
+    this.githubOwner,
+    this.githubVisibility = 'private',
+    this.githubMode = 'create_or_verify',
+    this.previewProtected = false,
+    this.initialAdminEmail,
+  });
+
+  final String name;
+  final String? slug;
+  final String? stackPreset;
+  final String? mobileProvider;
+  final String? webProvider;
+  final String? apiProvider;
+  final String cloudflareMode;
+  final String awsReadinessMode;
+  final String? githubOwner;
+  final String githubVisibility;
+  final String githubMode;
+  final bool previewProtected;
+  final String? initialAdminEmail;
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'name': name,
+        if (slug != null && slug!.trim().isNotEmpty) 'slug': slug,
+        if (stackPreset != null) 'stackPreset': stackPreset,
+        if (mobileProvider != null) 'mobileProvider': mobileProvider,
+        if (webProvider != null) 'webProvider': webProvider,
+        if (apiProvider != null) 'apiProvider': apiProvider,
+        'cloudflareMode': cloudflareMode,
+        'awsReadinessMode': awsReadinessMode,
+        if (githubOwner != null && githubOwner!.trim().isNotEmpty)
+          'githubOwner': githubOwner,
+        'githubVisibility': githubVisibility,
+        'githubMode': githubMode,
+        'previewProtected': previewProtected,
+        if (previewProtected && initialAdminEmail != null)
+          'initialAdminEmail': initialAdminEmail,
+      };
+}
+
+class ProjectScaffoldDraft {
+  const ProjectScaffoldDraft({
+    required this.draftId,
+    required this.status,
+    required this.request,
+    required this.manifest,
+    required this.contractPreview,
+    required this.contractHash,
+    required this.readyForConfirmation,
+  });
+
+  final String draftId;
+  final String status;
+  final Map<String, dynamic> request;
+  final Map<String, dynamic> manifest;
+  final Map<String, dynamic> contractPreview;
+  final String contractHash;
+  final bool readyForConfirmation;
+
+  factory ProjectScaffoldDraft.fromJson(Map<String, dynamic> json) {
+    return ProjectScaffoldDraft(
+      draftId: json['draftId'] as String? ?? '',
+      status: json['status'] as String? ?? 'draft',
+      request: _mapFromJson(json['request']),
+      manifest: _mapFromJson(json['manifest']),
+      contractPreview: _mapFromJson(json['contractPreview']),
+      contractHash: json['contractHash'] as String? ?? '',
+      readyForConfirmation: json['readyForConfirmation'] as bool? ?? false,
+    );
+  }
+}
+
+class ProjectScaffoldPhase {
+  const ProjectScaffoldPhase({
+    required this.name,
+    required this.status,
+    required this.message,
+    required this.evidence,
+    required this.blockers,
+  });
+
+  final String name;
+  final String status;
+  final String message;
+  final List<Map<String, dynamic>> evidence;
+  final List<Map<String, dynamic>> blockers;
+
+  factory ProjectScaffoldPhase.fromJson(Map<String, dynamic> json) {
+    return ProjectScaffoldPhase(
+      name: json['name'] as String? ?? '',
+      status: json['status'] as String? ?? 'queued',
+      message: json['message'] as String? ?? '',
+      evidence: _mapList(json['evidence']),
+      blockers: _mapList(json['blockers']),
+    );
+  }
+}
+
+class ProjectScaffoldJob {
+  const ProjectScaffoldJob({
+    required this.scaffoldJobId,
+    required this.draftId,
+    required this.status,
+    required this.currentPhase,
+    required this.workspacePath,
+    required this.phases,
+    required this.blockers,
+    required this.resources,
+    required this.canRetry,
+    required this.canStartProduct,
+    this.cancelled = false,
+    this.result,
+    this.domainFactoryRelationship,
+  });
+
+  final String scaffoldJobId;
+  final String draftId;
+  final String status;
+  final String currentPhase;
+  final String workspacePath;
+  final List<ProjectScaffoldPhase> phases;
+  final List<Map<String, dynamic>> blockers;
+  final List<Map<String, dynamic>> resources;
+  final bool canRetry;
+  final bool canStartProduct;
+  final bool cancelled;
+  final Map<String, dynamic>? result;
+  final Map<String, dynamic>? domainFactoryRelationship;
+
+  bool get isTerminal =>
+      cancelled ||
+      status == 'scaffold_ready' ||
+      status == 'scaffold_blocked_with_context';
+
+  factory ProjectScaffoldJob.fromJson(Map<String, dynamic> json) {
+    return ProjectScaffoldJob(
+      scaffoldJobId: json['scaffoldJobId'] as String? ?? '',
+      draftId: json['draftId'] as String? ?? '',
+      status: json['status'] as String? ?? 'scaffold_initializing',
+      currentPhase: json['currentPhase'] as String? ?? '',
+      workspacePath: json['workspacePath'] as String? ?? '',
+      phases: _mapList(json['phases'])
+          .map(ProjectScaffoldPhase.fromJson)
+          .toList(growable: false),
+      blockers: _mapList(json['blockers']),
+      resources: _mapList(json['resources']),
+      canRetry: json['canRetry'] as bool? ?? false,
+      canStartProduct: json['canStartProduct'] as bool? ?? false,
+      cancelled: json['cancelled'] as bool? ?? false,
+      result: _nullableMapFromJson(json['result']),
+      domainFactoryRelationship:
+          _nullableMapFromJson(json['domainFactoryRelationship']),
     );
   }
 }
@@ -1053,6 +1257,13 @@ List<Map<String, dynamic>> _mapList(Object? value) {
     return <Map<String, dynamic>>[];
   }
   return value.whereType<Map<String, dynamic>>().toList(growable: false);
+}
+
+Map<String, List<Map<String, dynamic>>> _targetProviderMap(Object? value) {
+  final mapped = _mapFromJson(value);
+  return mapped.map(
+    (key, item) => MapEntry(key, _mapList(item)),
+  );
 }
 
 Map<String, dynamic> _mapFromJson(Object? value) {

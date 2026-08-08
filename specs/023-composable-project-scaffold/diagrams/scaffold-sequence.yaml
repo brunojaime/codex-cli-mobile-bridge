@@ -1,0 +1,9 @@
+diagram_id: scaffold-sequence
+diagram_type: sequence
+scope: feature
+status: completed
+owner: project
+source: specs/023-composable-project-scaffold/diagrams/scaffold-sequence.mmd
+related_specs:
+  - 023-composable-project-scaffold
+baseline_impact: none

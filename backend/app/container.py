@@ -23,6 +23,9 @@ from backend.app.application.services.project_factory_service import (
 from backend.app.application.services.project_factory_init_service import (
     ProjectFactoryInitService,
 )
+from backend.app.application.services.project_scaffold_service import (
+    ProjectScaffoldService,
+)
 from backend.app.application.services.project_document_discovery_service import (
     ProjectDocumentDiscoveryService,
 )
@@ -98,6 +101,7 @@ class AppContainer:
     project_document_discovery_service: ProjectDocumentDiscoveryService
     project_factory_service: ProjectFactoryService
     project_factory_init_service: ProjectFactoryInitService
+    project_scaffold_service: ProjectScaffoldService
     cloudflare_preview_doctor_service: CloudflarePreviewDoctorService
     web_preview_deploy_service: WebPreviewDeployService
     web_preview_invite_service: WebPreviewInviteService
@@ -205,6 +209,15 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         chat_repository=repository,
         asset_depot_service=asset_depot_service,
     )
+    project_scaffold_service = ProjectScaffoldService(
+        projects_root=resolved_settings.projects_root,
+        state_root=resolved_settings.project_factory_state_dir,
+        execute_commands=resolved_settings.project_scaffold_execute_commands,
+        allow_remote_writes=(
+            resolved_settings.project_scaffold_remote_writes_enabled
+        ),
+        github_owner=resolved_settings.project_factory_github_owner,
+    )
     project_document_discovery_service = ProjectDocumentDiscoveryService(
         projects_root=resolved_settings.projects_root,
         workspace_aliases=resolved_settings.feedback_source_workspace_alias_map,
@@ -282,6 +295,7 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         project_document_discovery_service=project_document_discovery_service,
         project_factory_service=project_factory_service,
         project_factory_init_service=project_factory_init_service,
+        project_scaffold_service=project_scaffold_service,
         cloudflare_preview_doctor_service=cloudflare_preview_doctor_service,
         web_preview_deploy_service=web_preview_deploy_service,
         web_preview_invite_service=web_preview_invite_service,

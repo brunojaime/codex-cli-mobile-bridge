@@ -1,0 +1,8 @@
+schema_version: 1
+name: Legacy Flutter
+slug: legacy-flutter
+frontend_strategy: flutter
+backend:
+  framework: fastapi
+lifecycle:
+  state: ready

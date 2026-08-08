@@ -1,8 +1,8 @@
 kind: codex.sdd.index
 standard_id: workbench-sdd/v1
 standard_version: 1
-fingerprint: 3c377897e0fb765d9cf82788474cdaf779568e107151ba03c4b72a4981dff4f0
-generated_at_epoch: 1783527392
+fingerprint: 736da175707adae075c1dfef8847f5dab1c44f24ec04dbd58cbf16d531bf1d0e
+generated_at_epoch: 1786162567
 read_policy: prefix_only_no_full_spec_body
 index_type: spec
 specs:
@@ -45,29 +45,79 @@ specs:
     path: specs/008-sdd-workbench-lazy-loading/spec.md
     title: SDD Workbench Lazy Loading
     status: active
-    summary: Load SDD project summaries first and fetch full spec trees, plans, and tasks lazily.
+    summary: "id: 008-sdd-workbench-lazy-loading"
   009-sdd-status-normalization:
     path: specs/009-sdd-status-normalization/spec.md
     title: SDD Status Normalization
     status: active
-    summary: Normalize Workbench status sources across current and generated projects.
+    summary: "id: 009-sdd-status-normalization"
   010-slash-command-palette:
     path: specs/010-slash-command-palette/spec.md
     title: Slash Command Palette
-    status: draft
-    summary: Add a Codex-compatible slash command palette to the mobile chat composer.
+    status: active
+    summary: "id: 010-slash-command-palette"
   011-new-project-guided-intake:
     path: specs/011-new-project-guided-intake/spec.md
     title: New Project Guided Intake
-    status: draft
-    summary: Add a guided question-and-contract layer before New Project build execution.
+    status: active
+    summary: "id: 011-new-project-guided-intake"
   012-chat-transcript-lazy-loading:
     path: specs/012-chat-transcript-lazy-loading/spec.md
     title: Chat Transcript Lazy Loading
-    status: draft
-    summary: Load chat transcripts from the latest user exchange and fetch older messages lazily.
+    status: unknown
+    summary: "id: 012-chat-transcript-lazy-loading"
   013-workbench-kanban-curator:
     path: specs/013-workbench-kanban-curator/spec.md
     title: Workbench Kanban Curator
-    status: active
-    summary: Add a deterministic Workbench Kanban and read-only curator updates for active specs, generator/reviewer runs, and New Project work.
+    status: unknown
+    summary: "id: 013-workbench-kanban-curator"
+  014-project-factory-frontend-strategy:
+    path: specs/014-project-factory-frontend-strategy/spec.md
+    title: Project Factory Frontend Strategy
+    status: unknown
+    summary: "id: 014-project-factory-frontend-strategy"
+  015-project-factory-preview-hardening:
+    path: specs/015-project-factory-preview-hardening/spec.md
+    title: Project Factory Preview Hardening
+    status: unknown
+    summary: "id: 015-project-factory-preview-hardening"
+  016-diagram-mcp-rendering-engine:
+    path: specs/016-diagram-mcp-rendering-engine/spec.md
+    title: Diagram MCP Rendering Engine
+    status: implemented
+    summary: "id: 016-diagram-mcp-rendering-engine"
+  017-new-project-deterministic-init-pipeline:
+    path: specs/017-new-project-deterministic-init-pipeline/spec.md
+    title: New Project Deterministic Init Pipeline
+    status: unknown
+    summary: "id: 017-new-project-deterministic-init-pipeline"
+  018-dev-prod-stage-promotion-pipeline:
+    path: specs/018-dev-prod-stage-promotion-pipeline/spec.md
+    title: Dev Prod Stage And Deterministic Promotion Pipeline
+    status: unknown
+    summary: "id: 018-dev-prod-stage-promotion-pipeline"
+  019-domain-factory-mode:
+    path: specs/019-domain-factory-mode/spec.md
+    title: Domain Factory Mode
+    status: unknown
+    summary: "id: 019-domain-factory-mode"
+  020-dev-handoff-prod-environment-gate:
+    path: specs/020-dev-handoff-prod-environment-gate/spec.md
+    title: DEV Handoff PROD Environment Gate
+    status: unknown
+    summary: "id: 020-dev-handoff-prod-environment-gate"
+  021-ux-agent-lane:
+    path: specs/021-ux-agent-lane/spec.md
+    title: UX Agent Lane
+    status: unknown
+    summary: "id: 021-ux-agent-lane"
+  022-project-charter-documentation-framework:
+    path: specs/022-project-charter-documentation-framework/spec.md
+    title: Project Charter Documentation Framework
+    status: completed
+    summary: "id: 022-project-charter-documentation-framework"
+  023-composable-project-scaffold:
+    path: specs/023-composable-project-scaffold/spec.md
+    title: Composable Project Scaffold
+    status: completed
+    summary: "id: 023-composable-project-scaffold"

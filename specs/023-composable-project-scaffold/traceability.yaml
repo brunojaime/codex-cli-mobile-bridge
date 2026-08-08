@@ -1,0 +1,183 @@
+spec_id: 023-composable-project-scaffold
+title: Composable Project Scaffold
+status: completed
+
+requirements:
+  FR-001:
+    title: Explicit scaffold and product creation modes
+    acceptance_criteria: [AC-001, AC-015, AC-017]
+    tasks: [T001, T005, T019, T020, T021, T024, T026, T074, T076, T078, T082]
+  FR-002:
+    title: Minimal scaffold intake excludes product and UX decisions
+    acceptance_criteria: [AC-002, AC-003]
+    tasks: [T003, T004, T020, T025, T026, T028, T088]
+  FR-003:
+    title: Manifest v2 models independent targets with v1 compatibility
+    acceptance_criteria: [AC-004, AC-005, AC-021]
+    tasks: [T001, T002, T005, T006, T007, T009, T023, T083]
+  FR-004:
+    title: Provider registry owns target planning and capabilities
+    acceptance_criteria: [AC-006]
+    tasks: [T008, T010, T011, T012, T013, T014, T015, T016, T017, T018, T035]
+  FR-005:
+    title: Scaffold creates a neutral buildable baseline and stops
+    acceptance_criteria: [AC-007, AC-008, AC-009, AC-011, AC-015]
+    tasks: [T004, T029, T030, T031, T032, T033, T034, T035, T036, T038, T039, T041, T053, T058, T059, T076]
+  FR-006:
+    title: GitHub Workbench SDD CI recovery and context work for scaffold
+    acceptance_criteria: [AC-011, AC-016, AC-021]
+    tasks: [T022, T023, T027, T028, T029, T037, T038, T039, T075, T077]
+  FR-007:
+    title: React Native Expo is a real mobile provider
+    acceptance_criteria: [AC-007, AC-018, AC-019]
+    tasks: [T040, T041, T042, T043, T044, T045, T046, T047, T048, T051]
+  FR-008:
+    title: SvelteKit is a real Cloudflare-compatible web provider
+    acceptance_criteria: [AC-008, AC-012, AC-013]
+    tasks: [T052, T053, T054, T063, T066, T067, T068]
+  FR-009:
+    title: FastAPI and Go implement the same OpenAPI contract
+    acceptance_criteria: [AC-009, AC-010]
+    tasks: [T055, T056, T057, T058, T059, T060, T061, T062, T063]
+  FR-010:
+    title: Cloudflare scaffold readiness is accurate and D1 is opt-in
+    acceptance_criteria: [AC-012, AC-013]
+    tasks: [T064, T065, T066, T067, T068, T069, T070, T073]
+  FR-011:
+    title: AWS Terraform readiness never applies infrastructure
+    acceptance_criteria: [AC-014]
+    tasks: [T071, T072, T073, T092]
+  FR-012:
+    title: Android artifacts and releases are framework-neutral
+    acceptance_criteria: [AC-018, AC-019, AC-020]
+    tasks: [T043, T044, T049, T050, T051, T076, T090]
+  FR-013:
+    title: Explicit Start Product reuses the scaffold in Domain Factory
+    acceptance_criteria: [AC-017]
+    tasks: [T078, T079, T080, T081, T082]
+  FR-014:
+    title: Legacy Flutter and Svelte projects remain compatible
+    acceptance_criteria: [AC-005, AC-023]
+    tasks: [T006, T007, T009, T017, T022, T028, T051, T063, T083, T086, T087, T091, T093]
+  FR-015:
+    title: Security real-data policy and idempotency remain enforced
+    acceptance_criteria: [AC-016, AC-020, AC-022, AC-024]
+    tasks: [T018, T029, T030, T036, T037, T039, T068, T072, T073, T075, T083, T088, T089, T090, T094]
+
+acceptance_criteria:
+  AC-001:
+    tests: [T028, T082]
+  AC-002:
+    tests: [T028, T084, T085]
+  AC-003:
+    tests: [T028, T088]
+  AC-004:
+    tests: [T009, T084, T085, T086]
+  AC-005:
+    tests: [T009, T083]
+  AC-006:
+    tests: [T018, T039]
+  AC-007:
+    tests: [T044, T051, T084, T085]
+  AC-008:
+    tests: [T054, T063, T084, T085, T086, T087]
+  AC-009:
+    tests: [T060, T061, T063, T085, T086]
+  AC-010:
+    tests: [T061, T063]
+  AC-011:
+    tests: [T039, T084, T085, T086, T087]
+  AC-012:
+    tests: [T073, T084, T085]
+  AC-013:
+    tests: [T073]
+  AC-014:
+    tests: [T073, T089]
+  AC-015:
+    tests: [T039, T076, T082, T088]
+  AC-016:
+    tests: [T039, T075, T084]
+  AC-017:
+    tests: [T082]
+  AC-018:
+    tests: [T051, T090]
+  AC-019:
+    tests: [T044, T051, T076, T088]
+  AC-020:
+    tests: [T090]
+  AC-021:
+    tests: [T028, T039, T083]
+  AC-022:
+    tests: [T018, T039, T073, T089]
+  AC-023:
+    tests: [T083, T084, T085, T086, T087, T090]
+  AC-024:
+    tests: [T094]
+
+diagrams:
+  components:
+    source: diagrams/components.mmd
+    metadata: diagrams/components.yaml
+    requirements: [FR-003, FR-004, FR-007, FR-008, FR-009, FR-010, FR-011, FR-012, FR-013]
+  scaffold_sequence:
+    source: diagrams/scaffold-sequence.mmd
+    metadata: diagrams/scaffold-sequence.yaml
+    requirements: [FR-001, FR-002, FR-005, FR-006, FR-013]
+  lifecycle_state:
+    source: diagrams/lifecycle-state.mmd
+    metadata: diagrams/lifecycle-state.yaml
+    requirements: [FR-001, FR-005, FR-006, FR-013]
+
+implementation_evidence:
+  completed_at: "2026-08-08"
+  tasks:
+    total: 94
+    completed: 94
+    pending: 0
+  automated_validation:
+    backend:
+      command: .venv/bin/python -m pytest -q
+      result: 1193 passed, 1 skipped; 104 affected scaffold/domain/android tests passed after final hardening
+    backend_lint:
+      command: .venv/bin/ruff check backend tests
+      result: passed
+    flutter:
+      result: analyze passed; 305 tests passed; generated mobile APK and Flutter Web builds passed from an empty workspace
+    node:
+      result: Expo and SvelteKit clean install, lint, typecheck, tests, Android prebuild/debug APK, and Cloudflare-compatible builds passed
+    go:
+      result: gofmt, test, vet, binary build, and shared black-box contract suite passed
+    terraform:
+      result: fmt, init without backend, and validate passed from generated files; no plan/apply or AWS resource command executed
+    android:
+      result: Flutter and Expo signed release APK builds passed with package, checksum, and v2 signature verification
+    sdd_doctor:
+      command: .venv/bin/python scripts/codex_bridge_sdd_doctor.py --workspace . --json --strict
+      result: 123 of 124 checks pass or warn; the only failure is the pre-existing missing spec 020 plan.md, which was not modified. Spec 023 has no failures.
+  independent_audit:
+    date: "2026-08-08"
+    clean_workspaces:
+      - react_native_expo+sveltekit+fastapi+terraform_ready => scaffold_ready
+      - none+sveltekit+go+generate_only => scaffold_ready after context-commit recovery
+      - flutter+flutter_web+none+generate_only => scaffold_ready
+    cloudflare_dry_run: SvelteKit and Flutter Web asset directories resolved and uploaded in dry-run mode with D1=false.
+    go_black_box: 3 passed with Go 1.24.0 available; no provider skip.
+    hygiene: No tracked APK/AAB, keystore, Terraform state, node_modules, .terraform, .svelte-kit, .venv, or build outputs; credential-shaped additions absent.
+    corrected_findings:
+      - retry/cancellation state and downstream phase reset
+      - dependency gating and non-empty/dirty workspace preflight
+      - manifest-parent symlink and provider argv traversal
+      - GitHub origin verification and staged feature-gate bypass
+      - manifest-v1 capability/effective-provider preservation without rewrite
+      - real Go/FastAPI parity, isolated FastAPI venv, Expo lock normalization, and scanner false positives
+      - Cloudflare config-relative asset paths, protected-preview public fallback, and post-commit infra ownership
+      - Workbench real Bridge route/resource scope and scaffold-ready-only Product transition
+      - Start Product preflight and relationship/manifest rollback on Domain activation failure
+      - Android SDK selection, signature/package/checksum verification, and temporary signing cleanup
+      - final context commit/push cleanliness and generated-file retry ownership
+  residual_observations:
+    - Expo's pinned dependency tree reports 21 transitive npm advisories; npm offers no non-breaking automatic fix, and all required Expo checks and Android builds pass.
+  rollout:
+    scaffold_feature_enabled_by_default: false
+    product_default_changed: false
+    rationale: Compatibility evidence is complete; rollout remains an explicit operator decision.

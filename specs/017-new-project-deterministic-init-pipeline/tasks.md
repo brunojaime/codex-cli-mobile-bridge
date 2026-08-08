@@ -41,3 +41,5 @@
 - [x] T039 Add Flutter tests for New Project button behavior, init progress UI, blocked states, retry, and first-chat continuity.
 - [x] T040 Add release guardrail tests for preview real-data policy, no mock/demo defaults, Android prerelease tags, and Bridge installable registration.
 - [x] T041 Add Workbench/Kanban continuity tests for draft/init/job scope moving into the generated workspace.
+- [x] T042 Remove scaffold-imposed Flutter product navigation so UX/Domain owns
+  navigation, screens, colors, logo, and app icon decisions.

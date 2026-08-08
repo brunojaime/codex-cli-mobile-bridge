@@ -90,7 +90,7 @@ def test_web_preview_plan_is_stable_and_persisted(tmp_path: Path) -> None:
     assert {
         "kind": "worker_route",
         "name": "preview.nienfos.com/clinica-norte/*",
-        "script": "nienfos-preview-runtime",
+        "script": "nienfos-preview-clinica-norte",
         "mode": "read_or_create",
     } in first["planned_resources"]
     assert {
@@ -113,6 +113,35 @@ def test_web_preview_plan_is_stable_and_persisted(tmp_path: Path) -> None:
     assert first["disabled_at"] is None
     assert first["audit_events"][0]["event_type"] == "preview_plan_created"
     assert first["audit_events"][0]["source_app"] == "clinica-norte"
+
+
+def test_web_preview_plan_migrates_legacy_shared_worker_in_memory(
+    tmp_path: Path,
+) -> None:
+    project = _generated_project(tmp_path)
+    manifest_path = project / "deploy/web-preview/web-preview-manifest.yaml"
+    manifest_path.write_text(
+        manifest_path.read_text(encoding="utf-8").replace(
+            "worker_name: nienfos-preview-clinica-norte",
+            "worker_name: nienfos-preview-runtime",
+        ),
+        encoding="utf-8",
+    )
+    service = _service(tmp_path)
+
+    plan = service.plan(WebPreviewPlanInput(project_path=str(project)))
+
+    worker = next(
+        item for item in plan["planned_resources"] if item["kind"] == "worker_script"
+    )
+    route = next(
+        item for item in plan["planned_resources"] if item["kind"] == "worker_route"
+    )
+    assert worker["name"] == "nienfos-preview-clinica-norte"
+    assert route["script"] == "nienfos-preview-clinica-norte"
+    assert "worker_name: nienfos-preview-runtime" in manifest_path.read_text(
+        encoding="utf-8"
+    )
 
 
 def test_worker_script_content_extracts_module_from_multipart_payload() -> None:
@@ -300,14 +329,18 @@ def test_web_preview_deploy_applies_resources_with_fake_cloudflare(
     assert ("r2_bucket", "skipped") in statuses
     assert payload["invite_sync_summary"]["synced"] == 1
     assert fake.calls.count("create_dns_record:zone-1") == 1
-    assert "deploy_worker_script:acct-1:nienfos-preview-runtime:module" in fake.calls
+    assert not any(call.startswith("deploy_worker_script:") for call in fake.calls)
+    assert (
+        "put_worker_secret:acct-1:nienfos-preview-clinica-norte:PREVIEW_ADMIN_BOOTSTRAP_TOKEN"
+        in fake.calls
+    )
     worker_resource = next(
         item for item in payload["applied_resources"] if item["kind"] == "worker_script"
     )
     assert worker_resource["worker_format"] == "module"
     assert worker_resource["verified"] is True
-    assert worker_resource["verification_status"] == "verified"
-    assert payload["worker_script_verification_status"] == "verified"
+    assert worker_resource["verification_status"] == "verified_transformed"
+    assert payload["worker_script_verification_status"] == "verified_transformed"
     assert (
         "create_worker_route:zone-1:preview.nienfos.com/clinica-norte/*"
         in fake.calls
@@ -329,7 +362,7 @@ def test_web_preview_deploy_accepts_same_worker_route_conflict(
     project = _generated_project(tmp_path)
     _write_web_build_output(project)
     fake = _FakeCloudflareClient(
-        worker_route_create_conflict_worker="nienfos-preview-runtime",
+        worker_route_create_conflict_worker="nienfos-preview-clinica-norte",
     )
     service = _service(tmp_path, apply_enabled=True, fake=fake)
     plan = service.plan(WebPreviewPlanInput(project_path=str(project)))
@@ -442,15 +475,16 @@ def test_web_preview_deploy_fails_when_public_health_missing_bindings(
         )
 
     assert exc.value.code == "deploy_failed"
-    assert "preview_health_bindings_failed" in exc.value.message
+    assert "preview_health_identity_failed" in exc.value.message
     assert "assets_bound=true" in exc.value.message
     state = _read_preview(tmp_path, plan["preview_id"])
     assert state["status"] == "failed"
-    assert "preview_health_bindings_failed" in state["error"]
+    assert "preview_health_identity_failed" in state["error"]
     fetch_calls = [call for call in fake.calls if call.startswith("fetch_url:")]
     assert len(fetch_calls) == 40
-    assert len(sleep_calls) == 19
-    assert sleep_calls[-1] == 3.0
+    verification_sleeps = [delay for delay in sleep_calls if delay >= 0.5]
+    assert len(verification_sleeps) == 19
+    assert verification_sleeps[-1] == 3.0
     assert any(call.startswith("fetch_url:https://preview.nienfos.com/clinica-norte/") for call in fake.calls)
 
 
@@ -479,10 +513,44 @@ def test_web_preview_deploy_retries_pending_health_bindings(
 
     verification = payload["health_verification"]
     assert verification["status"] == "passed"
-    assert len(verification["attempts"]) == 5
-    assert verification["attempts"][-2]["checks"][0]["assets_bound"] is False
+    assert len(verification["attempts"]) == 7
+    assert verification["attempts"][3]["checks"][0]["assets_bound"] is False
     assert verification["attempts"][-1]["checks"][0]["assets_bound"] is True
-    assert sleep_calls == [0.5, 1.0, 1.5, 2.0]
+    assert verification["required"]["consecutive_successes"] == 3
+    assert sleep_calls == [0.5, 1.0, 1.5, 2.0, 2.5, 3.0]
+
+
+def test_web_preview_deploy_rejects_previous_project_worker_until_stable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = _generated_project(tmp_path)
+    _write_web_build_output(project)
+    fake = _FakeCloudflareClient(health_identity_after_attempts=4)
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(
+        "backend.app.application.services.web_preview_deploy_service.time.sleep",
+        sleep_calls.append,
+    )
+    service = _service(tmp_path, apply_enabled=True, fake=fake)
+    plan = service.plan(WebPreviewPlanInput(project_path=str(project)))
+
+    payload = service.deploy(
+        WebPreviewDeployInput(
+            project_path=str(project),
+            confirm_apply=True,
+            expected_plan_hash=plan["plan_hash"],
+        )
+    )
+
+    verification = payload["health_verification"]
+    assert len(verification["attempts"]) == 6
+    assert verification["attempts"][0]["checks"][0]["source_app"] == "comidas-sanas"
+    assert verification["attempts"][0]["checks"][0]["identity_matches"] is False
+    assert verification["attempts"][-1]["checks"][0]["source_app"] == "clinica-norte"
+    assert verification["attempts"][-1]["checks"][0]["identity_matches"] is True
+    verification_backoffs = [delay for delay in sleep_calls if delay >= 0.5]
+    assert len(verification_backoffs) == 5
 
 
 def test_web_preview_deploy_is_idempotent_when_resources_exist(
@@ -514,7 +582,7 @@ def test_web_preview_deploy_is_idempotent_when_resources_exist(
         for item in payload["applied_resources"]
     )
     assert not any(call.startswith("create_dns_record") for call in fake.calls)
-    assert "deploy_worker_script:acct-1:nienfos-preview-runtime:module" in fake.calls
+    assert not any(call.startswith("deploy_worker_script:") for call in fake.calls)
     assert not any(call.startswith("create_worker_route") for call in fake.calls)
     assert not any(call.startswith("create_d1_database") for call in fake.calls)
     assert not any(call.startswith("create_pages_project") for call in fake.calls)
@@ -632,7 +700,7 @@ def test_web_preview_deploy_recovers_existing_active_without_duplicate_apply(
     assert fake.calls == [
         "fetch_url:https://preview.nienfos.com/clinica-norte/__preview/health",
         "fetch_url:https://preview.nienfos.com/clinica-norte/api/health",
-    ]
+    ] * 3
     assert recovered["audit_events"][-1]["event_type"] == "preview_recovery_verified"
 
 
@@ -721,7 +789,7 @@ def test_web_preview_deploy_failure_persists_failed_state_without_secrets(
     stored = service.get_preview("wp-clinica-norte")
     assert stored is not None
     assert stored["status"] == "failed"
-    assert "worker_deploy_failed" in stored["error"]
+    assert "worker_wrangler_deploy_failed" in stored["error"]
     assert "secret-token" not in str(stored)
     assert "Bearer secret" not in str(stored)
 
@@ -1012,6 +1080,7 @@ def _settings(
         cloudflare_zone_name="nienfos.com",
         preview_base_domain="preview.nienfos.com",
         preview_worker_name="nienfos-preview-runtime",
+        preview_admin_bootstrap_token="bootstrap-token",
         preview_d1_database_name="nienfos-preview",
         preview_pages_project_name="nienfos-preview-web",
         preview_r2_bucket_name=None,
@@ -1033,7 +1102,10 @@ def _service(
             configured=configured,
         ),
         client=fake,
-        command_runner=_FakeCommandRunner(),
+        command_runner=_FakeCommandRunner(
+            exit_code=1 if fake and fake.fail_worker else 0,
+            stderr="Bearer secret-token worker deploy failed" if fake and fake.fail_worker else "",
+        ),
     )
 
 
@@ -1048,6 +1120,7 @@ class _FakeCloudflareClient:
         health_d1_bound: bool = True,
         health_assets_bound: bool = True,
         health_assets_bound_after_attempts: int | None = None,
+        health_identity_after_attempts: int | None = None,
         worker_route_create_conflict_worker: str | None = None,
     ) -> None:
         self.calls: list[str] = []
@@ -1059,6 +1132,7 @@ class _FakeCloudflareClient:
         self.health_d1_bound = health_d1_bound
         self.health_assets_bound = health_assets_bound
         self.health_assets_bound_after_attempts = health_assets_bound_after_attempts
+        self.health_identity_after_attempts = health_identity_after_attempts
         self.worker_route_create_conflict_worker = worker_route_create_conflict_worker
         self.health_fetch_count = 0
         self.worker_scripts: dict[str, str] = {}
@@ -1125,7 +1199,7 @@ class _FakeCloudflareClient:
     ) -> CloudflareLookupResult:
         self.calls.append(f"list_worker_routes:{zone_id}:{pattern}")
         routes: list[dict[str, Any]] = (
-            [{"id": "route-1", "pattern": pattern, "script": "nienfos-preview-runtime"}]
+            [{"id": "route-1", "pattern": pattern, "script": "nienfos-preview-clinica-norte"}]
             if self.resources_exist
             else []
         )
@@ -1182,7 +1256,27 @@ class _FakeCloudflareClient:
                 ok=True,
                 payload={"raw": "// existing worker script"},
             )
+        lookup_count = self.calls.count(
+            f"get_worker_script:{account_id}:{script_name}"
+        )
+        if lookup_count > 1:
+            return CloudflareLookupResult(
+                ok=True,
+                payload={"raw": "// wrangler deployed transformed worker script"},
+            )
         return CloudflareLookupResult(ok=False, status_code=404, error="not found")
+
+    def put_worker_secret(
+        self,
+        *,
+        account_id: str,
+        script_name: str,
+        name: str,
+        text: str,
+    ) -> CloudflareLookupResult:
+        assert text
+        self.calls.append(f"put_worker_secret:{account_id}:{script_name}:{name}")
+        return CloudflareLookupResult(ok=True, payload={"result": {"name": name}})
 
     def deploy_worker_script(
         self,
@@ -1323,6 +1417,20 @@ class _FakeCloudflareClient:
         assets_bound = self.health_assets_bound
         if self.health_assets_bound_after_attempts is not None:
             assets_bound = health_attempt >= self.health_assets_bound_after_attempts
+        identity_ready = (
+            self.health_identity_after_attempts is None
+            or health_attempt >= self.health_identity_after_attempts
+        )
+        source_app = (
+            headers["X-Codex-Expected-Source-App"]
+            if identity_ready
+            else "comidas-sanas"
+        )
+        worker_name = (
+            headers["X-Codex-Expected-Worker"]
+            if identity_ready
+            else "nienfos-preview-comidas-sanas"
+        )
         return CloudflareLookupResult(
             ok=True,
             status_code=200,
@@ -1330,5 +1438,10 @@ class _FakeCloudflareClient:
                 "ok": True,
                 "d1_bound": self.health_d1_bound,
                 "assets_bound": assets_bound,
+                "source_app": source_app,
+                "app_slug": source_app,
+                "worker_name": worker_name,
+                "worker_version_id": "worker-version-test",
+                "build_id": headers["X-Codex-Expected-Build"],
             },
         )

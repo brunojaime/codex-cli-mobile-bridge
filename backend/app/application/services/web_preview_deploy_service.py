@@ -21,11 +21,13 @@ from backend.app.application.services.cloudflare_preview_service import (
     CloudflareLookupResult,
     CloudflareProvisioningPlanner,
     HttpCloudflareClient,
+    project_preview_worker_name,
 )
 from backend.app.infrastructure.config.settings import Settings
 
 
 _SOURCE_APP_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$")
+_LEGACY_SHARED_WORKER_NAMES = frozenset({"nienfos-preview-runtime"})
 _D1_DIRECTIVE_RE = re.compile(r"^\s*--\s*codex:d1:(add-column|backfill)\s+(.+?)\s*$")
 _INVITE_UPSERT_SQL = """
 INSERT INTO preview_invites (
@@ -470,11 +472,22 @@ class WebPreviewDeployService:
             ("web", f"{preview_url}/__preview/health"),
             ("api", f"{preview_url}/api/health"),
         ]
-        headers = {"User-Agent": "CodexProjectFactoryPreviewSmoke/1.0"}
         attempts: list[dict[str, Any]] = []
         client = self._cloudflare_client()
+        expected_source_app = str(planned.get("source_app") or "")
+        expected_build_id = str(planned.get("worker_script_sha256") or "")
+        expected_worker_name = project_preview_worker_name(expected_source_app)
+        headers = {
+            "User-Agent": "CodexProjectFactoryPreviewSmoke/1.0",
+            "Cloudflare-Workers-Version-Key": expected_build_id,
+            "X-Codex-Expected-Source-App": expected_source_app,
+            "X-Codex-Expected-Worker": expected_worker_name,
+            "X-Codex-Expected-Build": expected_build_id,
+        }
         base_attempts = 3
         max_transient_attempts = 20
+        required_consecutive_successes = 3
+        consecutive_successes = 0
         for attempt in range(1, max_transient_attempts + 1):
             current: list[dict[str, Any]] = []
             all_ok = True
@@ -483,7 +496,14 @@ class WebPreviewDeployService:
                 payload = result.payload if isinstance(result.payload, dict) else {}
                 d1_bound = payload.get("d1_bound") is True
                 assets_bound = payload.get("assets_bound") is True
-                ok = bool(result.ok and d1_bound and assets_bound)
+                identity_matches = (
+                    payload.get("source_app") == expected_source_app
+                    and payload.get("app_slug") == expected_source_app
+                    and payload.get("worker_name") == expected_worker_name
+                    and payload.get("build_id") == expected_build_id
+                    and bool(payload.get("worker_version_id"))
+                )
+                ok = bool(result.ok and d1_bound and assets_bound and identity_matches)
                 all_ok = all_ok and ok
                 current.append(
                     {
@@ -493,22 +513,36 @@ class WebPreviewDeployService:
                         "status_code": result.status_code,
                         "d1_bound": payload.get("d1_bound"),
                         "assets_bound": payload.get("assets_bound"),
+                        "source_app": payload.get("source_app"),
+                        "worker_name": payload.get("worker_name"),
+                        "worker_version_id": payload.get("worker_version_id"),
+                        "build_id": payload.get("build_id"),
+                        "identity_matches": identity_matches,
                         "error": result.error,
                     }
                 )
             attempts.append({"attempt": attempt, "checks": current})
-            if all_ok:
+            consecutive_successes = consecutive_successes + 1 if all_ok else 0
+            if consecutive_successes >= required_consecutive_successes:
                 return {
                     "status": "passed",
                     "attempts": attempts,
-                    "required": {"d1_bound": True, "assets_bound": True},
+                    "required": {
+                        "d1_bound": True,
+                        "assets_bound": True,
+                        "source_app": expected_source_app,
+                        "worker_name": expected_worker_name,
+                        "build_id": expected_build_id,
+                        "worker_version_id": "non_empty",
+                        "consecutive_successes": required_consecutive_successes,
+                    },
                 }
-            should_retry = attempt < base_attempts or (
-                attempt < max_transient_attempts
-                and (
-                    _preview_health_has_transient_status(current)
-                    or _preview_health_has_pending_bindings(current)
-                )
+            should_retry = attempt < max_transient_attempts and (
+                all_ok
+                or attempt < base_attempts
+                or _preview_health_has_identity_mismatch(current)
+                or _preview_health_has_transient_status(current)
+                or _preview_health_has_pending_bindings(current)
             )
             if should_retry:
                 time.sleep(min(3.0, 0.5 * attempt))
@@ -516,8 +550,9 @@ class WebPreviewDeployService:
                 break
         latest = attempts[-1]["checks"] if attempts else []
         raise RuntimeError(
-            "preview_health_bindings_failed: expected d1_bound=true and "
-            f"assets_bound=true from {preview_url}/__preview/health and "
+            "preview_health_identity_failed: expected stable project Worker identity, "
+            "d1_bound=true, and assets_bound=true from "
+            f"{preview_url}/__preview/health and "
             f"{preview_url}/api/health; latest={latest}"
         )
 
@@ -743,6 +778,9 @@ class WebPreviewDeployService:
                 code="invalid_manifest",
                 message="web preview manifest must be a YAML object.",
             )
+        source_app = str(payload.get("source_app") or request.source_app or "").strip()
+        if _SOURCE_APP_RE.fullmatch(source_app):
+            _normalize_project_worker(payload, source_app, self._settings.preview_worker_name)
         return manifest_path, project_path, payload
 
     def _assert_cloudflare_apply_configured(self) -> None:
@@ -753,6 +791,11 @@ class WebPreviewDeployService:
                 ("CLOUDFLARE_DNS_API_TOKEN", self._settings.cloudflare_dns_api_token),
                 ("CLOUDFLARE_ACCOUNT_ID", self._settings.cloudflare_account_id),
                 ("CLOUDFLARE_ZONE_ID", self._settings.cloudflare_zone_id),
+                (
+                    "PREVIEW_ADMIN_BOOTSTRAP_TOKEN",
+                    self._settings.preview_admin_bootstrap_token,
+                ),
+                ("WEB_PREVIEW_INVITE_SECRET", self._settings.web_preview_invite_secret),
             )
             if not (value or "").strip()
         ]
@@ -1062,68 +1105,23 @@ class CloudflarePreviewProvisioner:
             account_id=account_id,
             script_name=worker_name,
         )
+        if not existing.ok and existing.status_code not in (404, None):
+            _raise_if_failed(existing, "worker_lookup_failed")
         if not script_path.is_file():
             raise RuntimeError("worker script source is missing")
-        script_content = script_path.read_text(encoding="utf-8")
-        worker_metadata = _worker_upload_metadata(
-            database_id=d1_database_id,
-            api_base_url=f"https://{base_domain}/{source_app}/api",
-            source_app=source_app,
-            r2_bucket_name=r2_bucket_name,
-            r2_binding=r2_binding,
+        script_content = _worker_with_identity_overlay(
+            script_path.read_text(encoding="utf-8")
         )
-        if existing.ok:
-            deployed = self._client.deploy_worker_script(
-                account_id=account_id,
-                script_name=worker_name,
-                script_content=script_content,
-                worker_format="module",
-                metadata=worker_metadata,
-            )
-            _raise_if_failed(deployed, "worker_update_failed")
-            wrangler_deploy = self._deploy_worker_with_wrangler(
-                account_id=account_id,
-                worker_name=worker_name,
-                script_path=script_path,
-                project_path=project_path,
-                source_app=source_app,
-                base_domain=base_domain,
-                worker_route=worker_route,
-                d1_database_name=d1_database_name,
-                d1_database_id=d1_database_id,
-                r2_bucket_name=r2_bucket_name,
-                r2_binding=r2_binding,
-            )
-            verification = self._verify_worker_script(
-                account_id=account_id,
-                worker_name=worker_name,
-                expected_script_content=script_content,
-                allow_transformed=True,
-            )
-            return {
-                "kind": "worker_script",
-                "name": worker_name,
-                "status": "updated",
-                "sha256": hashlib.sha256(script_content.encode("utf-8")).hexdigest(),
-                "worker_format": "module",
-                "bindings": sorted({*_worker_binding_names(worker_metadata), "ASSETS"}),
-                "wrangler_deploy": wrangler_deploy,
-                **verification,
-            }
-        if existing.status_code not in (404, None):
-            _raise_if_failed(existing, "worker_lookup_failed")
-        deployed = self._client.deploy_worker_script(
-            account_id=account_id,
-            script_name=worker_name,
-            script_content=script_content,
-            worker_format="module",
-            metadata=worker_metadata,
+        deployment_script_path = (
+            project_path / ".codex/factory/cloudflare/worker-entry.js"
         )
-        _raise_if_failed(deployed, "worker_deploy_failed")
+        deployment_script_path.parent.mkdir(parents=True, exist_ok=True)
+        deployment_script_path.write_text(script_content, encoding="utf-8")
+        build_id = hashlib.sha256(script_content.encode("utf-8")).hexdigest()
         wrangler_deploy = self._deploy_worker_with_wrangler(
             account_id=account_id,
             worker_name=worker_name,
-            script_path=script_path,
+            script_path=deployment_script_path,
             project_path=project_path,
             source_app=source_app,
             base_domain=base_domain,
@@ -1132,6 +1130,11 @@ class CloudflarePreviewProvisioner:
             d1_database_id=d1_database_id,
             r2_bucket_name=r2_bucket_name,
             r2_binding=r2_binding,
+            build_id=build_id,
+        )
+        secret_names = self._configure_worker_secrets(
+            account_id=account_id,
+            worker_name=worker_name,
         )
         verification = self._verify_worker_script(
             account_id=account_id,
@@ -1142,13 +1145,51 @@ class CloudflarePreviewProvisioner:
         return {
             "kind": "worker_script",
             "name": worker_name,
-            "status": "created",
-            "sha256": hashlib.sha256(script_content.encode("utf-8")).hexdigest(),
+            "status": "updated" if existing.ok else "created",
+            "sha256": build_id,
             "worker_format": "module",
-            "bindings": sorted({*_worker_binding_names(worker_metadata), "ASSETS"}),
+            "bindings": [
+                "API_BASE_URL",
+                "API_RUNTIME",
+                "APP_RUNTIME_PROFILE",
+                "APP_SLUG",
+                "ASSETS",
+                "CF_VERSION_METADATA",
+                "PREVIEW_BUILD_ID",
+                "PREVIEW_DB",
+                "PREVIEW_WORKER_NAME",
+                *([r2_binding] if r2_bucket_name and r2_binding else []),
+            ],
+            "secrets": secret_names,
             "wrangler_deploy": wrangler_deploy,
             **verification,
         }
+
+    def _configure_worker_secrets(
+        self,
+        *,
+        account_id: str,
+        worker_name: str,
+    ) -> list[str]:
+        secrets = {
+            "PREVIEW_ADMIN_BOOTSTRAP_TOKEN": (
+                self._settings.preview_admin_bootstrap_token or ""
+            ),
+            "WEB_PREVIEW_INVITE_SECRET": self._settings.web_preview_invite_secret or "",
+        }
+        configured: list[str] = []
+        for name, value in secrets.items():
+            if not value:
+                raise RuntimeError(f"worker_secret_missing: {name}")
+            result = self._client.put_worker_secret(
+                account_id=account_id,
+                script_name=worker_name,
+                name=name,
+                text=value,
+            )
+            _raise_if_failed(result, f"worker_secret_put_failed:{name}")
+            configured.append(name)
+        return configured
 
     def _verify_worker_script(
         self,
@@ -1200,6 +1241,7 @@ class CloudflarePreviewProvisioner:
         d1_database_id: str,
         r2_bucket_name: str,
         r2_binding: str,
+        build_id: str,
     ) -> dict[str, Any]:
         if not d1_database_id:
             raise RuntimeError("d1_database_id_missing")
@@ -1220,6 +1262,7 @@ class CloudflarePreviewProvisioner:
             d1_database_id=d1_database_id,
             r2_bucket_name=r2_bucket_name,
             r2_binding=r2_binding,
+            build_id=build_id,
         )
         env = {
             "CLOUDFLARE_API_TOKEN": self._settings.cloudflare_api_token or "",
@@ -1507,7 +1550,45 @@ def _worker_script_hash(project_path: Path) -> str | None:
     script = project_path / "deploy/web-preview/worker/src/index.js"
     if not script.is_file():
         return None
-    return hashlib.sha256(script.read_bytes()).hexdigest()
+    content = _worker_with_identity_overlay(script.read_text(encoding="utf-8"))
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def _worker_with_identity_overlay(content: str) -> str:
+    marker = "const CODEX_PROJECT_WORKER_IDENTITY = true;"
+    if marker in content:
+        return content
+    needle = "  const assetPath = stripAppPrefix(url.pathname);\n"
+    if needle not in content:
+        raise RuntimeError("worker_identity_overlay_anchor_missing")
+    overlay = f'''{needle}
+  {marker}
+  const codexIdentityParts = url.pathname.split('/').filter(Boolean);
+  const codexIdentityPath = `/${{codexIdentityParts.slice(1).join('/')}}`;
+  if ((request.method === 'GET' || request.method === 'HEAD')
+      && (codexIdentityPath === '/api/health'
+          || codexIdentityPath === '/__preview/health')) {{
+    return json({{
+      status: 'ok',
+      source_app: SOURCE_APP,
+      app_slug: SOURCE_APP,
+      display_name: DISPLAY_NAME,
+      runtime_profile: env.APP_RUNTIME_PROFILE || DEFAULT_RUNTIME_PROFILE,
+      runtime: API_RUNTIME,
+      runtime_type: 'cloudflare_worker_assets',
+      api_base_url: previewApiBaseUrlFor(env, SOURCE_APP),
+      access_mode: ACCESS_MODE,
+      d1_bound: Boolean(env.PREVIEW_DB),
+      d1_persistent: Boolean(env.PREVIEW_DB),
+      assets_bound: Boolean(env.ASSETS),
+      worker_name: env.PREVIEW_WORKER_NAME || null,
+      worker_version_id: env.CF_VERSION_METADATA?.id || null,
+      worker_version_tag: env.CF_VERSION_METADATA?.tag || null,
+      build_id: env.PREVIEW_BUILD_ID || null,
+    }});
+  }}
+'''
+    return content.replace(needle, overlay, 1)
 
 
 def _worker_script_content(payload: dict[str, Any] | list[Any] | None) -> str | None:
@@ -1635,6 +1716,7 @@ def _write_generated_wrangler_config(
     d1_database_id: str,
     r2_bucket_name: str = "",
     r2_binding: str = "",
+    build_id: str = "",
 ) -> Path:
     config_path = project_path / ".codex" / "factory" / "cloudflare" / "wrangler.toml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1657,6 +1739,9 @@ def _write_generated_wrangler_config(
         'binding = "PREVIEW_DB"',
         f'database_name = "{_toml_escape(d1_database_name)}"',
         f'database_id = "{_toml_escape(d1_database_id)}"',
+        "",
+        "[version_metadata]",
+        'binding = "CF_VERSION_METADATA"',
         "",
     ]
     if r2_bucket_name and r2_binding:
@@ -1684,6 +1769,8 @@ def _write_generated_wrangler_config(
                 'API_BASE_URL = '
                 f'"{_toml_escape(f"https://{base_domain}/{source_app}/api")}"'
             ),
+            f'PREVIEW_WORKER_NAME = "{_toml_escape(worker_name)}"',
+            f'PREVIEW_BUILD_ID = "{_toml_escape(build_id)}"',
             "",
         ]
     )
@@ -1797,6 +1884,23 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     tmp_path.replace(path)
 
 
+def _normalize_project_worker(
+    manifest: dict[str, Any],
+    source_app: str,
+    configured_legacy_name: str,
+) -> None:
+    cloudflare = manifest.get("cloudflare")
+    if not isinstance(cloudflare, dict):
+        return
+    resources = cloudflare.get("resources")
+    if not isinstance(resources, dict):
+        return
+    current = str(resources.get("worker_name") or "").strip()
+    legacy_names = {*_LEGACY_SHARED_WORKER_NAMES, configured_legacy_name.strip()}
+    if not current or current in legacy_names:
+        resources["worker_name"] = project_preview_worker_name(source_app)
+
+
 def _expect_mapping(payload: dict[str, Any], key: str) -> dict[str, Any]:
     value = payload.get(key)
     if not isinstance(value, dict):
@@ -1855,6 +1959,10 @@ def _preview_health_has_pending_bindings(checks: list[dict[str, Any]]) -> bool:
         if check.get("d1_bound") is not True or check.get("assets_bound") is not True:
             return True
     return False
+
+
+def _preview_health_has_identity_mismatch(checks: list[dict[str, Any]]) -> bool:
+    return any(check.get("identity_matches") is not True for check in checks)
 
 
 def _raise_if_failed(result: CloudflareLookupResult, code: str) -> None:

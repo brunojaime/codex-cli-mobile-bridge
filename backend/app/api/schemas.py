@@ -253,6 +253,20 @@ class ProjectFactoryDraftRequest(BaseModel):
         alias="visualReferencePaths",
     )
     guided_intake_enabled: bool = Field(default=False, alias="guidedIntakeEnabled")
+    creation_mode: Literal["product", "scaffold"] = Field(
+        default="product",
+        alias="creationMode",
+    )
+    mobile_provider: str | None = Field(default=None, alias="mobileProvider")
+    web_provider: str | None = Field(default=None, alias="webProvider")
+    api_provider: str | None = Field(default=None, alias="apiProvider")
+    cloudflare_mode: Literal[
+        "provision_scaffold", "generate_only", "disabled"
+    ] = Field(default="provision_scaffold", alias="cloudflareMode")
+    aws_readiness_mode: Literal[
+        "none", "architecture_docs_only", "terraform_ready"
+    ] = Field(default="none", alias="awsReadinessMode")
+    stack_preset: str | None = Field(default=None, alias="stackPreset")
 
 
 class ProjectFactoryOptionsResponse(BaseModel):
@@ -269,6 +283,16 @@ class ProjectFactoryOptionsResponse(BaseModel):
     logo_modes: list[str]
     business_types: list[str]
     creation_workflow: dict[str, Any]
+    default_creation_mode: str = Field(alias="defaultCreationMode")
+    creation_modes: list[dict[str, Any]] = Field(alias="creationModes")
+    target_providers: dict[str, list[dict[str, Any]]] = Field(alias="targetProviders")
+    stack_presets: list[dict[str, Any]] = Field(alias="stackPresets")
+    cloudflare_modes: list[str] = Field(alias="cloudflareModes")
+    default_cloudflare_mode: str = Field(alias="defaultCloudflareMode")
+    aws_readiness_modes: list[str] = Field(alias="awsReadinessModes")
+    default_aws_readiness_mode: str = Field(alias="defaultAwsReadinessMode")
+    scaffold: dict[str, Any]
+    scaffold_enabled: bool = Field(default=False, alias="scaffoldEnabled")
 
 
 class ProjectFactoryDraftResponse(BaseModel):
@@ -280,6 +304,7 @@ class ProjectFactoryDraftResponse(BaseModel):
     created_at: str
     first_release_mode: str = Field(default="preview", alias="firstReleaseMode")
     frontend_strategy: str = Field(default="flutter", alias="frontendStrategy")
+    creation_mode: str = Field(default="product", alias="creationMode")
     manifest_plan: dict[str, Any]
     initial_preview_release: dict[str, Any] = Field(
         default_factory=dict,
@@ -304,6 +329,7 @@ class ProjectFactoryDraftSummaryResponse(BaseModel):
     error: str | None = None
     first_release_mode: str = Field(default="preview", alias="firstReleaseMode")
     frontend_strategy: str = Field(default="flutter", alias="frontendStrategy")
+    creation_mode: str = Field(default="product", alias="creationMode")
     initial_preview_release: dict[str, Any] = Field(
         default_factory=dict,
         alias="initialPreviewRelease",
@@ -328,6 +354,7 @@ class ProjectFactoryDryRunResponse(BaseModel):
     manifest_path: str | None
     first_release_mode: str = Field(default="preview", alias="firstReleaseMode")
     frontend_strategy: str = Field(default="flutter", alias="frontendStrategy")
+    creation_mode: str = Field(default="product", alias="creationMode")
     manifest: dict[str, Any]
     errors: list[dict[str, Any]]
     next_actions: list[str]
@@ -387,6 +414,7 @@ class ProjectFactoryJobResponse(BaseModel):
     message: str
     first_release_mode: str = Field(default="preview", alias="firstReleaseMode")
     frontend_strategy: str = Field(default="flutter", alias="frontendStrategy")
+    creation_mode: str = Field(default="product", alias="creationMode")
     manifest_plan: dict[str, Any]
     step_logs: list[dict[str, Any]] = Field(default_factory=list)
     generation_result: dict[str, Any] | None = None
@@ -417,6 +445,7 @@ class ProjectFactoryJobSummaryResponse(BaseModel):
     manual_next_step: str | None = None
     first_release_mode: str = Field(default="preview", alias="firstReleaseMode")
     frontend_strategy: str = Field(default="flutter", alias="frontendStrategy")
+    creation_mode: str = Field(default="product", alias="creationMode")
     initial_preview_release: dict[str, Any] = Field(
         default_factory=dict,
         alias="initialPreviewRelease",
@@ -556,6 +585,111 @@ class ProjectFactoryDoctorResponse(BaseModel):
     checks: list[dict[str, Any]]
     toolchain: dict[str, dict[str, Any]] = Field(default_factory=dict)
     web_preview: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProjectScaffoldDraftRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: str = Field(..., min_length=1, max_length=80)
+    slug: str | None = Field(default=None, max_length=80)
+    stack_preset: str | None = Field(
+        default="expo-sveltekit-fastapi",
+        alias="stackPreset",
+    )
+    mobile_provider: str | None = Field(default=None, alias="mobileProvider")
+    web_provider: str | None = Field(default=None, alias="webProvider")
+    api_provider: str | None = Field(default=None, alias="apiProvider")
+    cloudflare_mode: Literal[
+        "provision_scaffold", "generate_only", "disabled"
+    ] = Field(default="provision_scaffold", alias="cloudflareMode")
+    aws_readiness_mode: Literal[
+        "none", "architecture_docs_only", "terraform_ready"
+    ] = Field(default="none", alias="awsReadinessMode")
+    github_owner: str | None = Field(default=None, alias="githubOwner")
+    github_visibility: Literal["private", "public", "internal"] = Field(
+        default="private",
+        alias="githubVisibility",
+    )
+    github_mode: Literal["create_or_verify", "disabled"] = Field(
+        default="create_or_verify",
+        alias="githubMode",
+    )
+    preview_protected: bool = Field(default=False, alias="previewProtected")
+    initial_admin_email: str | None = Field(
+        default=None,
+        alias="initialAdminEmail",
+    )
+
+
+class ProjectScaffoldConfirmRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    expected_contract_hash: str = Field(
+        ...,
+        min_length=64,
+        max_length=64,
+        alias="expectedContractHash",
+    )
+
+
+class ProjectScaffoldStartProductRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    session_id: str = Field(..., min_length=1, alias="sessionId")
+
+
+class ProjectScaffoldDraftResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    kind: str
+    version: int
+    draft_id: str = Field(alias="draftId")
+    created_at: str = Field(alias="createdAt")
+    updated_at: str = Field(alias="updatedAt")
+    creation_mode: str = Field(alias="creationMode")
+    status: str
+    request: dict[str, Any]
+    manifest: dict[str, Any]
+    contract_preview: dict[str, Any] = Field(alias="contractPreview")
+    contract_hash: str = Field(alias="contractHash")
+    confirmed_at: str | None = Field(default=None, alias="confirmedAt")
+    ready_for_confirmation: bool = Field(alias="readyForConfirmation")
+
+
+class ProjectScaffoldJobResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    kind: str
+    version: int
+    scaffold_job_id: str = Field(alias="scaffoldJobId")
+    draft_id: str = Field(alias="draftId")
+    creation_mode: str = Field(alias="creationMode")
+    created_at: str = Field(alias="createdAt")
+    updated_at: str = Field(alias="updatedAt")
+    workspace_path: str = Field(alias="workspacePath")
+    status: str
+    current_phase: str = Field(alias="currentPhase")
+    phases: list[dict[str, Any]]
+    provider_plans: list[dict[str, Any]] = Field(alias="providerPlans")
+    provider_results: list[dict[str, Any]] = Field(alias="providerResults")
+    resources: list[dict[str, Any]]
+    blockers: list[dict[str, Any]]
+    result: dict[str, Any] | None = None
+    can_retry: bool = Field(alias="canRetry")
+    can_start_product: bool = Field(alias="canStartProduct")
+    domain_factory_relationship: dict[str, Any] | None = Field(
+        default=None,
+        alias="domainFactoryRelationship",
+    )
+    cancelled: bool = False
+
+
+class ProjectScaffoldDraftsResponse(BaseModel):
+    drafts: list[ProjectScaffoldDraftResponse]
+
+
+class ProjectScaffoldJobsResponse(BaseModel):
+    jobs: list[ProjectScaffoldJobResponse]
 
 
 class WebPreviewPlanRequest(BaseModel):

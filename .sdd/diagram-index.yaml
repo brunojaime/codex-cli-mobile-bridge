@@ -1,8 +1,8 @@
 kind: codex.sdd.index
 standard_id: workbench-sdd/v1
 standard_version: 1
-fingerprint: 3c377897e0fb765d9cf82788474cdaf779568e107151ba03c4b72a4981dff4f0
-generated_at_epoch: 1783527392
+fingerprint: 736da175707adae075c1dfef8847f5dab1c44f24ec04dbd58cbf16d531bf1d0e
+generated_at_epoch: 1786162567
 read_policy: prefix_only_no_full_spec_body
 index_type: diagram
 diagrams:
@@ -101,3 +101,133 @@ diagrams:
     diagram_type: sequence
     scope: feature
     metadata_path: specs/007-initial-preview-release/diagrams/initial-preview-release-flow.yaml
+  specs__016-diagram-mcp-rendering-engine__diagrams__architecture_mmd:
+    path: specs/016-diagram-mcp-rendering-engine/diagrams/architecture.mmd
+    diagram_type: component-impact
+    scope: feature
+    metadata_path: specs/016-diagram-mcp-rendering-engine/diagrams/architecture.yaml
+  specs__016-diagram-mcp-rendering-engine__diagrams__data-model_mmd:
+    path: specs/016-diagram-mcp-rendering-engine/diagrams/data-model.mmd
+    diagram_type: data-impact
+    scope: feature
+    metadata_path: specs/016-diagram-mcp-rendering-engine/diagrams/data-model.yaml
+  specs__016-diagram-mcp-rendering-engine__diagrams__frontend-rendering-flow_mmd:
+    path: specs/016-diagram-mcp-rendering-engine/diagrams/frontend-rendering-flow.mmd
+    diagram_type: sequence
+    scope: feature
+    metadata_path: specs/016-diagram-mcp-rendering-engine/diagrams/frontend-rendering-flow.yaml
+  specs__016-diagram-mcp-rendering-engine__diagrams__frontend-viewer-architecture_mmd:
+    path: specs/016-diagram-mcp-rendering-engine/diagrams/frontend-viewer-architecture.mmd
+    diagram_type: component-impact
+    scope: feature
+    metadata_path: specs/016-diagram-mcp-rendering-engine/diagrams/frontend-viewer-architecture.yaml
+  specs__016-diagram-mcp-rendering-engine__diagrams__workflow_mmd:
+    path: specs/016-diagram-mcp-rendering-engine/diagrams/workflow.mmd
+    diagram_type: sequence
+    scope: feature
+    metadata_path: specs/016-diagram-mcp-rendering-engine/diagrams/workflow.yaml
+  specs__018-dev-prod-stage-promotion-pipeline__diagrams__backlog-stage-lifecycle_mmd:
+    path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/backlog-stage-lifecycle.mmd
+    diagram_type: state
+    scope: feature
+    metadata_path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/backlog-stage-lifecycle.yaml
+  specs__018-dev-prod-stage-promotion-pipeline__diagrams__backlog-stage-state-machine_mmd:
+    path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/backlog-stage-state-machine.mmd
+    diagram_type: state
+    scope: feature
+    metadata_path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/backlog-stage-state-machine.yaml
+  specs__018-dev-prod-stage-promotion-pipeline__diagrams__control-plane-data-model_mmd:
+    path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/control-plane-data-model.mmd
+    diagram_type: data-impact
+    scope: feature
+    metadata_path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/control-plane-data-model.yaml
+  specs__018-dev-prod-stage-promotion-pipeline__diagrams__dev-agent-review-loop_mmd:
+    path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/dev-agent-review-loop.mmd
+    diagram_type: sequence
+    scope: feature
+    metadata_path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/dev-agent-review-loop.yaml
+  specs__018-dev-prod-stage-promotion-pipeline__diagrams__dev-main-merge-queue_mmd:
+    path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/dev-main-merge-queue.mmd
+    diagram_type: component-impact
+    scope: feature
+    metadata_path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/dev-main-merge-queue.yaml
+  specs__018-dev-prod-stage-promotion-pipeline__diagrams__lane-permission-model_mmd:
+    path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/lane-permission-model.mmd
+    diagram_type: component-impact
+    scope: feature
+    metadata_path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/lane-permission-model.yaml
+  specs__018-dev-prod-stage-promotion-pipeline__diagrams__observability-evidence-model_mmd:
+    path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/observability-evidence-model.mmd
+    diagram_type: data-impact
+    scope: feature
+    metadata_path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/observability-evidence-model.yaml
+  specs__018-dev-prod-stage-promotion-pipeline__diagrams__prod-backend-update-gate_mmd:
+    path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/prod-backend-update-gate.mmd
+    diagram_type: state
+    scope: feature
+    metadata_path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/prod-backend-update-gate.yaml
+  specs__018-dev-prod-stage-promotion-pipeline__diagrams__prod-handoff-sequence_mmd:
+    path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/prod-handoff-sequence.mmd
+    diagram_type: sequence
+    scope: feature
+    metadata_path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/prod-handoff-sequence.yaml
+  specs__018-dev-prod-stage-promotion-pipeline__diagrams__prod-promotion-sequence_mmd:
+    path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/prod-promotion-sequence.mmd
+    diagram_type: sequence
+    scope: feature
+    metadata_path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/prod-promotion-sequence.yaml
+  specs__018-dev-prod-stage-promotion-pipeline__diagrams__prod-to-dev-handoff-sequence_mmd:
+    path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/prod-to-dev-handoff-sequence.mmd
+    diagram_type: sequence
+    scope: feature
+    metadata_path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/prod-to-dev-handoff-sequence.yaml
+  specs__018-dev-prod-stage-promotion-pipeline__diagrams__promotion-pipeline_mmd:
+    path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/promotion-pipeline.mmd
+    diagram_type: component-impact
+    scope: feature
+    metadata_path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/promotion-pipeline.yaml
+  specs__018-dev-prod-stage-promotion-pipeline__diagrams__promotion-state-machine_mmd:
+    path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/promotion-state-machine.mmd
+    diagram_type: state
+    scope: feature
+    metadata_path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/promotion-state-machine.yaml
+  specs__018-dev-prod-stage-promotion-pipeline__diagrams__release-channel-deployment_mmd:
+    path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/release-channel-deployment.mmd
+    diagram_type: component-impact
+    scope: feature
+    metadata_path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/release-channel-deployment.yaml
+  specs__018-dev-prod-stage-promotion-pipeline__diagrams__stage-runtime-isolation_mmd:
+    path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/stage-runtime-isolation.mmd
+    diagram_type: component-impact
+    scope: feature
+    metadata_path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/stage-runtime-isolation.yaml
+  specs__018-dev-prod-stage-promotion-pipeline__diagrams__stage-worktree-topology_mmd:
+    path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/stage-worktree-topology.mmd
+    diagram_type: component-impact
+    scope: feature
+    metadata_path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/stage-worktree-topology.yaml
+  specs__018-dev-prod-stage-promotion-pipeline__diagrams__system-context_mmd:
+    path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/system-context.mmd
+    diagram_type: component-impact
+    scope: feature
+    metadata_path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/system-context.yaml
+  specs__018-dev-prod-stage-promotion-pipeline__diagrams__worktree-topology_mmd:
+    path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/worktree-topology.mmd
+    diagram_type: component-impact
+    scope: feature
+    metadata_path: specs/018-dev-prod-stage-promotion-pipeline/diagrams/worktree-topology.yaml
+  specs__023-composable-project-scaffold__diagrams__components_mmd:
+    path: specs/023-composable-project-scaffold/diagrams/components.mmd
+    diagram_type: component-impact
+    scope: feature
+    metadata_path: specs/023-composable-project-scaffold/diagrams/components.yaml
+  specs__023-composable-project-scaffold__diagrams__lifecycle-state_mmd:
+    path: specs/023-composable-project-scaffold/diagrams/lifecycle-state.mmd
+    diagram_type: state
+    scope: feature
+    metadata_path: specs/023-composable-project-scaffold/diagrams/lifecycle-state.yaml
+  specs__023-composable-project-scaffold__diagrams__scaffold-sequence_mmd:
+    path: specs/023-composable-project-scaffold/diagrams/scaffold-sequence.mmd
+    diagram_type: sequence
+    scope: feature
+    metadata_path: specs/023-composable-project-scaffold/diagrams/scaffold-sequence.yaml

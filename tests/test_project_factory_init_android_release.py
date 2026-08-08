@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import hashlib
 import json
 from pathlib import Path
 
@@ -29,10 +30,18 @@ class _FakeResponse:
 
 
 class _FakeRunner:
-    def __init__(self, responses: list[tuple[tuple[str, ...], _FakeResponse]]) -> None:
+    def __init__(
+        self,
+        responses: list[tuple[tuple[str, ...], _FakeResponse]],
+        *,
+        signature_output: str = "Verified using v2 scheme: true\nSigner #1 certificate DN: CN=Preview\n",
+        package_id: str = "com.nienfos.clinica_norte",
+    ) -> None:
         self.responses = list(responses)
         self.calls: list[tuple[str, ...]] = []
         self.envs: list[dict[str, str] | None] = []
+        self.signature_output = signature_output
+        self.package_id = package_id
 
     def run(
         self,
@@ -45,6 +54,48 @@ class _FakeRunner:
         del timeout_seconds
         self.calls.append(argv)
         self.envs.append(env)
+        if Path(argv[0]).name == "apksigner":
+            return ProjectFactoryInitCommandResult(
+                argv=argv,
+                cwd=str(cwd) if cwd is not None else None,
+                exit_code=0,
+                stdout=self.signature_output,
+                started_at="2026-07-11T00:00:00+00:00",
+                completed_at="2026-07-11T00:00:01+00:00",
+                env=env,
+            )
+        if Path(argv[0]).name == "aapt":
+            return ProjectFactoryInitCommandResult(
+                argv=argv,
+                cwd=str(cwd) if cwd is not None else None,
+                exit_code=0,
+                stdout=f"package: name='{self.package_id}' versionCode='1'\n",
+                started_at="2026-07-11T00:00:00+00:00",
+                completed_at="2026-07-11T00:00:01+00:00",
+                env=env,
+            )
+        if argv == ("flutter", "build", "apk", "--release"):
+            _write_apk(Path(cwd or "").parents[1])
+            return ProjectFactoryInitCommandResult(
+                argv=argv,
+                cwd=str(cwd) if cwd is not None else None,
+                exit_code=0,
+                stdout="normalized flutter apk built\n",
+                started_at="2026-07-11T00:00:00+00:00",
+                completed_at="2026-07-11T00:00:01+00:00",
+                env=env,
+            )
+        if argv == ("./gradlew", "assembleRelease", "--no-daemon"):
+            _write_react_native_apk(Path(cwd or "").parents[2])
+            return ProjectFactoryInitCommandResult(
+                argv=argv,
+                cwd=str(cwd) if cwd is not None else None,
+                exit_code=0,
+                stdout="normalized react native apk built\n",
+                started_at="2026-07-11T00:00:00+00:00",
+                completed_at="2026-07-11T00:00:01+00:00",
+                env=env,
+            )
         if argv == ("flutter", "create", "--platforms=android", "."):
             _write_android_build_gradle(Path(cwd or ""))
             return ProjectFactoryInitCommandResult(
@@ -180,6 +231,8 @@ def test_android_release_creates_prerelease_registers_bridge_and_persists(
     )
     assert apk.path and apk.path.endswith("clinica-norte.apk")
     assert apk.sha256
+    assert any(Path(call[0]).name == "apksigner" for call in runner.calls)
+    assert any(Path(call[0]).name == "aapt" for call in runner.calls)
     release = _resource(completed, ProjectFactoryInitRemoteResourceType.GITHUB_RELEASE)
     installable = _resource(
         completed,
@@ -202,6 +255,60 @@ def test_android_release_creates_prerelease_registers_bridge_and_persists(
         ProjectFactoryInitPhaseName.BRIDGE_INSTALLABLE_REGISTRATION
     ).command_evidence
     assert "secret-token" not in json.dumps(persisted.to_payload())
+
+
+def test_react_native_release_uses_same_normalized_prerelease_and_registration(
+    tmp_path: Path,
+) -> None:
+    release_tag = "android-preview-v0.1.0-build.1"
+    runner = _FakeRunner(
+        [
+            (_release_view_cmd(release_tag), _FakeResponse(exit_code=1)),
+            (
+                _publish_cmd(),
+                _FakeResponse(stdout="built", on_run=_write_react_native_apk),
+            ),
+            (
+                _release_view_cmd(release_tag),
+                _FakeResponse(stdout=json.dumps(_release(release_tag))),
+            ),
+            (_lookup_cmd(), _FakeResponse(exit_code=22)),
+            (_register_cmd(), _FakeResponse(stdout="registered")),
+            (
+                _lookup_cmd(),
+                _FakeResponse(
+                    stdout=json.dumps(
+                        _installable(
+                            release_tag,
+                            sha256=_apk_sha256(b"react-native-preview-apk"),
+                        )
+                    )
+                ),
+            ),
+        ]
+    )
+    service = _service(tmp_path, runner)
+    job = _react_native_job(service)
+
+    completed = service.run_android_preview_release_phases(job.id)
+
+    release_phase = completed.phase(ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE)
+    assert release_phase.status == ProjectFactoryInitPhaseStatus.COMPLETED
+    artifact = next(
+        item
+        for item in release_phase.artifacts
+        if item.kind == "android_preview_release"
+    )
+    normalized = artifact.metadata["androidArtifact"]
+    assert normalized["framework"] == "react_native_expo"
+    assert normalized["kind"] == "android_apk"
+    assert normalized["packageId"] == "com.nienfos.clinica_norte"
+    assert normalized["signingStatus"] == "verified"
+    assert normalized["buildWorkingDirectory"] == "apps/mobile/android"
+    assert normalized["releaseTag"] == release_tag
+    assert _publish_cmd() in runner.calls
+    assert ("./gradlew", "assembleRelease", "--no-daemon") in runner.calls
+    assert _register_cmd() in runner.calls
 
 
 def test_android_release_uses_public_bridge_url_when_transport_is_local(
@@ -248,6 +355,65 @@ def test_android_release_uses_public_bridge_url_when_transport_is_local(
     assert register_env["BRIDGE_URL"] == "http://localhost:8000"
     assert register_env["BRIDGE_PUBLIC_URL"] == "https://bridge.test"
     assert "localhost" not in json.dumps(
+        [resource.to_payload() for resource in completed.remote_resources]
+    )
+
+
+def test_android_release_uses_local_transport_for_tailscale_public_bridge(
+    tmp_path: Path,
+) -> None:
+    release_tag = "android-preview-v0.1.0-build.1"
+    public_bridge = "http://batata-default-string.tail0302c4.ts.net:8118"
+    local_lookup = (
+        "curl",
+        "-fsS",
+        "-H",
+        "Host: batata-default-string.tail0302c4.ts.net:8118",
+        "-H",
+        "X-Forwarded-Proto: http",
+        "http://127.0.0.1:8118/installable-apps/clinica-norte",
+    )
+    runner = _FakeRunner(
+        [
+            (
+                _release_view_cmd(release_tag),
+                _FakeResponse(stdout=json.dumps(_release(release_tag))),
+            ),
+            (local_lookup, _FakeResponse(exit_code=22, stderr="not found")),
+            (_register_cmd(), _FakeResponse(stdout="registered")),
+            (
+                local_lookup,
+                _FakeResponse(
+                    stdout=json.dumps(
+                        _installable(
+                            release_tag,
+                            apk_url=(
+                                f"{public_bridge}/app-updates/clinica-norte/apk/"
+                                f"{release_tag}/clinica-norte.apk"
+                            ),
+                        )
+                    )
+                ),
+            ),
+        ]
+    )
+    service = _service(
+        tmp_path,
+        runner,
+        api_base_url=public_bridge,
+        app_update_public_base_url=public_bridge,
+    )
+    job = _generated_job(service)
+
+    completed = service.run_android_preview_release_phases(job.id)
+
+    phase = completed.phase(ProjectFactoryInitPhaseName.BRIDGE_INSTALLABLE_REGISTRATION)
+    assert phase.status == ProjectFactoryInitPhaseStatus.COMPLETED
+    assert local_lookup in runner.calls
+    register_env = runner.envs[runner.calls.index(_register_cmd())] or {}
+    assert register_env["BRIDGE_URL"] == "http://127.0.0.1:8118"
+    assert register_env["BRIDGE_PUBLIC_URL"] == public_bridge
+    assert public_bridge in json.dumps(
         [resource.to_payload() for resource in completed.remote_resources]
     )
 
@@ -483,6 +649,9 @@ def test_android_release_generates_preview_signing_when_missing(
     ).status == ProjectFactoryInitPhaseStatus.COMPLETED
     assert (tmp_path / "secrets/clinica-norte-preview-signing.env").is_file()
     assert (tmp_path / "secrets/clinica-norte-preview-upload-keystore.jks").is_file()
+    project_android = tmp_path / "projects/clinica-norte/apps/mobile/android"
+    assert not (project_android / "key.properties").exists()
+    assert not (project_android / "upload-keystore.jks").exists()
     evidence = completed.phase(
         ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE
     ).command_evidence[0]
@@ -831,6 +1000,85 @@ def test_android_release_blocks_mock_or_local_installable_payload(
     assert "localhost" in phase.blockers[0].message.lower() or "mock" in phase.blockers[0].message.lower()
 
 
+def test_android_release_blocks_debug_signed_apk_before_registration(
+    tmp_path: Path,
+) -> None:
+    release_tag = "android-preview-v0.1.0-build.1"
+    runner = _FakeRunner(
+        [
+            (
+                _release_view_cmd(release_tag),
+                _FakeResponse(stdout=json.dumps(_release(release_tag))),
+            ),
+        ],
+        signature_output=(
+            "Verified using v2 scheme: true\n"
+            "Signer #1 certificate DN: CN=Android Debug,O=Android\n"
+        ),
+    )
+    service = _service(tmp_path, runner)
+    job = _generated_job(service)
+
+    blocked = service.run_android_preview_release_phases(job.id)
+
+    phase = blocked.phase(ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE)
+    assert phase.status == ProjectFactoryInitPhaseStatus.BLOCKED
+    assert phase.blockers[0].code == "android_preview_signature_invalid"
+    assert _lookup_cmd() not in runner.calls
+    assert _register_cmd() not in runner.calls
+
+
+def test_android_release_blocks_package_id_mismatch_before_registration(
+    tmp_path: Path,
+) -> None:
+    release_tag = "android-preview-v0.1.0-build.1"
+    runner = _FakeRunner(
+        [
+            (
+                _release_view_cmd(release_tag),
+                _FakeResponse(stdout=json.dumps(_release(release_tag))),
+            ),
+        ],
+        package_id="com.attacker.different",
+    )
+    service = _service(tmp_path, runner)
+    job = _generated_job(service)
+
+    blocked = service.run_android_preview_release_phases(job.id)
+
+    phase = blocked.phase(ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE)
+    assert phase.status == ProjectFactoryInitPhaseStatus.BLOCKED
+    assert phase.blockers[0].code == "android_preview_package_id_mismatch"
+    assert _lookup_cmd() not in runner.calls
+    assert _register_cmd() not in runner.calls
+
+
+def test_android_registration_requires_exact_local_apk_checksum(
+    tmp_path: Path,
+) -> None:
+    release_tag = "android-preview-v0.1.0-build.1"
+    wrong_checksum = _installable(release_tag, sha256="a" * 64)
+    runner = _FakeRunner(
+        [
+            (
+                _release_view_cmd(release_tag),
+                _FakeResponse(stdout=json.dumps(_release(release_tag))),
+            ),
+            (_lookup_cmd(), _FakeResponse(stdout=json.dumps(wrong_checksum))),
+            (_register_cmd(), _FakeResponse(stdout="registered")),
+            (_lookup_cmd(), _FakeResponse(stdout=json.dumps(wrong_checksum))),
+        ]
+    )
+    service = _service(tmp_path, runner)
+    job = _generated_job(service)
+
+    blocked = service.run_android_preview_release_phases(job.id)
+
+    phase = blocked.phase(ProjectFactoryInitPhaseName.BRIDGE_INSTALLABLE_REGISTRATION)
+    assert phase.status == ProjectFactoryInitPhaseStatus.BLOCKED
+    assert phase.blockers[0].code == "bridge_installable_checksum_mismatch"
+
+
 def test_android_release_blocks_mock_or_local_runtime_contract(
     tmp_path: Path,
 ) -> None:
@@ -909,6 +1157,70 @@ def _generated_job(service: ProjectFactoryInitService, *, create_signing: bool =
     if create_signing:
         _write_existing_signing(Path(service._command_env["CODEX_MOBILE_BRIDGE_ROOT"]))
     return completed
+
+
+def _react_native_job(service: ProjectFactoryInitService):
+    target = Path(service._command_env["CODEX_MOBILE_BRIDGE_ROOT"]) / "projects/clinica-norte"
+    mobile = target / "apps/mobile"
+    mobile.mkdir(parents=True)
+    (mobile / "package.json").write_text(
+        json.dumps({"name": "clinica-norte", "version": "0.1.0"}),
+        encoding="utf-8",
+    )
+    (mobile / "app.json").write_text(
+        json.dumps(
+            {
+                "expo": {
+                    "name": "Clinica Norte",
+                    "version": "0.1.0",
+                    "android": {
+                        "versionCode": 1,
+                        "package": "com.nienfos.clinica_norte",
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    scripts = target / "scripts"
+    scripts.mkdir()
+    (scripts / "publish_android_preview_release.sh").write_text(
+        "#!/usr/bin/env bash\nset -eu\n", encoding="utf-8"
+    )
+    android = mobile / "android"
+    android.mkdir()
+    (android / "gradlew").write_text("#!/usr/bin/env sh\n", encoding="utf-8")
+    release = target / "release"
+    release.mkdir()
+    (release / "preview-runtime.json").write_text(
+        json.dumps(
+            {
+                "sourceApp": "clinica-norte",
+                "previewUrl": "https://preview.nienfos.com/clinica-norte",
+                "apiBaseUrl": "https://preview.nienfos.com/clinica-norte/api",
+                "runtimeProfile": "preview",
+                "apiRuntime": "cloudflare_preview",
+                "releaseChannel": "prerelease",
+                "productionReady": False,
+                "mockOrDemo": False,
+                "dataPersistence": "cloudflare_d1",
+                "d1PreviewRequired": True,
+                "installableAndroid": True,
+                "bridgeRegistrationRequired": True,
+                "releaseTagPattern": "android-preview-v*",
+                "latestAssetName": "clinica-norte.apk",
+            }
+        ),
+        encoding="utf-8",
+    )
+    _write_existing_signing(Path(service._command_env["CODEX_MOBILE_BRIDGE_ROOT"]))
+    return service.start_or_resume(
+        draft_id="draft-react-native",
+        project_name="Clinica Norte",
+        slug="clinica-norte",
+        frontend_strategy="react_native_expo",
+        workspace_path=str(target),
+    )
 
 
 def _release_view_cmd(release_tag: str) -> tuple[str, ...]:
@@ -991,6 +1303,12 @@ def _write_apk(project: Path) -> None:
     apk.write_bytes(b"preview-apk")
 
 
+def _write_react_native_apk(project: Path) -> None:
+    apk = project / "apps/mobile/android/app/build/outputs/apk/release/app-release.apk"
+    apk.parent.mkdir(parents=True, exist_ok=True)
+    apk.write_bytes(b"react-native-preview-apk")
+
+
 def _write_existing_signing(bridge_root: Path) -> None:
     secrets = bridge_root / "secrets"
     secrets.mkdir(parents=True, exist_ok=True)
@@ -1062,7 +1380,12 @@ def _release(
     }
 
 
-def _installable(release_tag: str) -> dict[str, object]:
+def _installable(
+    release_tag: str,
+    *,
+    apk_url: str = "https://bridge.test/app-updates/clinica-norte/apk/clinica-norte.apk",
+    sha256: str = "",
+) -> dict[str, object]:
     return {
         "sourceApp": "clinica-norte",
         "displayName": "Clinica Norte Preview",
@@ -1073,8 +1396,8 @@ def _installable(release_tag: str) -> dict[str, object]:
         "latestAssetName": "clinica-norte.apk",
         "releaseTag": release_tag,
         "available": True,
-        "apkUrl": "https://bridge.test/app-updates/clinica-norte/apk/clinica-norte.apk",
-        "sha256": "a" * 64,
+        "apkUrl": apk_url,
+        "sha256": sha256 or _apk_sha256(b"preview-apk"),
         "previewUrl": "https://preview.nienfos.com/clinica-norte",
         "runtimeProfile": "preview",
         "productionReady": False,
@@ -1086,6 +1409,10 @@ def _installable(release_tag: str) -> dict[str, object]:
             "apiRuntime": "cloudflare_preview",
         },
     }
+
+
+def _apk_sha256(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
 
 
 def _resource(job, resource_type: ProjectFactoryInitRemoteResourceType):

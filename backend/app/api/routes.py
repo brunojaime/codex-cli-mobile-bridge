@@ -139,6 +139,13 @@ from backend.app.api.schemas import (
     ProjectFactoryJobResponse,
     ProjectFactoryJobsResponse,
     ProjectFactoryOptionsResponse,
+    ProjectScaffoldConfirmRequest,
+    ProjectScaffoldDraftRequest,
+    ProjectScaffoldDraftResponse,
+    ProjectScaffoldDraftsResponse,
+    ProjectScaffoldJobResponse,
+    ProjectScaffoldJobsResponse,
+    ProjectScaffoldStartProductRequest,
     ProjectDocumentCharterReleaseRequest,
     ProjectDocumentCharterReleaseResponse,
     ProjectDocumentCharterRenderRequest,
@@ -210,8 +217,18 @@ from backend.app.application.services.asset_depot_service import AssetDepotError
 from backend.app.application.services.project_factory_manifest_service import (
     ProjectFactoryManifestInput,
 )
+from backend.app.domain.entities.project_scaffold import (
+    AwsReadinessMode,
+    CloudflareMode,
+    CreationMode,
+    ScaffoldLifecycleState,
+)
 from backend.app.application.services.project_factory_service import (
     ProjectFactoryGenerationConflictError,
+)
+from backend.app.application.services.project_scaffold_service import (
+    ScaffoldDraftInput,
+    ScaffoldError,
 )
 from backend.app.application.services.project_factory_reference_asset_service import (
     ProjectFactoryReferenceAssetError,
@@ -1731,9 +1748,261 @@ async def delete_asset_depot_asset(
 async def project_factory_options(
     container: AppContainer = Depends(get_container),
 ) -> ProjectFactoryOptionsResponse:
-    return ProjectFactoryOptionsResponse(
-        **container.project_factory_service.options(),
+    payload = container.project_factory_service.options()
+    payload["scaffold_enabled"] = container.settings.project_scaffold_enabled
+    scaffold = payload.get("scaffold")
+    if isinstance(scaffold, dict):
+        scaffold["github_owner_inferred"] = bool(
+            container.settings.project_factory_github_owner
+        )
+        scaffold["github_owner_required"] = not bool(
+            container.settings.project_factory_github_owner
+        )
+    return ProjectFactoryOptionsResponse(**payload)
+
+
+@router.post(
+    "/project-factory/scaffolds",
+    response_model=ProjectScaffoldDraftResponse,
+)
+async def create_project_scaffold_draft(
+    request: ProjectScaffoldDraftRequest,
+    container: AppContainer = Depends(get_container),
+) -> ProjectScaffoldDraftResponse:
+    _require_project_scaffold_enabled(container)
+    try:
+        draft = await run_in_threadpool(
+            container.project_scaffold_service.create_draft,
+            _project_scaffold_draft_input(request),
+        )
+    except ScaffoldError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return ProjectScaffoldDraftResponse(**draft.to_payload())
+
+
+@router.get(
+    "/project-factory/scaffolds",
+    response_model=ProjectScaffoldDraftsResponse,
+)
+async def list_project_scaffold_drafts(
+    container: AppContainer = Depends(get_container),
+) -> ProjectScaffoldDraftsResponse:
+    _require_project_scaffold_enabled(container)
+    drafts = await run_in_threadpool(container.project_scaffold_service.list_drafts)
+    return ProjectScaffoldDraftsResponse(
+        drafts=[ProjectScaffoldDraftResponse(**item.to_payload()) for item in drafts]
     )
+
+
+@router.get(
+    "/project-factory/scaffolds/{draft_id}",
+    response_model=ProjectScaffoldDraftResponse,
+)
+async def get_project_scaffold_draft(
+    draft_id: str,
+    container: AppContainer = Depends(get_container),
+) -> ProjectScaffoldDraftResponse:
+    _require_project_scaffold_enabled(container)
+    draft = await run_in_threadpool(
+        container.project_scaffold_service.get_draft,
+        draft_id,
+    )
+    if draft is None:
+        raise HTTPException(status_code=404, detail="Scaffold draft not found.")
+    return ProjectScaffoldDraftResponse(**draft.to_payload())
+
+
+@router.post(
+    "/project-factory/scaffolds/{draft_id}/confirm",
+    response_model=ProjectScaffoldDraftResponse,
+)
+async def confirm_project_scaffold_draft(
+    draft_id: str,
+    request: ProjectScaffoldConfirmRequest,
+    container: AppContainer = Depends(get_container),
+) -> ProjectScaffoldDraftResponse:
+    _require_project_scaffold_enabled(container)
+    try:
+        draft = await run_in_threadpool(
+            container.project_scaffold_service.confirm_draft,
+            draft_id,
+            request.expected_contract_hash,
+        )
+    except ScaffoldError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return ProjectScaffoldDraftResponse(**draft.to_payload())
+
+
+@router.post(
+    "/project-factory/scaffolds/{draft_id}/jobs",
+    response_model=ProjectScaffoldJobResponse,
+)
+async def start_project_scaffold_job(
+    draft_id: str,
+    container: AppContainer = Depends(get_container),
+) -> ProjectScaffoldJobResponse:
+    _require_project_scaffold_enabled(container)
+    try:
+        job = await run_in_threadpool(
+            container.project_scaffold_service.start_or_resume,
+            draft_id,
+        )
+    except ScaffoldError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if container.settings.project_factory_async_jobs:
+        Thread(
+            target=container.project_scaffold_service.run,
+            args=(job.id,),
+            daemon=True,
+        ).start()
+    else:
+        job = await run_in_threadpool(container.project_scaffold_service.run, job.id)
+    return ProjectScaffoldJobResponse(**job.to_payload())
+
+
+@router.get(
+    "/project-factory/scaffold-jobs",
+    response_model=ProjectScaffoldJobsResponse,
+)
+async def list_project_scaffold_jobs(
+    container: AppContainer = Depends(get_container),
+) -> ProjectScaffoldJobsResponse:
+    _require_project_scaffold_enabled(container)
+    jobs = await run_in_threadpool(container.project_scaffold_service.list_jobs)
+    return ProjectScaffoldJobsResponse(
+        jobs=[ProjectScaffoldJobResponse(**item.to_payload()) for item in jobs]
+    )
+
+
+@router.get(
+    "/project-factory/scaffold-jobs/{job_id}",
+    response_model=ProjectScaffoldJobResponse,
+)
+async def get_project_scaffold_job(
+    job_id: str,
+    container: AppContainer = Depends(get_container),
+) -> ProjectScaffoldJobResponse:
+    _require_project_scaffold_enabled(container)
+    job = await run_in_threadpool(container.project_scaffold_service.get_job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Scaffold job not found.")
+    return ProjectScaffoldJobResponse(**job.to_payload())
+
+
+@router.post(
+    "/project-factory/scaffold-jobs/{job_id}/retry",
+    response_model=ProjectScaffoldJobResponse,
+)
+async def retry_project_scaffold_job(
+    job_id: str,
+    container: AppContainer = Depends(get_container),
+) -> ProjectScaffoldJobResponse:
+    _require_project_scaffold_enabled(container)
+    try:
+        job = await run_in_threadpool(container.project_scaffold_service.retry, job_id)
+        job = await run_in_threadpool(container.project_scaffold_service.run, job.id)
+    except ScaffoldError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return ProjectScaffoldJobResponse(**job.to_payload())
+
+
+@router.post(
+    "/project-factory/scaffold-jobs/{job_id}/cancel",
+    response_model=ProjectScaffoldJobResponse,
+)
+async def cancel_project_scaffold_job(
+    job_id: str,
+    container: AppContainer = Depends(get_container),
+) -> ProjectScaffoldJobResponse:
+    _require_project_scaffold_enabled(container)
+    try:
+        job = await run_in_threadpool(container.project_scaffold_service.cancel, job_id)
+    except ScaffoldError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return ProjectScaffoldJobResponse(**job.to_payload())
+
+
+@router.get("/project-factory/scaffold-jobs/{job_id}/result")
+async def get_project_scaffold_result(
+    job_id: str,
+    container: AppContainer = Depends(get_container),
+) -> dict[str, Any]:
+    _require_project_scaffold_enabled(container)
+    job = await run_in_threadpool(container.project_scaffold_service.get_job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Scaffold job not found.")
+    if job.result is None:
+        raise HTTPException(status_code=409, detail="Scaffold result is not ready.")
+    return dict(job.result)
+
+
+@router.post(
+    "/project-factory/scaffold-jobs/{job_id}/start-product",
+    response_model=ProjectScaffoldJobResponse,
+)
+async def start_product_from_scaffold(
+    job_id: str,
+    request: ProjectScaffoldStartProductRequest,
+    container: AppContainer = Depends(get_container),
+) -> ProjectScaffoldJobResponse:
+    _require_project_scaffold_enabled(container)
+    job = await run_in_threadpool(container.project_scaffold_service.get_job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Scaffold job not found.")
+    if job.domain_factory_relationship is not None:
+        return ProjectScaffoldJobResponse(**job.to_payload())
+    if job.lifecycle_state is not ScaffoldLifecycleState.SCAFFOLD_READY:
+        raise HTTPException(
+            status_code=409,
+            detail="Start Product requires scaffold_ready.",
+        )
+    linked = False
+    try:
+        domain_context = await run_in_threadpool(
+            container.domain_factory_service.build_context,
+            session_id=request.session_id,
+            workspace_path=job.workspace_path,
+        )
+        if domain_context.blockers:
+            blocker_codes = ", ".join(item.code for item in domain_context.blockers)
+            raise RuntimeError(
+                f"Domain Factory preflight failed: {blocker_codes or 'unknown'}"
+            )
+        job = await run_in_threadpool(
+            container.project_scaffold_service.start_product,
+            job_id,
+            session_id=request.session_id,
+        )
+        linked = True
+        domain_start = await run_in_threadpool(
+            container.domain_factory_service.start,
+            session_id=request.session_id,
+            workspace_path=job.workspace_path,
+        )
+        if domain_start.status != "ready":
+            blocker_codes = ", ".join(
+                item.code for item in domain_start.context.blockers
+            )
+            raise RuntimeError(
+                f"Domain Factory did not activate: {blocker_codes or 'unknown'}"
+            )
+    except ValueError as exc:
+        if linked:
+            await run_in_threadpool(
+                container.project_scaffold_service.rollback_product_start,
+                job_id,
+                session_id=request.session_id,
+            )
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (RuntimeError, ScaffoldError) as exc:
+        if linked:
+            await run_in_threadpool(
+                container.project_scaffold_service.rollback_product_start,
+                job_id,
+                session_id=request.session_id,
+            )
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return ProjectScaffoldJobResponse(**job.to_payload())
 
 
 @router.post("/project-factory/drafts", response_model=ProjectFactoryDraftResponse)
@@ -1741,6 +2010,15 @@ async def create_project_factory_draft(
     request: ProjectFactoryDraftRequest,
     container: AppContainer = Depends(get_container),
 ) -> ProjectFactoryDraftResponse:
+    if request.creation_mode == CreationMode.SCAFFOLD.value:
+        _require_project_scaffold_enabled(container)
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Scaffold creation must use /project-factory/scaffolds so product "
+                "intake and execution cannot be started implicitly."
+            ),
+        )
     draft = await run_in_threadpool(
         container.project_factory_service.create_draft,
         _project_factory_manifest_input(request),
@@ -7171,7 +7449,45 @@ def _project_factory_manifest_input(
         initial_admin_emails=tuple(request.initial_admin_emails),
         visual_reference_paths=tuple(request.visual_reference_paths),
         guided_intake_enabled=request.guided_intake_enabled,
+        creation_mode=CreationMode(request.creation_mode),
+        mobile_provider=request.mobile_provider,
+        web_provider=request.web_provider,
+        api_provider=request.api_provider,
+        cloudflare_mode=CloudflareMode(request.cloudflare_mode),
+        aws_mode=AwsReadinessMode(request.aws_readiness_mode),
+        stack_preset=request.stack_preset,
     )
+
+
+def _project_scaffold_draft_input(
+    request: ProjectScaffoldDraftRequest,
+) -> ScaffoldDraftInput:
+    return ScaffoldDraftInput(
+        name=request.name,
+        slug=request.slug,
+        stack_preset=request.stack_preset,
+        mobile_provider=request.mobile_provider,
+        web_provider=request.web_provider,
+        api_provider=request.api_provider,
+        cloudflare_mode=CloudflareMode(request.cloudflare_mode),
+        aws_mode=AwsReadinessMode(request.aws_readiness_mode),
+        github_owner=request.github_owner,
+        github_visibility=request.github_visibility,
+        github_mode=request.github_mode,
+        preview_protected=request.preview_protected,
+        initial_admin_email=request.initial_admin_email,
+    )
+
+
+def _require_project_scaffold_enabled(container: AppContainer) -> None:
+    if not container.settings.project_scaffold_enabled:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Composable Scaffold is disabled by the staged rollout flag. "
+                "The existing Product flow remains the default."
+            ),
+        )
 
 
 class _StoredUpload:

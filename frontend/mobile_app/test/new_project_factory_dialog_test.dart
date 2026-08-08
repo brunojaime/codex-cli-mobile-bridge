@@ -4,6 +4,165 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('scaffold dialog asks only technical and conditional fields',
+      (tester) async {
+    ProjectScaffoldDraftRequest? result;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => TextButton(
+              onPressed: () async {
+                result = await showDialog<ProjectScaffoldDraftRequest>(
+                  context: context,
+                  builder: (_) => ProjectScaffoldDialog(
+                    options: _scaffoldOptions(),
+                  ),
+                );
+              },
+              child: const Text('Scaffold'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Scaffold'));
+    await tester.pumpAndSettle();
+    expect(find.text('Business type'), findsNothing);
+    expect(find.text('Primary goal'), findsNothing);
+    expect(find.text('GitHub owner'), findsNothing);
+    expect(find.text('Initial admin email'), findsNothing);
+    await tester.enterText(find.byKey(const Key('scaffold-name')), 'Neutral');
+    await tester.ensureVisible(find.text('Protect preview'));
+    await tester.tap(find.text('Protect preview'));
+    await tester.pumpAndSettle();
+    expect(find.text('Initial admin email'), findsOneWidget);
+    await tester.enterText(
+      find.byKey(const Key('scaffold-admin-email')),
+      'owner@example.org',
+    );
+    await tester.tap(find.byKey(const Key('scaffold-review')));
+    await tester.pumpAndSettle();
+
+    expect(result, isNotNull);
+    expect(result!.name, 'Neutral');
+    expect(result!.mobileProvider, 'react_native_expo');
+    expect(result!.webProvider, 'sveltekit');
+    expect(result!.apiProvider, 'fastapi');
+    expect(result!.previewProtected, isTrue);
+    expect(result!.initialAdminEmail, 'owner@example.org');
+  });
+
+  testWidgets('scaffold asks GitHub owner only when it cannot be inferred',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ProjectScaffoldDialog(
+            options: _scaffoldOptions(githubOwnerRequired: true),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('GitHub owner'), findsOneWidget);
+    expect(find.byKey(const Key('scaffold-github-owner')), findsOneWidget);
+    expect(find.text('Business type'), findsNothing);
+    expect(find.text('Primary goal'), findsNothing);
+  });
+
+  testWidgets('scaffold confirmation states forbidden automatic effects',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ProjectScaffoldConfirmationDialog(
+            draft: ProjectScaffoldDraft(
+              draftId: 'draft-1',
+              status: 'contract_pending_confirmation',
+              request: const <String, dynamic>{},
+              manifest: const <String, dynamic>{
+                'targets': <String, dynamic>{
+                  'mobile': <String, dynamic>{
+                    'provider': 'react_native_expo',
+                  },
+                  'web': <String, dynamic>{'provider': 'sveltekit'},
+                  'api': <String, dynamic>{'provider': 'go'},
+                },
+              },
+              contractPreview: const <String, dynamic>{
+                'remoteEffects': <Map<String, dynamic>>[
+                  <String, dynamic>{
+                    'provider': 'github',
+                    'effect': 'create_or_verify_and_push',
+                  },
+                  <String, dynamic>{
+                    'provider': 'cloudflare',
+                    'effect': 'provision_neutral_scaffold',
+                  },
+                ],
+                'skippedProductWork': <String>[
+                  'auth, RBAC, admin, notifications, persistence, and seed data',
+                  'product screens, navigation, colors, logo, icon, and UX',
+                ],
+              },
+              contractHash: 'sha256',
+              readyForConfirmation: true,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.textContaining('Domain Factory'), findsOneWidget);
+    expect(find.textContaining('apply Terraform'), findsOneWidget);
+    expect(find.textContaining('publish an APK'), findsOneWidget);
+    expect(find.text('- github'), findsOneWidget);
+    expect(find.text('- cloudflare'), findsOneWidget);
+    expect(find.textContaining('auth, RBAC'), findsOneWidget);
+    expect(find.textContaining('product screens'), findsOneWidget);
+    expect(find.byKey(const Key('scaffold-confirm')), findsOneWidget);
+  });
+
+  testWidgets('scaffold progress polls until a terminal lifecycle state',
+      (tester) async {
+    ProjectScaffoldJob? result;
+    var polls = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => TextButton(
+              onPressed: () async {
+                result = await showDialog<ProjectScaffoldJob>(
+                  context: context,
+                  builder: (_) => ProjectScaffoldProgressDialog(
+                    initialJob: _scaffoldJob('scaffold_initializing'),
+                    pollInterval: const Duration(milliseconds: 10),
+                    pollJob: (_) async {
+                      polls += 1;
+                      return _scaffoldJob('scaffold_ready');
+                    },
+                  ),
+                );
+              },
+              child: const Text('Progress scaffold'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('Progress scaffold'));
+    await tester.pump();
+    expect(find.text('Creating technical scaffold'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 20));
+    await tester.pumpAndSettle();
+    expect(polls, greaterThanOrEqualTo(1));
+    expect(result!.status, 'scaffold_ready');
+  });
+
   testWidgets('new project factory dialog returns a draft', (tester) async {
     NewProjectFactoryDraft? result;
     await tester.pumpWidget(
@@ -698,6 +857,74 @@ void main() {
     expect(revoked, isTrue);
     expect(find.textContaining('Revoked:'), findsOneWidget);
   });
+}
+
+ProjectFactoryOptions _scaffoldOptions({bool githubOwnerRequired = false}) {
+  const provider = <String, dynamic>{'id': 'none'};
+  return ProjectFactoryOptions(
+    defaultPlatforms: <String>['ios', 'android', 'web'],
+    platforms: <String>['ios', 'android', 'web'],
+    defaultBackend: 'fastapi',
+    backends: <String>['fastapi'],
+    logoModes: <String>['generate'],
+    businessTypes: <String>['other'],
+    creationWorkflow: <String, dynamic>{},
+    scaffoldEnabled: true,
+    scaffold: <String, dynamic>{
+      'github_owner_required': githubOwnerRequired,
+    },
+    targetProviders: <String, List<Map<String, dynamic>>>{
+      'mobile': <Map<String, dynamic>>[
+        <String, dynamic>{'id': 'react_native_expo'},
+        provider,
+      ],
+      'web': <Map<String, dynamic>>[
+        <String, dynamic>{'id': 'sveltekit'},
+        provider,
+      ],
+      'api': <Map<String, dynamic>>[
+        <String, dynamic>{'id': 'fastapi'},
+        <String, dynamic>{'id': 'go'},
+        provider,
+      ],
+    },
+    stackPresets: <Map<String, dynamic>>[
+      <String, dynamic>{
+        'id': 'expo-sveltekit-fastapi',
+        'recommended': true,
+        'mobile': 'react_native_expo',
+        'web': 'sveltekit',
+        'api': 'fastapi',
+      },
+    ],
+    cloudflareModes: <String>[
+      'provision_scaffold',
+      'generate_only',
+      'disabled',
+    ],
+    awsReadinessModes: <String>[
+      'none',
+      'architecture_docs_only',
+      'terraform_ready',
+    ],
+  );
+}
+
+ProjectScaffoldJob _scaffoldJob(String status) {
+  return ProjectScaffoldJob(
+    scaffoldJobId: 'scaffold-job-1',
+    draftId: 'scaffold-draft-1',
+    status: status,
+    currentPhase: status == 'scaffold_ready'
+        ? 'scaffold_context_pack'
+        : 'target_validation',
+    workspacePath: '/projects/neutral',
+    phases: const <ProjectScaffoldPhase>[],
+    blockers: const <Map<String, dynamic>>[],
+    resources: const <Map<String, dynamic>>[],
+    canRetry: false,
+    canStartProduct: status == 'scaffold_ready',
+  );
 }
 
 ProjectFactoryJob _job({

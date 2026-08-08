@@ -1,0 +1,64 @@
+id: 023-composable-project-scaffold
+slug: 023-composable-project-scaffold
+title: Composable Project Scaffold
+description: Add a minimal Scaffold creation mode and a manifest-v2 provider architecture for independent React Native/Flutter mobile, SvelteKit/Flutter web, FastAPI/Go API, Cloudflare, AWS Terraform readiness, and framework-neutral Android releases.
+status: completed
+last_run_state: passed
+last_audited_at: "2026-08-08"
+independent_audit: passed
+type: feature
+domains:
+  - project-factory
+  - scaffold
+  - react-native
+  - flutter
+  - sveltekit
+  - fastapi
+  - go
+  - cloudflare
+  - aws
+  - terraform
+  - workbench
+  - android-release
+related_specs:
+  - 005-new-project-factory
+  - 011-new-project-guided-intake
+  - 014-project-factory-frontend-strategy
+  - 017-new-project-deterministic-init-pipeline
+  - 019-domain-factory-mode
+  - 021-ux-agent-lane
+  - 022-project-charter-documentation-framework
+tasks:
+  total: 94
+  completed: 94
+  partial: 0
+  pending: 0
+generated:
+  title: false
+  description: false
+  user_pinned_title: true
+  user_pinned_description: true
+diagrams:
+  total: 3
+  items:
+    components:
+      path: specs/023-composable-project-scaffold/diagrams/components.mmd
+      status: completed
+    scaffold_sequence:
+      path: specs/023-composable-project-scaffold/diagrams/scaffold-sequence.mmd
+      status: completed
+    lifecycle_state:
+      path: specs/023-composable-project-scaffold/diagrams/lifecycle-state.mmd
+      status: completed
+available_files:
+  - spec.md
+  - plan.md
+  - tasks.md
+  - traceability.yaml
+  - tree.json
+  - diagrams/components.mmd
+  - diagrams/components.yaml
+  - diagrams/scaffold-sequence.mmd
+  - diagrams/scaffold-sequence.yaml
+  - diagrams/lifecycle-state.mmd
+  - diagrams/lifecycle-state.yaml

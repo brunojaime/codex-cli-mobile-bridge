@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 from secrets import token_urlsafe
 import shlex
 import shutil
@@ -18,11 +19,18 @@ from uuid import uuid4
 
 import yaml
 
+from backend.app.application.services.android_artifact_service import (
+    AndroidSigningMaterial,
+    AndroidArtifactService,
+    NormalizedAndroidArtifact,
+    resolve_android_build_tool,
+)
+from backend.app.application.services.asset_depot_service import AssetDepotService
 from backend.app.application.services.cloudflare_preview_service import (
     CloudflareClient,
     CloudflarePreviewDoctorService,
+    project_preview_worker_name,
 )
-from backend.app.application.services.asset_depot_service import AssetDepotService
 from backend.app.application.services.project_factory_generator_service import (
     ProjectFactoryGeneratorError,
     ProjectFactoryGeneratorService,
@@ -222,6 +230,7 @@ class ProjectFactoryInitService:
         web_preview_deploy_service: WebPreviewDeployService | None = None,
         chat_repository: ChatRepository | None = None,
         asset_depot_service: AssetDepotService | None = None,
+        android_artifact_service: AndroidArtifactService | None = None,
     ) -> None:
         self._state_root = Path(state_root).expanduser().resolve()
         self._init_state_dir = self._state_root / "init_jobs"
@@ -239,6 +248,9 @@ class ProjectFactoryInitService:
         self._web_preview_deploy_service = web_preview_deploy_service
         self._chat_repository = chat_repository
         self._asset_depot_service = asset_depot_service
+        self._android_artifact_service = (
+            android_artifact_service or AndroidArtifactService()
+        )
         self._lock = RLock()
         self._jobs: dict[str, ProjectFactoryInitJob] = {}
         self._init_state_dir.mkdir(parents=True, exist_ok=True)
@@ -355,6 +367,36 @@ class ProjectFactoryInitService:
     def _reset_blocked_phase_for_retry(self, init_job_id: str) -> ProjectFactoryInitJob:
         with self._lock:
             job = self._require_job(init_job_id)
+            if self._legacy_shared_worker_requires_migration(job):
+                self._migrate_legacy_shared_worker_manifest(job)
+                migration_phases = {
+                    ProjectFactoryInitPhaseName.CLOUDFLARE_PREVIEW_PROVISION,
+                    ProjectFactoryInitPhaseName.CLOUDFLARE_PREVIEW_DEPLOY,
+                    ProjectFactoryInitPhaseName.PREVIEW_SMOKE,
+                    ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                    ProjectFactoryInitPhaseName.BRIDGE_INSTALLABLE_REGISTRATION,
+                }
+                updated = job
+                for phase_name in INIT_PHASE_ORDER:
+                    if phase_name not in migration_phases:
+                        continue
+                    phase = updated.phase(phase_name)
+                    if phase.status == ProjectFactoryInitPhaseStatus.SKIPPED:
+                        continue
+                    updated = updated.with_phase(
+                        replace(
+                            phase,
+                            status=ProjectFactoryInitPhaseStatus.QUEUED,
+                            message="",
+                            started_at=None,
+                            completed_at=None,
+                            blockers=(),
+                        )
+                    )
+                updated = updated.with_derived_completion_state()
+                self._jobs[updated.id] = updated
+                self._persist_job(updated)
+                return updated
             for phase_name in INIT_PHASE_ORDER:
                 phase = job.phase(phase_name)
                 if phase.status != ProjectFactoryInitPhaseStatus.BLOCKED:
@@ -372,6 +414,55 @@ class ProjectFactoryInitService:
                 self._persist_job(updated)
                 return updated
             return job
+
+    def _legacy_shared_worker_requires_migration(
+        self,
+        job: ProjectFactoryInitJob,
+    ) -> bool:
+        if not any(
+            phase.status == ProjectFactoryInitPhaseStatus.BLOCKED
+            for phase in job.phases
+        ):
+            return False
+        target = self._frontend_target_path(job, None)
+        manifest_path = target / "deploy/web-preview/web-preview-manifest.yaml"
+        try:
+            manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError):
+            return False
+        if not isinstance(manifest, dict):
+            return False
+        cloudflare = manifest.get("cloudflare")
+        resources = cloudflare.get("resources") if isinstance(cloudflare, dict) else None
+        worker_name = resources.get("worker_name") if isinstance(resources, dict) else None
+        return not worker_name or str(worker_name) == "nienfos-preview-runtime"
+
+    def _migrate_legacy_shared_worker_manifest(
+        self,
+        job: ProjectFactoryInitJob,
+    ) -> None:
+        target = self._frontend_target_path(job, None)
+        manifest_path = target / "deploy/web-preview/web-preview-manifest.yaml"
+        manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+        if not isinstance(manifest, dict):
+            raise ProjectFactoryInitConflictError(
+                f"Invalid web preview manifest: {manifest_path}"
+            )
+        cloudflare = manifest.setdefault("cloudflare", {})
+        if not isinstance(cloudflare, dict):
+            raise ProjectFactoryInitConflictError(
+                f"Invalid Cloudflare manifest section: {manifest_path}"
+            )
+        resources = cloudflare.setdefault("resources", {})
+        if not isinstance(resources, dict):
+            raise ProjectFactoryInitConflictError(
+                f"Invalid Cloudflare resources section: {manifest_path}"
+            )
+        resources["worker_name"] = project_preview_worker_name(job.slug)
+        manifest_path.write_text(
+            yaml.safe_dump(manifest, sort_keys=False, allow_unicode=True),
+            encoding="utf-8",
+        )
 
     def get_job(self, init_job_id: str) -> ProjectFactoryInitJob | None:
         with self._lock:
@@ -744,10 +835,7 @@ class ProjectFactoryInitService:
     ) -> ProjectFactoryInitJob:
         with self._lock:
             job = self._require_job(init_job_id)
-            strategy_contract = FRONTEND_STRATEGIES.get(job.frontend_strategy)
-            if not strategy_contract or not bool(
-                strategy_contract.get("supports_android_preview_apk")
-            ):
+            if not self._android_artifact_service.supports(job.frontend_strategy):
                 return self._preserve_or_skip_android_installable(job)
             target = self._frontend_target_path(job, project_path)
             runtime = _read_json_file(target / "release/preview-runtime.json")
@@ -759,28 +847,39 @@ class ProjectFactoryInitService:
                     blocker=runtime_blocker,
                     evidence=(),
                 )
-            version = _read_flutter_version(target / "apps/mobile/pubspec.yaml")
-            if not version:
+            try:
+                android_artifact = self._android_artifact_service.resolve(
+                    job.frontend_strategy,
+                    target,
+                    slug=job.slug,
+                )
+            except ValueError as exc:
                 return self._block_android_phase(
                     job,
                     phase_name=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
                     blocker=_android_blocker(
                         phase=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
-                        code="android_preview_flutter_version_missing",
-                        message="Flutter pubspec version is missing for Android preview release.",
-                        next_action="Restore apps/mobile/pubspec.yaml with a version, then rerun deterministic init.",
+                        code="android_preview_artifact_contract_invalid",
+                        message=str(exc),
+                        next_action="Restore the selected mobile provider version/build metadata, then rerun deterministic init.",
                         command=("project-factory", "init", "baseline", "repair"),
                     ),
                     evidence=(),
                 )
-            release_tag = _android_preview_tag(version)
-            apk_name = f"{job.slug}.apk"
+            release_tag = android_artifact.release_tag
+            apk_name = android_artifact.asset_name
             preview_api = f"https://preview.nienfos.com/{job.slug}/api"
             bridge_base_url = (
                 bridge_url or (self._settings.api_base_url if self._settings else "")
             ).rstrip("/")
             bridge_public_url = _resolve_bridge_public_url(
                 bridge_base_url,
+                settings=self._settings,
+                command_env=self._command_env,
+            )
+            bridge_transport_url = _resolve_bridge_transport_url(
+                bridge_base_url,
+                bridge_public_url,
                 settings=self._settings,
                 command_env=self._command_env,
             )
@@ -793,7 +892,7 @@ class ProjectFactoryInitService:
                 "SOURCE_APP": job.slug,
                 "APP_RELEASE_TAG": release_tag,
                 "APP_ANDROID_PREVIEW_RELEASE_TAG": release_tag,
-                "BRIDGE_URL": bridge_base_url,
+                "BRIDGE_URL": bridge_transport_url,
                 "BRIDGE_PUBLIC_URL": bridge_public_url,
             }
             if self._settings and self._settings.installable_apps_registration_token:
@@ -854,6 +953,98 @@ class ProjectFactoryInitService:
                 apk_name=apk_name,
             )
             if not release_valid:
+                signing = _read_preview_signing_files(
+                    self._bridge_root_for_generated_scripts(),
+                    job.slug,
+                )
+                try:
+                    build_env = self._android_artifact_service.prepare_build(
+                        job.frontend_strategy,
+                        target,
+                        android_artifact,
+                        AndroidSigningMaterial(
+                            keystore_path=(
+                                self._bridge_root_for_generated_scripts()
+                                / "secrets"
+                                / f"{job.slug}-preview-upload-keystore.jks"
+                            ),
+                            key_alias=str(signing["ANDROID_KEY_ALIAS"]),
+                            store_password=str(signing["ANDROID_STORE_PASSWORD"]),
+                            key_password=str(signing["ANDROID_KEY_PASSWORD"]),
+                            store_type=str(signing.get("ANDROID_STORE_TYPE", "JKS")),
+                        ),
+                    )
+                except (KeyError, OSError, ValueError) as exc:
+                    return self._block_android_phase(
+                        job,
+                        phase_name=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                        blocker=_android_blocker(
+                            phase=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                            code="android_preview_build_preparation_failed",
+                            message=str(exc),
+                            next_action=(
+                                "Restore the provider Android prebuild/signing inputs, "
+                                "then rerun deterministic init."
+                            ),
+                            command=android_artifact.build_command,
+                        ),
+                        evidence=tuple(release_evidence),
+                    )
+                build_cwd = (target / android_artifact.build_working_directory).resolve()
+                if not build_cwd.is_relative_to(target.resolve()):
+                    return self._block_android_phase(
+                        job,
+                        phase_name=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                        blocker=_android_blocker(
+                            phase=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                            code="android_preview_build_path_unsafe",
+                            message="Android build working directory escapes the project workspace.",
+                            next_action="Repair the Android provider contract, then rerun deterministic init.",
+                            command=android_artifact.build_command,
+                        ),
+                        evidence=tuple(release_evidence),
+                    )
+                try:
+                    build = self._run_env(
+                        android_artifact.build_command,
+                        cwd=build_cwd,
+                        env={**env, **build_env},
+                    )
+                finally:
+                    self._android_artifact_service.cleanup_build(
+                        job.frontend_strategy,
+                        target,
+                        android_artifact,
+                    )
+                release_evidence.append(self._evidence(build))
+                if build.exit_code != 0:
+                    return self._block_android_phase(
+                        job,
+                        phase_name=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                        blocker=_android_blocker_from_command(
+                            code="android_preview_build_failed",
+                            message="Normalized Android preview build failed.",
+                            phase=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                            result=build,
+                            command=android_artifact.build_command,
+                        ),
+                        evidence=tuple(release_evidence),
+                    )
+                if android_artifact.find_existing(target) is None:
+                    return self._block_android_phase(
+                        job,
+                        phase_name=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                        blocker=_android_blocker(
+                            phase=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                            code="android_preview_build_output_missing",
+                            message=(
+                                "Normalized Android build completed without a provider-declared APK output."
+                            ),
+                            next_action="Repair the Android provider output contract, then rerun deterministic init.",
+                            command=android_artifact.build_command,
+                        ),
+                        evidence=tuple(release_evidence),
+                    )
                 publish = self._run_env(
                     (
                         "bash",
@@ -940,8 +1131,42 @@ class ProjectFactoryInitService:
                     ),
                     evidence=tuple(release_evidence),
                 )
-            apk_path = _find_apk(target, job.slug)
-            apk_sha = _sha256_file(apk_path) if apk_path else None
+            apk_path, build_evidence, build_blocker = self._ensure_local_android_apk(
+                job=job,
+                target=target,
+                artifact=android_artifact,
+                env=env,
+            )
+            release_evidence.extend(build_evidence)
+            if build_blocker is not None or apk_path is None:
+                return self._block_android_phase(
+                    job,
+                    phase_name=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                    blocker=build_blocker
+                    or _android_blocker(
+                        phase=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                        code="android_preview_build_output_missing",
+                        message="A local APK is required to verify the published release.",
+                        next_action="Rebuild the provider Android artifact, then retry.",
+                        command=android_artifact.build_command,
+                    ),
+                    evidence=tuple(release_evidence),
+                )
+            verification_evidence, verification_blocker = self._verify_android_apk(
+                target=target,
+                artifact=android_artifact,
+                apk_path=apk_path,
+                env=env,
+            )
+            release_evidence.extend(verification_evidence)
+            if verification_blocker is not None:
+                return self._block_android_phase(
+                    job,
+                    phase_name=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                    blocker=verification_blocker,
+                    evidence=tuple(release_evidence),
+                )
+            apk_sha = _sha256_file(apk_path)
             released = self._complete_android_release(
                 job,
                 target=target,
@@ -950,11 +1175,12 @@ class ProjectFactoryInitService:
                 apk_path=apk_path,
                 apk_sha=apk_sha,
                 evidence=tuple(release_evidence),
+                android_artifact=android_artifact,
             )
 
             lookup = self._run_env(
                 _bridge_installable_lookup_command(
-                    bridge_base_url,
+                    bridge_transport_url,
                     bridge_public_url,
                     job.slug,
                 ),
@@ -968,6 +1194,7 @@ class ProjectFactoryInitService:
                 slug=job.slug,
                 release_tag=release_tag,
                 preview_api=preview_api,
+                expected_sha256=apk_sha,
             )
             if not installable_valid:
                 if "INSTALLABLE_APPS_REGISTRATION_TOKEN" not in env:
@@ -1007,7 +1234,7 @@ class ProjectFactoryInitService:
                     )
                 lookup = self._run_env(
                     _bridge_installable_lookup_command(
-                        bridge_base_url,
+                        bridge_transport_url,
                         bridge_public_url,
                         job.slug,
                     ),
@@ -1023,6 +1250,7 @@ class ProjectFactoryInitService:
                         slug=job.slug,
                         release_tag=release_tag,
                         preview_api=preview_api,
+                        expected_sha256=apk_sha,
                     )
                 )
             if not installable_valid:
@@ -1030,7 +1258,9 @@ class ProjectFactoryInitService:
                     released,
                     phase_name=ProjectFactoryInitPhaseName.BRIDGE_INSTALLABLE_REGISTRATION,
                     blocker=_installable_payload_blocker(
-                        installable_payload, release_tag
+                        installable_payload,
+                        release_tag,
+                        expected_sha256=apk_sha,
                     ),
                     evidence=tuple(installable_evidence),
                 )
@@ -3182,10 +3412,11 @@ class ProjectFactoryInitService:
         apk_path: Path | None,
         apk_sha: str | None,
         evidence: tuple[ProjectFactoryInitCommandEvidence, ...],
+        android_artifact: NormalizedAndroidArtifact,
     ) -> ProjectFactoryInitJob:
         phase = job.phase(ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE)
         now = _now_iso()
-        asset = _release_asset(release_payload, f"{job.slug}.apk")
+        asset = _release_asset(release_payload, android_artifact.asset_name)
         release_url = _optional_str(
             release_payload.get("url") or release_payload.get("htmlUrl")
         )
@@ -3200,6 +3431,10 @@ class ProjectFactoryInitService:
                     "asset": asset,
                     "mockOrDemo": False,
                     "productionReady": False,
+                    "androidArtifact": android_artifact.to_payload(
+                        sha256=apk_sha,
+                        signing_status="verified",
+                    ),
                 },
             )
         ]
@@ -3212,6 +3447,10 @@ class ProjectFactoryInitService:
                     metadata={
                         "assetName": apk_path.name,
                         "releaseTag": release_tag,
+                        "androidArtifact": android_artifact.to_payload(
+                            sha256=apk_sha,
+                            signing_status="verified",
+                        ),
                     },
                 )
             )
@@ -3247,6 +3486,180 @@ class ProjectFactoryInitService:
         self._jobs[updated.id] = updated
         self._persist_job(updated)
         return updated
+
+    def _ensure_local_android_apk(
+        self,
+        *,
+        job: ProjectFactoryInitJob,
+        target: Path,
+        artifact: NormalizedAndroidArtifact,
+        env: dict[str, str],
+    ) -> tuple[
+        Path | None,
+        tuple[ProjectFactoryInitCommandEvidence, ...],
+        ProjectFactoryInitBlocker | None,
+    ]:
+        existing = artifact.find_existing(target)
+        if existing is not None:
+            return existing, (), None
+        try:
+            signing = _read_preview_signing_files(
+                self._bridge_root_for_generated_scripts(),
+                job.slug,
+            )
+            build_env = self._android_artifact_service.prepare_build(
+                job.frontend_strategy,
+                target,
+                artifact,
+                AndroidSigningMaterial(
+                    keystore_path=(
+                        self._bridge_root_for_generated_scripts()
+                        / "secrets"
+                        / f"{job.slug}-preview-upload-keystore.jks"
+                    ),
+                    key_alias=str(signing["ANDROID_KEY_ALIAS"]),
+                    store_password=str(signing["ANDROID_STORE_PASSWORD"]),
+                    key_password=str(signing["ANDROID_KEY_PASSWORD"]),
+                    store_type=str(signing.get("ANDROID_STORE_TYPE", "JKS")),
+                ),
+            )
+        except (KeyError, OSError, ValueError) as exc:
+            return (
+                None,
+                (),
+                _android_blocker(
+                    phase=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                    code="android_preview_build_preparation_failed",
+                    message=str(exc),
+                    next_action=(
+                        "Restore the provider Android prebuild/signing inputs, "
+                        "then rerun deterministic init."
+                    ),
+                    command=artifact.build_command,
+                ),
+            )
+        build_cwd = (target / artifact.build_working_directory).resolve()
+        if not build_cwd.is_relative_to(target.resolve()):
+            return (
+                None,
+                (),
+                _android_blocker(
+                    phase=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                    code="android_preview_build_path_unsafe",
+                    message="Android build working directory escapes the project workspace.",
+                    next_action="Repair the Android provider contract, then retry.",
+                    command=artifact.build_command,
+                ),
+            )
+        try:
+            build = self._run_env(
+                artifact.build_command,
+                cwd=build_cwd,
+                env={**env, **build_env},
+            )
+        finally:
+            self._android_artifact_service.cleanup_build(
+                job.frontend_strategy,
+                target,
+                artifact,
+            )
+        evidence = (self._evidence(build),)
+        if build.exit_code != 0:
+            return (
+                None,
+                evidence,
+                _android_blocker_from_command(
+                    code="android_preview_build_failed",
+                    message="Normalized Android preview build failed.",
+                    phase=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                    result=build,
+                    command=artifact.build_command,
+                ),
+            )
+        apk_path = artifact.find_existing(target)
+        if apk_path is None:
+            return (
+                None,
+                evidence,
+                _android_blocker(
+                    phase=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                    code="android_preview_build_output_missing",
+                    message=(
+                        "Normalized Android build completed without a provider-declared APK output."
+                    ),
+                    next_action="Repair the Android provider output contract, then retry.",
+                    command=artifact.build_command,
+                ),
+            )
+        return apk_path, evidence, None
+
+    def _verify_android_apk(
+        self,
+        *,
+        target: Path,
+        artifact: NormalizedAndroidArtifact,
+        apk_path: Path,
+        env: dict[str, str],
+    ) -> tuple[
+        tuple[ProjectFactoryInitCommandEvidence, ...],
+        ProjectFactoryInitBlocker | None,
+    ]:
+        apksigner_command = (
+            resolve_android_build_tool(
+                "apksigner",
+                {**self._command_env, **env},
+            ),
+            "verify",
+            "--verbose",
+            "--print-certs",
+            str(apk_path),
+        )
+        signed = self._run_env(apksigner_command, cwd=target, env=env)
+        evidence = [self._evidence(signed)]
+        signing_output = f"{signed.stdout}\n{signed.stderr}".lower()
+        if (
+            signed.exit_code != 0
+            or "verified using" not in signing_output
+            or "android debug" in signing_output
+        ):
+            return (
+                tuple(evidence),
+                _android_blocker(
+                    phase=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                    code="android_preview_signature_invalid",
+                    message=(
+                        "APK signature verification failed or used the Android debug signer."
+                    ),
+                    next_action="Configure the stable preview signing key and rebuild the APK.",
+                    command=apksigner_command,
+                ),
+            )
+        aapt_command = (
+            resolve_android_build_tool(
+                "aapt",
+                {**self._command_env, **env},
+            ),
+            "dump",
+            "badging",
+            str(apk_path),
+        )
+        badging = self._run_env(aapt_command, cwd=target, env=env)
+        evidence.append(self._evidence(badging))
+        package_id = _apk_package_id(badging.stdout)
+        if badging.exit_code != 0 or package_id != artifact.package_id:
+            return (
+                tuple(evidence),
+                _android_blocker(
+                    phase=ProjectFactoryInitPhaseName.ANDROID_PREVIEW_RELEASE,
+                    code="android_preview_package_id_mismatch",
+                    message=(
+                        "APK package id does not match the normalized Android artifact contract."
+                    ),
+                    next_action="Repair the provider package configuration and rebuild the APK.",
+                    command=aapt_command,
+                ),
+            )
+        return tuple(evidence), None
 
     def _complete_bridge_installable(
         self,
@@ -5431,20 +5844,6 @@ def _android_runtime_blocker(
     return None
 
 
-def _read_flutter_version(path: Path) -> str | None:
-    for line in _read_text(path).splitlines():
-        key, separator, value = line.partition(":")
-        if separator and key.strip() == "version":
-            version = value.strip()
-            return version or None
-    return None
-
-
-def _android_preview_tag(version: str) -> str:
-    normalized = version.strip().replace("+", "-build.")
-    return f"android-preview-v{normalized}"
-
-
 def _parse_json_object(stdout: str) -> dict[str, object]:
     try:
         payload = json.loads(stdout or "{}")
@@ -5486,18 +5885,6 @@ def _release_asset(
         name = _optional_str(raw.get("name"))
         if name == apk_name:
             return _safe_json_object(raw)
-    return None
-
-
-def _find_apk(target: Path, slug: str) -> Path | None:
-    candidates = (
-        target / "apps/mobile/build/app/outputs/flutter-apk" / f"{slug}.apk",
-        target / "apps/mobile/build/app/outputs/flutter-apk/app-release.apk",
-        target / "release" / f"{slug}.apk",
-    )
-    for path in candidates:
-        if path.is_file():
-            return path
     return None
 
 
@@ -5725,6 +6112,7 @@ def _valid_installable_payload(
     slug: str,
     release_tag: str,
     preview_api: str,
+    expected_sha256: str,
 ) -> bool:
     if not payload:
         return False
@@ -5749,8 +6137,15 @@ def _valid_installable_payload(
         and payload.get("productionReady") is False
         and payload.get("mockOrDemo") is False
         and not _has_forbidden_runtime_marker(payload)
-        and (sha256 is None or _is_sha256(sha256))
+        and sha256 is not None
+        and _is_sha256(sha256)
+        and sha256.lower() == expected_sha256.lower()
     )
+
+
+def _apk_package_id(output: str) -> str | None:
+    match = re.search(r"^package:\s+name='([^']+)'", output, flags=re.MULTILINE)
+    return match.group(1) if match else None
 
 
 _LOCAL_BRIDGE_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "10.0.2.2"}
@@ -5794,6 +6189,44 @@ def _resolve_bridge_public_url(
             ):
                 return public_url
     return bridge_base_url.rstrip("/")
+
+
+def _resolve_bridge_transport_url(
+    bridge_base_url: str,
+    bridge_public_url: str,
+    *,
+    settings: Settings | None,
+    command_env: dict[str, str],
+) -> str:
+    del settings
+    for candidate in (
+        command_env.get("BRIDGE_URL"),
+        command_env.get("CODEX_BRIDGE_URL"),
+        os.environ.get("BRIDGE_URL"),
+        os.environ.get("CODEX_BRIDGE_URL"),
+    ):
+        local_url = _local_http_url(candidate)
+        if local_url:
+            return local_url
+    base_url = bridge_base_url.strip().rstrip("/")
+    if _is_local_bridge_url(base_url):
+        return base_url
+    public_url = bridge_public_url.strip().rstrip("/")
+    parsed = urlparse(public_url or base_url)
+    host = (parsed.hostname or "").lower()
+    if host.endswith(".ts.net") and parsed.port:
+        return f"http://127.0.0.1:{parsed.port}"
+    return base_url
+
+
+def _local_http_url(value: str | None) -> str | None:
+    url = (value or "").strip().rstrip("/")
+    if not url or not _is_local_bridge_url(url):
+        return None
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    return url
 
 
 def _non_local_http_url(value: str | None) -> str | None:
@@ -5852,6 +6285,8 @@ def _bridge_installable_lookup_command(
 def _installable_payload_blocker(
     payload: dict[str, object],
     release_tag: str,
+    *,
+    expected_sha256: str,
 ) -> ProjectFactoryInitBlocker:
     if not payload:
         code = "bridge_installable_lookup_failed"
@@ -5870,6 +6305,9 @@ def _installable_payload_blocker(
     elif not payload.get("apkUrl"):
         code = "bridge_installable_apk_url_missing"
         message = "Bridge installable app lookup is missing an APK URL."
+    elif _optional_str(payload.get("sha256")) != expected_sha256:
+        code = "bridge_installable_checksum_mismatch"
+        message = "Bridge installable checksum does not match the verified local APK."
     else:
         code = "bridge_installable_payload_invalid"
         message = "Bridge installable app payload does not match Android preview release requirements."

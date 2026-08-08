@@ -2334,6 +2334,22 @@ When you create the Project Factory draft, link each asset with POST /project-fa
       return;
     }
 
+    if (options.scaffoldEnabled) {
+      final creationMode = await showDialog<String>(
+        context: context,
+        builder: (context) => _ProjectCreationModeDialog(
+          defaultMode: options.defaultCreationMode,
+        ),
+      );
+      if (creationMode == null || !mounted) {
+        return;
+      }
+      if (creationMode == 'scaffold') {
+        await _openProjectScaffold(client, options);
+        return;
+      }
+    }
+
     final projectBasics = await _promptNewProjectBasics();
     if (projectBasics == null || !mounted) {
       return;
@@ -2352,6 +2368,107 @@ When you create the Project Factory draft, link each asset with POST /project-fa
       options,
       draft: draft,
       projectTitle: projectBasics.title,
+    );
+  }
+
+  Future<void> _openProjectScaffold(
+    ApiClient client,
+    ProjectFactoryOptions options,
+  ) async {
+    final request = await showDialog<ProjectScaffoldDraftRequest>(
+      context: context,
+      builder: (context) => ProjectScaffoldDialog(options: options),
+    );
+    if (request == null || !mounted) {
+      return;
+    }
+    try {
+      var draft = await client.createProjectScaffoldDraft(request);
+      if (!mounted) {
+        return;
+      }
+      final approved = await showDialog<bool>(
+        context: context,
+        builder: (context) => ProjectScaffoldConfirmationDialog(draft: draft),
+      );
+      if (approved != true || !mounted) {
+        return;
+      }
+      draft = await client.confirmProjectScaffoldDraft(draft);
+      var job = await client.startProjectScaffoldJob(draft.draftId);
+      if (!job.isTerminal && mounted) {
+        job = await showDialog<ProjectScaffoldJob>(
+              context: context,
+              barrierDismissible: false,
+              builder: (_) => ProjectScaffoldProgressDialog(
+                initialJob: job,
+                pollJob: client.getProjectScaffoldJob,
+              ),
+            ) ??
+            job;
+      }
+      if (!mounted) {
+        return;
+      }
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => ProjectScaffoldResultDialog(
+          job: job,
+          onRetry: job.canRetry
+              ? () async {
+                  Navigator.of(dialogContext).pop();
+                  final retried =
+                      await client.retryProjectScaffoldJob(job.scaffoldJobId);
+                  if (mounted) {
+                    await showDialog<void>(
+                      context: context,
+                      builder: (_) => ProjectScaffoldResultDialog(job: retried),
+                    );
+                  }
+                }
+              : null,
+          onStartProduct: job.canStartProduct
+              ? () async {
+                  Navigator.of(dialogContext).pop();
+                  await _startProductFromScaffold(client, request.name, job);
+                }
+              : null,
+        ),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not create the scaffold.\n$error')),
+      );
+    }
+  }
+
+  Future<void> _startProductFromScaffold(
+    ApiClient client,
+    String title,
+    ProjectScaffoldJob job,
+  ) async {
+    await _chatController.createNewSession(
+      title: title,
+      workspacePath: job.workspacePath,
+    );
+    final session = _chatController.currentSession;
+    if (session == null) {
+      throw StateError('Could not create a Product session.');
+    }
+    await client.startProductFromScaffold(
+      jobId: job.scaffoldJobId,
+      sessionId: session.id,
+    );
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Product mode started from the existing scaffold.'),
+      ),
     );
   }
 
@@ -8776,6 +8893,558 @@ class _NewProjectBasics {
 
   final String title;
   final List<String> adminEmails;
+}
+
+class _ProjectCreationModeDialog extends StatelessWidget {
+  const _ProjectCreationModeDialog({required this.defaultMode});
+
+  final String defaultMode;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Create a project'),
+      content: const Text(
+        'Choose a technical scaffold or continue with the existing product intake.',
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        OutlinedButton.icon(
+          key: const Key('new-project-scaffold-mode'),
+          onPressed: () => Navigator.of(context).pop('scaffold'),
+          icon: const Icon(Icons.account_tree_outlined),
+          label: const Text('Scaffold'),
+        ),
+        FilledButton.icon(
+          autofocus: defaultMode == 'product',
+          onPressed: () => Navigator.of(context).pop('product'),
+          icon: const Icon(Icons.rocket_launch_outlined),
+          label: const Text('Build product'),
+        ),
+      ],
+    );
+  }
+}
+
+class ProjectScaffoldDialog extends StatefulWidget {
+  const ProjectScaffoldDialog({super.key, required this.options});
+
+  final ProjectFactoryOptions options;
+
+  @override
+  State<ProjectScaffoldDialog> createState() => _ProjectScaffoldDialogState();
+}
+
+class _ProjectScaffoldDialogState extends State<ProjectScaffoldDialog> {
+  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _githubOwnerController = TextEditingController();
+  final TextEditingController _adminEmailController = TextEditingController();
+  String? _preset = 'expo-sveltekit-fastapi';
+  String _mobile = 'react_native_expo';
+  String _web = 'sveltekit';
+  String _api = 'fastapi';
+  String _cloudflare = 'provision_scaffold';
+  String _aws = 'none';
+  bool _previewProtected = false;
+  String? _errorText;
+
+  @override
+  void initState() {
+    super.initState();
+    final presets = widget.options.stackPresets;
+    if (presets.isNotEmpty) {
+      final recommended = presets.firstWhere(
+        (item) => item['recommended'] == true,
+        orElse: () => presets.first,
+      );
+      _applyPreset(recommended);
+    }
+    if (widget.options.cloudflareModes.isNotEmpty) {
+      _cloudflare = widget.options.cloudflareModes.contains(_cloudflare)
+          ? _cloudflare
+          : widget.options.cloudflareModes.first;
+    }
+    if (widget.options.awsReadinessModes.isNotEmpty) {
+      _aws = widget.options.awsReadinessModes.first;
+    }
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _githubOwnerController.dispose();
+    _adminEmailController.dispose();
+    super.dispose();
+  }
+
+  List<String> _providerIds(String kind) {
+    final values =
+        widget.options.targetProviders[kind] ?? const <Map<String, dynamic>>[];
+    return values
+        .map((item) => item['id']?.toString() ?? '')
+        .where((item) => item.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  void _applyPreset(Map<String, dynamic> preset) {
+    _preset = preset['id']?.toString();
+    _mobile = preset['mobile']?.toString() ?? _mobile;
+    _web = preset['web']?.toString() ?? _web;
+    _api = preset['api']?.toString() ?? _api;
+  }
+
+  void _submit() {
+    final name = _nameController.text.trim();
+    final email = _adminEmailController.text.trim().toLowerCase();
+    if (name.isEmpty) {
+      setState(() => _errorText = 'Project name is required.');
+      return;
+    }
+    if (_previewProtected &&
+        !RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email)) {
+      setState(() => _errorText = 'A valid admin email is required.');
+      return;
+    }
+    Navigator.of(context).pop(
+      ProjectScaffoldDraftRequest(
+        name: name,
+        stackPreset: _preset,
+        mobileProvider: _mobile,
+        webProvider: _web,
+        apiProvider: _api,
+        cloudflareMode: _cloudflare,
+        awsReadinessMode: _aws,
+        githubOwner: _githubOwnerController.text.trim(),
+        previewProtected: _previewProtected,
+        initialAdminEmail: _previewProtected ? email : null,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final presets = widget.options.stackPresets;
+    final githubOwnerRequired =
+        widget.options.scaffold['github_owner_required'] == true;
+    return AlertDialog(
+      title: const Text('Technical scaffold'),
+      content: SizedBox(
+        width: 520,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              const Text(
+                'Creates a neutral, buildable foundation. Product domain, UX, auth, roles, navigation and data are intentionally left pending.',
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                key: const Key('scaffold-name'),
+                controller: _nameController,
+                autofocus: true,
+                decoration: InputDecoration(
+                  labelText: 'Project name',
+                  errorText:
+                      _errorText?.contains('name') == true ? _errorText : null,
+                ),
+              ),
+              if (presets.isNotEmpty)
+                DropdownButtonFormField<String>(
+                  key: const Key('scaffold-preset'),
+                  initialValue: _preset,
+                  decoration: const InputDecoration(labelText: 'Stack preset'),
+                  items: presets
+                      .map(
+                        (item) => DropdownMenuItem<String>(
+                          value: item['id']?.toString(),
+                          child: Text(item['id']?.toString() ?? ''),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (value) {
+                    final selected = presets.firstWhere(
+                      (item) => item['id'] == value,
+                      orElse: () => const <String, dynamic>{},
+                    );
+                    setState(() => _applyPreset(selected));
+                  },
+                ),
+              _providerDropdown('Mobile', 'mobile', _mobile,
+                  (value) => setState(() => _mobile = value)),
+              _providerDropdown(
+                  'Web', 'web', _web, (value) => setState(() => _web = value)),
+              _providerDropdown(
+                  'API', 'api', _api, (value) => setState(() => _api = value)),
+              _stringDropdown(
+                'Cloudflare',
+                widget.options.cloudflareModes,
+                _cloudflare,
+                (value) => setState(() => _cloudflare = value),
+              ),
+              _stringDropdown(
+                'AWS readiness',
+                widget.options.awsReadinessModes,
+                _aws,
+                (value) => setState(() => _aws = value),
+              ),
+              if (githubOwnerRequired)
+                TextField(
+                  key: const Key('scaffold-github-owner'),
+                  controller: _githubOwnerController,
+                  decoration: const InputDecoration(
+                    labelText: 'GitHub owner',
+                  ),
+                ),
+              if (_cloudflare == 'provision_scaffold')
+                SwitchListTile.adaptive(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Protect preview'),
+                  subtitle: const Text('Requires one initial admin email.'),
+                  value: _previewProtected,
+                  onChanged: (value) =>
+                      setState(() => _previewProtected = value),
+                ),
+              if (_previewProtected)
+                TextField(
+                  key: const Key('scaffold-admin-email'),
+                  controller: _adminEmailController,
+                  keyboardType: TextInputType.emailAddress,
+                  decoration: InputDecoration(
+                    labelText: 'Initial admin email',
+                    errorText: _errorText?.contains('email') == true
+                        ? _errorText
+                        : null,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          key: const Key('scaffold-review'),
+          onPressed: _submit,
+          child: const Text('Review scaffold'),
+        ),
+      ],
+    );
+  }
+
+  Widget _providerDropdown(
+    String label,
+    String kind,
+    String value,
+    ValueChanged<String> onChanged,
+  ) {
+    return _stringDropdown(label, _providerIds(kind), value, onChanged);
+  }
+
+  Widget _stringDropdown(
+    String label,
+    List<String> values,
+    String value,
+    ValueChanged<String> onChanged,
+  ) {
+    if (values.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final selected = values.contains(value) ? value : values.first;
+    return DropdownButtonFormField<String>(
+      initialValue: selected,
+      decoration: InputDecoration(labelText: label),
+      items: values
+          .map((item) => DropdownMenuItem(value: item, child: Text(item)))
+          .toList(),
+      onChanged: (next) {
+        if (next != null) {
+          setState(() => _preset = null);
+          onChanged(next);
+        }
+      },
+    );
+  }
+}
+
+class ProjectScaffoldConfirmationDialog extends StatelessWidget {
+  const ProjectScaffoldConfirmationDialog({super.key, required this.draft});
+
+  final ProjectScaffoldDraft draft;
+
+  @override
+  Widget build(BuildContext context) {
+    final targets = draft.manifest['targets'] as Map<String, dynamic>? ??
+        const <String, dynamic>{};
+    final remoteEffects =
+        draft.contractPreview['remoteEffects'] as List<dynamic>? ??
+            const <dynamic>[];
+    final skippedProductWork =
+        draft.contractPreview['skippedProductWork'] as List<dynamic>? ??
+            const <dynamic>[];
+    return AlertDialog(
+      title: const Text('Confirm technical scaffold'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text('Mobile: ${_providerName(targets['mobile'])}'),
+            Text('Web: ${_providerName(targets['web'])}'),
+            Text('API: ${_providerName(targets['api'])}'),
+            const SizedBox(height: 12),
+            const Text('Authorized remote effects:'),
+            if (remoteEffects.isEmpty)
+              const Text('None')
+            else
+              ...remoteEffects.map(
+                (effect) => Text(
+                  '- ${effect is Map<String, dynamic> ? effect['provider'] : effect}',
+                ),
+              ),
+            const SizedBox(height: 12),
+            const Text('Product work intentionally skipped:'),
+            ...skippedProductWork.map((item) => Text('- $item')),
+            const SizedBox(height: 12),
+            const Text(
+              'This run will not infer product requirements, start Domain Factory or UX, create D1, apply Terraform, publish an APK, or register an installable app.',
+            ),
+          ],
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('Back'),
+        ),
+        FilledButton(
+          key: const Key('scaffold-confirm'),
+          onPressed: draft.readyForConfirmation
+              ? () => Navigator.of(context).pop(true)
+              : null,
+          child: const Text('Create scaffold'),
+        ),
+      ],
+    );
+  }
+
+  String _providerName(Object? target) {
+    return target is Map<String, dynamic>
+        ? target['provider']?.toString() ?? 'none'
+        : 'none';
+  }
+}
+
+class ProjectScaffoldResultDialog extends StatelessWidget {
+  const ProjectScaffoldResultDialog({
+    super.key,
+    required this.job,
+    this.onRetry,
+    this.onStartProduct,
+  });
+
+  final ProjectScaffoldJob job;
+  final Future<void> Function()? onRetry;
+  final Future<void> Function()? onStartProduct;
+
+  @override
+  Widget build(BuildContext context) {
+    final ready = job.status == 'scaffold_ready';
+    final result = job.result ?? const <String, dynamic>{};
+    final apiDeployment = result['apiDeployment'] is Map<String, dynamic>
+        ? result['apiDeployment'] as Map<String, dynamic>
+        : const <String, dynamic>{};
+    final awsReadiness = result['awsReadiness'] is Map<String, dynamic>
+        ? result['awsReadiness'] as Map<String, dynamic>
+        : const <String, dynamic>{};
+    return AlertDialog(
+      title: Text(ready ? 'Scaffold ready' : 'Scaffold needs attention'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            const Text('Creation mode: Scaffold'),
+            SelectableText(job.workspacePath),
+            if (apiDeployment.isNotEmpty)
+              Text(
+                'API deployment: ${apiDeployment['status'] ?? 'not requested'}',
+              ),
+            if (awsReadiness.isNotEmpty)
+              Text(
+                'AWS readiness: ${awsReadiness['mode'] ?? 'none'} (Terraform apply disabled)',
+              ),
+            if (job.resources.isNotEmpty) ...<Widget>[
+              const Divider(),
+              const Text('Resources and links'),
+              ...job.resources.map(_resourceTile),
+            ],
+            const SizedBox(height: 12),
+            ...job.phases.map(
+              (phase) => ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(
+                  phase.status == 'completed'
+                      ? Icons.check_circle_outline
+                      : phase.status == 'blocked'
+                          ? Icons.error_outline
+                          : Icons.hourglass_empty,
+                ),
+                title: Text(phase.name.replaceAll('_', ' ')),
+                subtitle: phase.message.isEmpty ? null : Text(phase.message),
+              ),
+            ),
+            if (job.blockers.isNotEmpty) ...<Widget>[
+              const Divider(),
+              ...job.blockers.map(
+                (item) => Text(
+                  '${item['message'] ?? item['code']}\n${item['nextAction'] ?? ''}',
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Close'),
+        ),
+        if (onRetry != null)
+          OutlinedButton(onPressed: onRetry, child: const Text('Retry')),
+        if (onStartProduct != null)
+          FilledButton(
+            key: const Key('scaffold-start-product'),
+            onPressed: onStartProduct,
+            child: const Text('Start Product'),
+          ),
+      ],
+    );
+  }
+
+  Widget _resourceTile(Map<String, dynamic> resource) {
+    final label = resource['kind']?.toString() ?? 'resource';
+    final value = resource['url']?.toString() ??
+        resource['workspacePath']?.toString() ??
+        resource['id']?.toString() ??
+        '';
+    final uri = Uri.tryParse(value);
+    final launchable = uri != null &&
+        (uri.scheme == 'https' ||
+            uri.scheme == 'http' ||
+            uri.scheme == 'codex');
+    return ListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      title: Text(label.replaceAll('_', ' ')),
+      subtitle: value.isEmpty ? null : SelectableText(value),
+      trailing: launchable
+          ? IconButton(
+              tooltip: 'Open link',
+              icon: const Icon(Icons.open_in_new),
+              onPressed: () => launchUrl(
+                uri,
+                mode: LaunchMode.externalApplication,
+              ),
+            )
+          : null,
+    );
+  }
+}
+
+class ProjectScaffoldProgressDialog extends StatefulWidget {
+  const ProjectScaffoldProgressDialog({
+    super.key,
+    required this.initialJob,
+    required this.pollJob,
+    this.pollInterval = const Duration(seconds: 1),
+  });
+
+  final ProjectScaffoldJob initialJob;
+  final Future<ProjectScaffoldJob> Function(String jobId) pollJob;
+  final Duration pollInterval;
+
+  @override
+  State<ProjectScaffoldProgressDialog> createState() =>
+      _ProjectScaffoldProgressDialogState();
+}
+
+class _ProjectScaffoldProgressDialogState
+    extends State<ProjectScaffoldProgressDialog> {
+  late ProjectScaffoldJob _job;
+  Timer? _timer;
+  String? _error;
+  bool _polling = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _job = widget.initialJob;
+    _schedule();
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  void _schedule() {
+    if (_job.isTerminal) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) Navigator.of(context).pop(_job);
+      });
+      return;
+    }
+    _timer = Timer(widget.pollInterval, _poll);
+  }
+
+  Future<void> _poll() async {
+    if (_polling || !mounted) return;
+    _polling = true;
+    try {
+      final next = await widget.pollJob(_job.scaffoldJobId);
+      if (!mounted) return;
+      setState(() {
+        _job = next;
+        _error = null;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = 'Could not refresh scaffold status. $error');
+    } finally {
+      _polling = false;
+      if (mounted) _schedule();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Creating technical scaffold'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          const LinearProgressIndicator(),
+          const SizedBox(height: 16),
+          Text(_job.currentPhase.replaceAll('_', ' ')),
+          if (_error != null) ...<Widget>[
+            const SizedBox(height: 8),
+            Text(_error!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error)),
+          ],
+        ],
+      ),
+    );
+  }
 }
 
 class _NewProjectBasicsDialog extends StatefulWidget {
