@@ -53,6 +53,25 @@ void main() {
     );
   });
 
+  test('CAD attachment detection accepts DXF and DWG names and MIME types', () {
+    expect(isCadAttachmentDraftInput(fileName: 'planta-baja.dxf'), isTrue);
+    expect(isCadAttachmentDraftInput(fileName: 'MODELO.DWG'), isTrue);
+    expect(
+      isCadAttachmentDraftInput(
+        fileName: 'upload.bin',
+        mimeType: 'image/vnd.dwg',
+      ),
+      isTrue,
+    );
+    expect(
+      isCadAttachmentDraftInput(
+        fileName: 'croquis.pdf',
+        mimeType: 'application/pdf',
+      ),
+      isFalse,
+    );
+  });
+
   testWidgets('image editor can be cancelled without returning an edit', (
     tester,
   ) async {

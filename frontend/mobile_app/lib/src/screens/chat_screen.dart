@@ -26,6 +26,7 @@ import '../models/session_detail.dart';
 import '../models/slash_command.dart';
 import '../models/workspace.dart';
 import '../services/api_client.dart';
+import '../services/attachment_type.dart';
 import '../services/audio_note_recorder.dart';
 import '../services/chat_notification_service.dart';
 import '../services/clipboard_image_paste_listener_stub.dart'
@@ -7389,7 +7390,7 @@ class _ComposerState extends State<_Composer> {
                   leading: const Icon(Icons.insert_drive_file_outlined),
                   title: const Text('Browse files'),
                   subtitle: const Text(
-                    'Attach documents, archives, code, text files, or images',
+                    'Attach documents, CAD (.dxf/.dwg), archives, code, or images',
                   ),
                   onTap: () =>
                       Navigator.of(context).pop(_AttachmentSourceAction.file),
@@ -8093,6 +8094,9 @@ class _ComposerState extends State<_Composer> {
     if (_pendingAttachments.length == 1 && _pendingAttachments.first.isImage) {
       return 'Add text for this image';
     }
+    if (_pendingAttachments.length == 1 && _pendingAttachments.first.isCad) {
+      return 'Add instructions for this CAD file';
+    }
     return 'Add text for these attachments';
   }
 
@@ -8101,6 +8105,9 @@ class _ComposerState extends State<_Composer> {
     String? mimeType,
   }) {
     final normalizedMimeType = mimeType?.trim().toLowerCase();
+    if (isCadAttachmentDraftInput(fileName: fileName, mimeType: mimeType)) {
+      return _AttachmentDraftKind.cad;
+    }
     if (normalizedMimeType != null && normalizedMimeType.startsWith('image/')) {
       return _AttachmentDraftKind.image;
     }
@@ -8142,7 +8149,7 @@ class _ComposerState extends State<_Composer> {
   }
 }
 
-enum _AttachmentDraftKind { image, audio, video, file }
+enum _AttachmentDraftKind { image, audio, video, cad, file }
 
 enum _AttachmentSourceAction { image, file }
 
@@ -8169,6 +8176,8 @@ class _PendingAttachmentDraft {
 
   bool get isVideo => kind == _AttachmentDraftKind.video;
 
+  bool get isCad => kind == _AttachmentDraftKind.cad;
+
   String get badgeLabel {
     if (isImage) {
       return 'Image';
@@ -8178,6 +8187,9 @@ class _PendingAttachmentDraft {
     }
     if (isVideo) {
       return 'Video';
+    }
+    if (isCad) {
+      return 'CAD';
     }
     return 'File';
   }
@@ -13205,6 +13217,11 @@ bool isVideoAttachmentDraftInput({required String fileName, String? mimeType}) {
       normalizedName.endsWith('.mp4') ||
       normalizedName.endsWith('.mpeg') ||
       normalizedName.endsWith('.mpg');
+}
+
+@visibleForTesting
+bool isCadAttachmentDraftInput({required String fileName, String? mimeType}) {
+  return isCadAttachment(fileName: fileName, mimeType: mimeType);
 }
 
 @visibleForTesting

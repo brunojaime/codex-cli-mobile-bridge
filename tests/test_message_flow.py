@@ -7381,6 +7381,36 @@ def test_document_message_flow_reads_pdf_documents() -> None:
     assert "Page 1:\nMarket PDF overview\nSecond line" in job["response"]
 
 
+def test_document_message_flow_accepts_dwg_cad_reference() -> None:
+    client = build_test_client()
+
+    create_response = client.post(
+        "/message/document",
+        data={"message": "Inspect this floor plan"},
+        files={
+            "document": (
+                "floor-plan.dwg",
+                b"AC1027-fake-dwg",
+                "image/vnd.dwg",
+            )
+        },
+    )
+
+    assert create_response.status_code == 202
+    payload = create_response.json()
+    assert payload["document_kind"] == "cad"
+    assert payload["attached_document_name"] == "floor-plan.dwg"
+    assert payload["extracted_text_preview"].startswith("CAD local path: ")
+
+    job = wait_for_job(client, payload["job_id"])
+
+    assert job["status"] == "completed"
+    assert "Document kind: cad" in job["response"]
+    cad_path = job["response"].split("CAD local path: ", maxsplit=1)[1].splitlines()[0]
+    assert Path(cad_path).is_file()
+    assert Path(cad_path).suffix == ".dwg"
+
+
 def test_document_message_flow_rejects_unsupported_documents() -> None:
     client = build_test_client()
 
@@ -9175,6 +9205,51 @@ def test_attachment_batch_flow_accepts_video_reference() -> None:
     )
     assert Path(video_path).is_file()
     assert Path(video_path).suffix == ".mp4"
+
+
+def test_attachment_batch_flow_accepts_dxf_and_dwg_cad_references() -> None:
+    client = build_test_client()
+
+    create_response = client.post(
+        "/message/attachments",
+        data={"message": "Guarda estos croquis CAD"},
+        files=[
+            (
+                "attachments",
+                (
+                    "planta-baja.dxf",
+                    b"0\nSECTION\n2\nENTITIES\n0\nEOF\n",
+                    "image/vnd.dxf",
+                ),
+            ),
+            (
+                "attachments",
+                ("planta-alta.dwg", b"AC1027-fake-dwg", "image/vnd.dwg"),
+            ),
+        ],
+    )
+
+    assert create_response.status_code == 202
+    payload = create_response.json()
+
+    job = wait_for_job(client, payload["job_id"])
+
+    assert job["status"] == "completed"
+    assert job["message"] == (
+        "Guarda estos croquis CAD\n\n"
+        "[Attached files]\n"
+        "- cad: planta-baja.dxf\n"
+        "- cad: planta-alta.dwg"
+    )
+    assert job["response"].count("Document kind: cad") == 2
+    assert job["response"].count("CAD local path: ") == 2
+    cad_paths = [
+        line.removeprefix("CAD local path: ")
+        for line in job["response"].splitlines()
+        if line.startswith("CAD local path: ")
+    ]
+    assert [Path(path).suffix for path in cad_paths] == [".dxf", ".dwg"]
+    assert all(Path(path).is_file() for path in cad_paths)
 
 
 def test_attachment_batch_flow_treats_mislabeled_mp4_as_video() -> None:

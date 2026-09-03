@@ -1724,6 +1724,10 @@ void main() {
         );
         expect(body, contains('filename="bundle.zip"'));
         expect(body, contains('content-type: application/zip'));
+        expect(body, contains('filename="planta-baja.dxf"'));
+        expect(body, contains('content-type: image/vnd.dxf'));
+        expect(body, contains('filename="planta-alta.dwg"'));
+        expect(body, contains('content-type: image/vnd.dwg'));
         return http.Response(
           '{"job_id":"job-1","session_id":"session-1","status":"pending","elapsed_seconds":0}',
           202,
@@ -1753,6 +1757,16 @@ void main() {
           Uint8List.fromList(<int>[80, 75, 3, 4]),
           name: 'bundle.zip',
           path: 'bundle.zip',
+        ),
+        XFile.fromData(
+          Uint8List.fromList(<int>[48, 10, 83, 69, 67, 84, 73, 79, 78]),
+          name: 'planta-baja.dxf',
+          path: 'planta-baja.dxf',
+        ),
+        XFile.fromData(
+          Uint8List.fromList(<int>[65, 67, 49, 48, 50, 55]),
+          name: 'planta-alta.dwg',
+          path: 'planta-alta.dwg',
         ),
       ],
       message: 'podes ver este archivo?',

@@ -2189,6 +2189,8 @@ class ApiClient {
       'mkv' => 'video/x-matroska',
       'mpeg' || 'mpg' => 'video/mpeg',
       'pdf' => 'application/pdf',
+      'dxf' => 'image/vnd.dxf',
+      'dwg' => 'image/vnd.dwg',
       'docx' =>
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       'pptx' =>

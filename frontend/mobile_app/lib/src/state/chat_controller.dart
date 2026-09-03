@@ -16,6 +16,7 @@ import '../models/job_status_response.dart';
 import '../models/session_detail.dart';
 import '../models/workspace.dart';
 import '../services/api_client.dart';
+import '../services/attachment_type.dart';
 import '../services/chat_notification_content.dart';
 import '../services/chat_notification_service.dart';
 
@@ -1848,6 +1849,12 @@ class ChatController extends ChangeNotifier {
   }
 
   bool _looksLikeImageAttachment(XFile attachment) {
+    if (isCadAttachment(
+      fileName: attachment.name,
+      mimeType: attachment.mimeType,
+    )) {
+      return false;
+    }
     final mimeType = attachment.mimeType;
     if (mimeType != null && mimeType.toLowerCase().startsWith('image/')) {
       return true;

@@ -76,6 +76,7 @@ from backend.app.infrastructure.transcription.base import (
 
 DocumentKind = Literal[
     "audio",
+    "cad",
     "docx",
     "image",
     "pdf",
@@ -121,6 +122,24 @@ _AUDIO_SUFFIXES = {
     ".opus",
     ".wav",
     ".webm",
+}
+_CAD_SUFFIXES = {".dwg", ".dxf"}
+_CAD_CONTENT_TYPES = {
+    "application/acad",
+    "application/autocad_dwg",
+    "application/dwg",
+    "application/dxf",
+    "application/x-acad",
+    "application/x-autocad",
+    "application/x-dwg",
+    "application/x-dxf",
+    "drawing/dwg",
+    "drawing/x-dwg",
+    "drawing/x-dxf",
+    "image/vnd.dwg",
+    "image/vnd.dxf",
+    "image/x-dwg",
+    "image/x-dxf",
 }
 _IMAGE_SUFFIXES = {
     ".bmp",
@@ -1478,6 +1497,40 @@ class MessageService:
                 extracted_text_preview=self._build_text_preview(video_reference),
             )
 
+        if document_kind == "cad":
+            cad_path = self._persist_retryable_attachment_path(
+                resolved_path,
+                fallback_suffix=self._cad_fallback_suffix(
+                    filename=attached_document_name,
+                    content_type=content_type,
+                ),
+            )
+            cad_reference = self._build_cad_file_reference(
+                cad_path=cad_path,
+                content_type=content_type,
+            )
+            prompt = self._build_document_execution_message(
+                message=message,
+                document_kind=document_kind,
+                document_name=attached_document_name,
+                content_label="CAD file reference",
+                content=cad_reference,
+            )
+            job = self.submit_message(
+                display_message,
+                session_id=session_id,
+                workspace_path=workspace_path,
+                cleanup_paths=cleanup_paths,
+                execution_message=prompt,
+                codex_options=codex_options,
+            )
+            return DocumentSubmission(
+                job=job,
+                document_kind=document_kind,
+                attached_document_name=attached_document_name,
+                extracted_text_preview=self._build_text_preview(cad_reference),
+            )
+
         extracted_text = self._extract_document_text(
             document_path=resolved_path,
             document_kind=document_kind,
@@ -1647,6 +1700,28 @@ class MessageService:
                         content_label="Video file reference",
                         content=self._build_video_file_reference(
                             video_path=video_path,
+                            content_type=attachment.content_type,
+                        ),
+                    )
+                )
+                continue
+
+            if document_kind == "cad":
+                cad_path = self._persist_retryable_attachment_path(
+                    resolved_path,
+                    fallback_suffix=self._cad_fallback_suffix(
+                        filename=attached_name,
+                        content_type=attachment.content_type,
+                    ),
+                )
+                attachment_details.append(
+                    self._build_attachment_detail_section(
+                        index=index,
+                        document_kind=document_kind,
+                        document_name=attached_name,
+                        content_label="CAD file reference",
+                        content=self._build_cad_file_reference(
+                            cad_path=cad_path,
                             content_type=attachment.content_type,
                         ),
                     )
@@ -2076,6 +2151,39 @@ class MessageService:
             "metadata, or audio when needed.",
         ]
         return "\n".join(parts)
+
+    @staticmethod
+    def _build_cad_file_reference(
+        *,
+        cad_path: str,
+        content_type: str | None,
+    ) -> str:
+        parts = [
+            f"CAD local path: {cad_path}",
+            f"Content type: {content_type or 'unknown'}",
+            "The original DXF/DWG file is available at this path. Use suitable "
+            "local CAD tools (for example FreeCAD or ezdxf where compatible) "
+            "to inspect it, or copy it into the requested workspace unchanged.",
+        ]
+        return "\n".join(parts)
+
+    @staticmethod
+    def _cad_fallback_suffix(
+        *,
+        filename: str,
+        content_type: str | None,
+    ) -> str:
+        suffix = Path(filename).suffix.lower()
+        if suffix in _CAD_SUFFIXES:
+            return suffix
+        normalized_content_type = (
+            (content_type or "").split(";", maxsplit=1)[0].strip().lower()
+        )
+        if "dxf" in normalized_content_type:
+            return ".dxf"
+        if "dwg" in normalized_content_type or "acad" in normalized_content_type:
+            return ".dwg"
+        return ".cad"
 
     def _resolve_session(
         self,
@@ -4552,6 +4660,8 @@ class MessageService:
             (content_type or "").split(";", maxsplit=1)[0].strip().lower()
         )
 
+        if suffix in _CAD_SUFFIXES or normalized_content_type in _CAD_CONTENT_TYPES:
+            return "cad"
         if normalized_content_type.startswith("image/") or suffix in _IMAGE_SUFFIXES:
             return "image"
         if normalized_content_type.startswith("video/") or suffix in _VIDEO_SUFFIXES:
@@ -4583,7 +4693,8 @@ class MessageService:
 
         raise UnsupportedDocumentError(
             "Unsupported document type. Supported uploads are audio, video, images, "
-            "PDFs, text/code files, ZIP archives, and .docx/.pptx/.xlsx documents."
+            "PDFs, DXF/DWG CAD files, text/code files, ZIP archives, and "
+            ".docx/.pptx/.xlsx documents."
         )
 
     def _looks_like_text_document(
