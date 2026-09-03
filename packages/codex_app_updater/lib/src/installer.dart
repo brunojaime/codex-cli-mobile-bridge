@@ -11,7 +11,14 @@ enum CodexInstallerLaunchResult {
 }
 
 abstract class CodexInstallerLauncher {
-  Future<CodexInstallerLaunchResult> launch(String apkPath);
+  Future<CodexInstallerLaunchOutcome> launch(String apkPath);
+}
+
+class CodexInstallerLaunchOutcome {
+  const CodexInstallerLaunchOutcome(this.result, {this.message});
+
+  final CodexInstallerLaunchResult result;
+  final String? message;
 }
 
 class MethodChannelCodexInstallerLauncher implements CodexInstallerLauncher {
@@ -22,28 +29,39 @@ class MethodChannelCodexInstallerLauncher implements CodexInstallerLauncher {
   final MethodChannel _channel;
 
   @override
-  Future<CodexInstallerLaunchResult> launch(String apkPath) async {
+  Future<CodexInstallerLaunchOutcome> launch(String apkPath) async {
     try {
       final result = await _channel.invokeMethod<Object?>('launchInstaller', {
         'apkPath': apkPath,
       });
-      return _launchResultFromPlatform(result);
+      return _launchOutcomeFromPlatform(result);
     } on MissingPluginException {
-      return CodexInstallerLaunchResult.noActivity;
+      return const CodexInstallerLaunchOutcome(
+        CodexInstallerLaunchResult.noActivity,
+        message: 'El complemento del instalador no está disponible.',
+      );
     } on PlatformException catch (error) {
-      return _launchResultFromCode(error.code);
+      return CodexInstallerLaunchOutcome(
+        _launchResultFromCode(error.code),
+        message: error.message,
+      );
     }
   }
 }
 
-CodexInstallerLaunchResult _launchResultFromPlatform(Object? value) {
+CodexInstallerLaunchOutcome _launchOutcomeFromPlatform(Object? value) {
   if (value is String) {
-    return _launchResultFromCode(value);
+    return CodexInstallerLaunchOutcome(_launchResultFromCode(value));
   }
   if (value is Map) {
-    return _launchResultFromCode(value['status'] as String?);
+    return CodexInstallerLaunchOutcome(
+      _launchResultFromCode(value['status'] as String?),
+      message: value['message'] as String?,
+    );
   }
-  return CodexInstallerLaunchResult.cancelledOrUnknown;
+  return const CodexInstallerLaunchOutcome(
+    CodexInstallerLaunchResult.cancelledOrUnknown,
+  );
 }
 
 CodexInstallerLaunchResult _launchResultFromCode(String? code) {

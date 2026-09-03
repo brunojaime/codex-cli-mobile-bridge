@@ -316,7 +316,7 @@ class _CodexAppUpdateBanner extends StatelessWidget {
           'No se pudo preparar la instalación.',
         CodexAppUpdateFailureReason.installerUnavailable =>
           'No se pudo abrir el instalador.',
-        _ => 'Intentemos nuevamente en un momento.',
+        _ => _unknownInstallerFailure(controller.installerFailureDetail),
       };
     }
     if (info == null) return null;
@@ -339,6 +339,17 @@ class _CodexAppUpdateBanner extends StatelessWidget {
     }
     if (latest == null) return 'Hay una nueva versión lista para instalar.';
     return 'Versión $latest lista para instalar.';
+  }
+
+  String _unknownInstallerFailure(String? detail) {
+    final normalized = detail?.trim();
+    if (normalized == null || normalized.isEmpty) {
+      return 'Intentemos nuevamente en un momento.';
+    }
+    final compact = normalized.length > 140
+        ? '${normalized.substring(0, 137)}...'
+        : normalized;
+    return 'Android no pudo abrir el instalador: $compact';
   }
 
   String? _versionLabel(String? version, int? build) {

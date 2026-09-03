@@ -592,7 +592,8 @@ void main() {
 
       final result = await launcher.launch('/downloads/codex-mobile.apk');
 
-      expect(result, CodexInstallerLaunchResult.installerLaunched);
+      expect(result.result, CodexInstallerLaunchResult.installerLaunched);
+      expect(result.message, isNull);
       expect(capturedCall?.method, 'launchInstaller');
       expect(capturedCall?.arguments, <String, Object?>{
         'apkPath': '/downloads/codex-mobile.apk',
@@ -772,6 +773,32 @@ void main() {
     expect(downloader.downloadCount, 1);
     expect(installer.launchCount, 2);
   });
+
+  test(
+    'native launcher exposes diagnostic detail for an unknown failure',
+    () async {
+      final apkFile = await _writeTempApk('apk-native-diagnostic', [1, 2, 3]);
+      final controller = CodexAppUpdaterController(
+        httpClient: MockClient(
+          (_) async =>
+              http.Response(jsonEncode(_updateJson(available: true)), 200),
+        ),
+        downloader: _FakeDownloader(apkFile.path),
+        installerLauncher: _FakeInstallerLauncher(
+          results: const [CodexInstallerLaunchResult.cancelledOrUnknown],
+          message: 'OEM package installer rejected the intent',
+        ),
+      );
+      addTearDown(controller.dispose);
+
+      expect(await controller.updateNow(_config()), isFalse);
+      expect(controller.failureReason, CodexAppUpdateFailureReason.unknown);
+      expect(
+        controller.installerFailureDetail,
+        'OEM package installer rejected the intent',
+      );
+    },
+  );
 
   test(
     'double install tap after permission does not launch in parallel',
@@ -1018,23 +1045,29 @@ class _FailingDownloader implements CodexApkDownloader {
 }
 
 class _FakeInstallerLauncher implements CodexInstallerLauncher {
-  _FakeInstallerLauncher({List<CodexInstallerLaunchResult>? results})
-    : _results = List<CodexInstallerLaunchResult>.from(
-        results ?? const [CodexInstallerLaunchResult.installerLaunched],
-      );
+  _FakeInstallerLauncher({
+    List<CodexInstallerLaunchResult>? results,
+    this.message,
+  }) : _results = List<CodexInstallerLaunchResult>.from(
+         results ?? const [CodexInstallerLaunchResult.installerLaunched],
+       );
 
   final List<CodexInstallerLaunchResult> _results;
+  final String? message;
   int launchCount = 0;
   String? launchedPath;
 
   @override
-  Future<CodexInstallerLaunchResult> launch(String apkPath) async {
+  Future<CodexInstallerLaunchOutcome> launch(String apkPath) async {
     launchCount += 1;
     launchedPath = apkPath;
     if (_results.length > 1) {
-      return _results.removeAt(0);
+      return CodexInstallerLaunchOutcome(
+        _results.removeAt(0),
+        message: message,
+      );
     }
-    return _results.first;
+    return CodexInstallerLaunchOutcome(_results.first, message: message);
   }
 }
 
@@ -1045,9 +1078,9 @@ class _CompletingInstallerLauncher implements CodexInstallerLauncher {
   int launchCount = 0;
 
   @override
-  Future<CodexInstallerLaunchResult> launch(String apkPath) {
+  Future<CodexInstallerLaunchOutcome> launch(String apkPath) {
     launchCount += 1;
-    return result;
+    return result.then(CodexInstallerLaunchOutcome.new);
   }
 }
 

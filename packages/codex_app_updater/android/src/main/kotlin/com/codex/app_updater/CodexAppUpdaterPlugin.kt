@@ -6,7 +6,6 @@ import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
-import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -184,6 +183,7 @@ class CodexAppUpdaterPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         }.start()
     }
 
+    @Suppress("DEPRECATION")
     private fun launchInstaller(call: MethodCall, result: MethodChannel.Result) {
         val apkPath = call.argument<String>("apkPath")
         if (apkPath.isNullOrBlank()) {
@@ -256,46 +256,42 @@ class CodexAppUpdaterPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             )
             return
         }
-        val intent = Intent(Intent.ACTION_VIEW).apply {
+        val installIntents = listOf(
+            buildInstallIntent(Intent.ACTION_INSTALL_PACKAGE, apkUri),
+            buildInstallIntent(Intent.ACTION_VIEW, apkUri),
+        )
+        val failures = mutableListOf<RuntimeException>()
+        for (intent in installIntents) {
+            try {
+                context.startActivity(intent)
+                result.success(launchResult("installerLaunched"))
+                return
+            } catch (error: RuntimeException) {
+                failures.add(error)
+            }
+        }
+        val lastFailure = failures.lastOrNull()
+        val message = failures
+            .mapNotNull { error -> error.message?.takeIf { it.isNotBlank() } }
+            .distinct()
+            .joinToString(" | ")
+            .ifBlank { "Android installer launch failed." }
+        val status = when {
+            failures.any { it is SecurityException } -> "securityException"
+            failures.any { it is IllegalArgumentException } -> "invalidUri"
+            failures.all { it is ActivityNotFoundException } -> "noActivity"
+            lastFailure == null -> "noActivity"
+            else -> "cancelledOrUnknown"
+        }
+        result.success(launchResult(status, message))
+    }
+
+    private fun buildInstallIntent(action: String, apkUri: Uri): Intent {
+        return Intent(action).apply {
             setDataAndType(apkUri, "application/vnd.android.package-archive")
             clipData = ClipData.newRawUri("APK update", apkUri)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        val canHandleInstallIntent = context.packageManager.queryIntentActivities(
-            intent,
-            PackageManager.MATCH_DEFAULT_ONLY,
-        ).isNotEmpty()
-        if (!canHandleInstallIntent) {
-            result.success(launchResult("noActivity", "No Android APK installer found."))
-            return
-        }
-        try {
-            context.startActivity(intent)
-            result.success(launchResult("installerLaunched"))
-        } catch (_: ActivityNotFoundException) {
-            result.success(launchResult("noActivity", "No Android APK installer found."))
-        } catch (error: SecurityException) {
-            result.success(
-                launchResult(
-                    "securityException",
-                    error.message ?: "Android blocked APK installer launch.",
-                ),
-            )
-        } catch (error: IllegalArgumentException) {
-            result.success(
-                launchResult(
-                    "invalidUri",
-                    error.message ?: "Invalid APK URI.",
-                ),
-            )
-        } catch (error: RuntimeException) {
-            result.success(
-                launchResult(
-                    "cancelledOrUnknown",
-                    error.message ?: "Android installer launch failed.",
-                ),
-            )
         }
     }
 

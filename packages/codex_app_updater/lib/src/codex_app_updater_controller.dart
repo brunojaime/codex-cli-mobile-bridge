@@ -31,6 +31,7 @@ class CodexAppUpdaterController extends ChangeNotifier {
 
   CodexAppUpdateStatus status = CodexAppUpdateStatus.idle;
   CodexAppUpdateFailureReason? failureReason;
+  String? installerFailureDetail;
   CodexAppUpdateInfo? updateInfo;
   String? downloadedApkPath;
   int downloadedBytes = 0;
@@ -161,8 +162,8 @@ class CodexAppUpdaterController extends ChangeNotifier {
       return false;
     }
     _setStatus(CodexAppUpdateStatus.installing);
-    final result = await _installerLauncher.launch(apkPath);
-    switch (result) {
+    final outcome = await _installerLauncher.launch(apkPath);
+    switch (outcome.result) {
       case CodexInstallerLaunchResult.installerLaunched:
         _clearPreparedDownload();
         _setStatus(CodexAppUpdateStatus.dismissed);
@@ -171,20 +172,26 @@ class CodexAppUpdaterController extends ChangeNotifier {
         _setWaitingForPermission();
         return false;
       case CodexInstallerLaunchResult.noActivity:
-        _fail(CodexAppUpdateFailureReason.installerUnavailable);
+        _fail(
+          CodexAppUpdateFailureReason.installerUnavailable,
+          detail: outcome.message,
+        );
         return false;
       case CodexInstallerLaunchResult.fileMissing:
         _clearPreparedDownload();
         _fail(CodexAppUpdateFailureReason.fileMissing);
         return false;
       case CodexInstallerLaunchResult.securityException:
-        _fail(CodexAppUpdateFailureReason.securityException);
+        _fail(
+          CodexAppUpdateFailureReason.securityException,
+          detail: outcome.message,
+        );
         return false;
       case CodexInstallerLaunchResult.invalidUri:
-        _fail(CodexAppUpdateFailureReason.invalidUri);
+        _fail(CodexAppUpdateFailureReason.invalidUri, detail: outcome.message);
         return false;
       case CodexInstallerLaunchResult.cancelledOrUnknown:
-        _fail(CodexAppUpdateFailureReason.unknown);
+        _fail(CodexAppUpdateFailureReason.unknown, detail: outcome.message);
         return false;
     }
   }
@@ -302,18 +309,21 @@ class CodexAppUpdaterController extends ChangeNotifier {
   void _setStatus(CodexAppUpdateStatus value) {
     status = value;
     failureReason = null;
+    installerFailureDetail = null;
     notifyListeners();
   }
 
-  void _fail(CodexAppUpdateFailureReason reason) {
+  void _fail(CodexAppUpdateFailureReason reason, {String? detail}) {
     status = CodexAppUpdateStatus.failed;
     failureReason = reason;
+    installerFailureDetail = detail;
     notifyListeners();
   }
 
   void _setWaitingForPermission() {
     status = CodexAppUpdateStatus.waitingForPermission;
     failureReason = CodexAppUpdateFailureReason.permissionRequired;
+    installerFailureDetail = null;
     notifyListeners();
   }
 
