@@ -2,6 +2,7 @@ package com.codex.app_updater
 
 import android.app.DownloadManager
 import android.content.ActivityNotFoundException
+import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
@@ -194,9 +195,30 @@ class CodexAppUpdaterPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             result.success(launchResult("fileMissing", "APK file does not exist."))
             return
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-            !context.packageManager.canRequestPackageInstalls()
-        ) {
+        val canRequestPackageInstalls = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                context.packageManager.canRequestPackageInstalls()
+            } catch (error: SecurityException) {
+                result.success(
+                    launchResult(
+                        "securityException",
+                        error.message ?: "Android blocked the package install permission check.",
+                    ),
+                )
+                return
+            } catch (error: RuntimeException) {
+                result.success(
+                    launchResult(
+                        "securityException",
+                        error.message ?: "Android could not check the package install permission.",
+                    ),
+                )
+                return
+            }
+        } else {
+            true
+        }
+        if (!canRequestPackageInstalls) {
             if (openUnknownAppsSettings()) {
                 result.success(
                     launchResult(
@@ -236,6 +258,7 @@ class CodexAppUpdaterPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         }
         val intent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(apkUri, "application/vnd.android.package-archive")
+            clipData = ClipData.newRawUri("APK update", apkUri)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
