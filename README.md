@@ -732,6 +732,9 @@ Restart it without cutting active Codex jobs:
 ./scripts/safe_restart_backend.sh
 ```
 
+For the independent DEV/PROD status and recovery service used by the mobile
+**Operations** screen, see [docs/control-agent.md](docs/control-agent.md).
+
 The safe restart flow enables backend drain mode, rejects new jobs, waits for
 accepted runs to finish, and then restarts the backend. Use
 `--systemd-user`, `--systemd`, or `--detached` to force a restart strategy.

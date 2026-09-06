@@ -1,4 +1,6 @@
 .env
+.env.dev
+.control.env
 secrets/
 .data/
 .run/

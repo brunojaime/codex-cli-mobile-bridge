@@ -41,6 +41,7 @@ import '../widgets/chat_bubble.dart';
 import '../widgets/installable_apps_sheet.dart';
 import '../widgets/project_documents_panel.dart';
 import '../widgets/reviewer_status_banner.dart';
+import 'operations_screen.dart';
 
 const String _defaultAutoReviewerPrompt =
     'You are receiving the latest answer from a generator Codex. '
@@ -406,6 +407,7 @@ enum _AppBarOverflowAction {
   codexTools,
   saveCurrentAgent,
   replyMode,
+  operations,
   servers,
   newProject,
   projectHistory,
@@ -4160,6 +4162,11 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                   : 'Text replies enabled',
             ),
             _buildAppBarOverflowMenuItem(
+              action: _AppBarOverflowAction.operations,
+              icon: Icons.monitor_heart_outlined,
+              label: 'Operations',
+            ),
+            _buildAppBarOverflowMenuItem(
               action: _AppBarOverflowAction.servers,
               icon: Icons.computer,
               label: 'Servers',
@@ -4201,6 +4208,11 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
               },
         icon: const Icon(Icons.topic_outlined),
         tooltip: 'What are we doing?',
+      ),
+      IconButton(
+        onPressed: _openOperations,
+        icon: const Icon(Icons.monitor_heart_outlined),
+        tooltip: 'Operations',
       ),
       IconButton(
         onPressed: () async {
@@ -4338,6 +4350,9 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
       case _AppBarOverflowAction.replyMode:
         await _openReplyModePicker();
         return;
+      case _AppBarOverflowAction.operations:
+        await _openOperations();
+        return;
       case _AppBarOverflowAction.servers:
         await _openServerManager();
         return;
@@ -4351,6 +4366,16 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
         await _openWorkspacePicker();
         return;
     }
+  }
+
+  Future<void> _openOperations() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (context) => OperationsScreen(
+          bridgeBaseUrl: _activeServer?.baseUrl ?? widget.initialApiBaseUrl,
+        ),
+      ),
+    );
   }
 
   int _codexSelectionCount(CodexRunOptions options) {
