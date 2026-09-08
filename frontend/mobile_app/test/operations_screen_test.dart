@@ -16,10 +16,11 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('Operations'), findsOneWidget);
-    expect(find.text('Configure connection'), findsOneWidget);
+    expect(find.text('Remote operations'), findsOneWidget);
+    expect(find.text('Control Batata remotely'), findsOneWidget);
+    expect(find.text('Connect control agent'), findsOneWidget);
 
-    await tester.tap(find.text('Configure connection'));
+    await tester.tap(find.text('Connect control agent'));
     await tester.pumpAndSettle();
 
     expect(find.text('Control Agent connection'), findsOneWidget);

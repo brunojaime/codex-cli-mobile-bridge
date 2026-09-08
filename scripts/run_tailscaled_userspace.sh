@@ -20,5 +20,6 @@ exec "${TAILSCALED_BIN}" \
   --tun=userspace-networking \
   --socket="${SOCKET_PATH}" \
   --state="${STATE_PATH}" \
+  --statedir="${STATE_DIR}" \
   --socks5-server="${SOCKS5_SERVER}" \
   --outbound-http-proxy-listen="${HTTP_PROXY_LISTEN}"
