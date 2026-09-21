@@ -23,6 +23,10 @@ export function loadSettings() {
       process.env.WHATSAPP_ADMIN_GROUP_STATE_FILE || path.join(dataDir, 'admin-group.json'),
     ),
     adminGroupSubject: process.env.WHATSAPP_ADMIN_GROUP_SUBJECT || 'Nienfos · Alta de grupos',
+    communityStateFile: path.resolve(
+      process.env.WHATSAPP_COMMUNITY_STATE_FILE || path.join(dataDir, 'community.json'),
+    ),
+    communitySubject: process.env.WHATSAPP_COMMUNITY_SUBJECT || 'Nienfos',
     authDir: path.resolve(process.env.WHATSAPP_AUTH_DIR || path.join(dataDir, 'auth')),
     dataDir,
     projectsRoot: path.resolve(

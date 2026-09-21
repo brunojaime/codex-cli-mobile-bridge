@@ -132,7 +132,9 @@ Bruno as its only participant. The private state, including participant JIDs,
 lives in `.data/whatsapp_ingest/admin-group.json` and is never committed.
 
 Only Bruno, and later Mariano after Bruno registers his number, can issue
-commands there. The service never replies in WhatsApp. Supported commands are:
+commands there. Sharing Mariano's contact card records his identity privately
+without adding him to the administrative group. The service never replies in
+WhatsApp. Supported inputs are:
 
 ```text
 Este es el número de Mariano Muratore: +54 ...
@@ -148,6 +150,12 @@ resolved project. Resolution accepts exact identities and unique,
 high-confidence spacing/prefix variants such as `Rent ID` → `rentid`; ambiguous
 matches are refused. Unauthorized senders and non-text administrative messages
 are silently ignored.
+
+Once both core identities are available, the receiver creates the `Nienfos`
+community exactly once. WhatsApp membership is established through project
+groups: creating the first linked project group adds Bruno and Mariano to the
+community without creating a separate placeholder group. Private idempotency
+state lives in `.data/whatsapp_ingest/community.json`.
 
 ## Stored record
 

@@ -63,6 +63,34 @@ export class AdminGroupManager {
     }
   }
 
+  coreParticipants() {
+    return [
+      this.state?.people?.bruno?.phone_jid,
+      this.state?.people?.mariano?.phone_jid,
+    ].filter(Boolean)
+  }
+
+  async handleSharedContacts({ contacts, message }) {
+    const state = this.state
+    if (!state || !this.isAdminGroup(message?.key?.remoteJid)) {
+      return { handled: false, status: 'not_admin_group' }
+    }
+    const messageId = String(message?.key?.id || '').trim()
+    if (messageId && state.processed_message_ids.includes(messageId)) {
+      return { handled: true, status: 'duplicate' }
+    }
+    if (authorizedRole(state, senderIdentities(message)) !== 'bruno') {
+      return { handled: true, status: 'unauthorized' }
+    }
+    const candidates = contacts || []
+    const contact = candidates.find((candidate) => (
+      normalizeIdentity(candidate.displayName).includes('mariano')
+    )) || (candidates.length === 1 ? candidates[0] : null)
+    if (!contact) return { handled: true, status: 'ignored_contact' }
+    await this.#registerMariano(contact.phone, messageId)
+    return { handled: true, status: 'mariano_registered' }
+  }
+
   async handleMessage({ message, text, socket, projects, createProjectGroup }) {
     const state = this.state
     if (!state || !this.isAdminGroup(message?.key?.remoteJid)) {
@@ -87,18 +115,7 @@ export class AdminGroupManager {
 
     if (command.type === 'register_mariano') {
       if (role !== 'bruno') return { handled: true, status: 'unauthorized' }
-      const phoneJid = participantJids([command.phone])[0]
-      await socket.groupParticipantsUpdate(state.group_id, [phoneJid], 'add')
-      state.people.mariano = {
-        jids: [phoneJid],
-        phone_jid: phoneJid,
-        registered_at: new Date().toISOString(),
-      }
-      await this.#markProcessed(messageId)
-      this.logger?.info?.(
-        { groupId: state.group_id, role: 'mariano' },
-        'Registered core WhatsApp group administrator',
-      )
+      await this.#registerMariano(command.phone, messageId)
       return { handled: true, status: 'mariano_registered' }
     }
 
@@ -172,6 +189,20 @@ export class AdminGroupManager {
       ].slice(-MAX_PROCESSED_MESSAGES)
     }
     await this.#saveState()
+  }
+
+  async #registerMariano(phone, messageId) {
+    const phoneJid = participantJids([phone])[0]
+    this.state.people.mariano = {
+      jids: [phoneJid],
+      phone_jid: phoneJid,
+      registered_at: new Date().toISOString(),
+    }
+    await this.#markProcessed(messageId)
+    this.logger?.info?.(
+      { groupId: this.state.group_id, role: 'mariano' },
+      'Registered core WhatsApp community participant without changing the admin group',
+    )
   }
 
   async #saveState() {

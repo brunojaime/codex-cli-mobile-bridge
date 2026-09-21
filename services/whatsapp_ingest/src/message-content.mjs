@@ -59,6 +59,26 @@ export function parseInboundContent(message) {
   return null
 }
 
+export function parseSharedContacts(message) {
+  const content = unwrapMessageContent(message)
+  if (!content) return []
+  const candidates = []
+  if (content.contactMessage) candidates.push(content.contactMessage)
+  if (Array.isArray(content.contactsArrayMessage?.contacts)) {
+    candidates.push(...content.contactsArrayMessage.contacts)
+  }
+  const contacts = []
+  for (const candidate of candidates) {
+    const phone = phoneFromVcard(candidate?.vcard)
+    if (!phone) continue
+    contacts.push({
+      displayName: String(candidate?.displayName || nameFromVcard(candidate?.vcard) || '').trim() || null,
+      phone,
+    })
+  }
+  return contacts
+}
+
 export function timestampSeconds(value) {
   if (typeof value === 'number') return Math.trunc(value)
   if (typeof value === 'bigint') return Number(value)
@@ -77,4 +97,24 @@ function firstNonEmptyString(...values) {
 function integerValue(value) {
   const parsed = Number(value)
   return Number.isFinite(parsed) ? Math.trunc(parsed) : null
+}
+
+function phoneFromVcard(value) {
+  const vcard = String(value || '')
+  const waid = vcard.match(/(?:^|;)waid=(\d{8,15})(?:[;:])/im)?.[1]
+  if (waid) return `+${waid}`
+  for (const line of vcard.split(/\r?\n/)) {
+    if (!/^TEL(?:;|:)/i.test(line)) continue
+    const digits = String(line.split(':').slice(1).join(':')).replace(/\D/g, '')
+    if (digits.length >= 8 && digits.length <= 15) return `+${digits}`
+  }
+  return null
+}
+
+function nameFromVcard(value) {
+  for (const line of String(value || '').split(/\r?\n/)) {
+    if (!/^FN(?:;|:)/i.test(line)) continue
+    return line.split(':').slice(1).join(':').replace(/\\([,;])/g, '$1').trim() || null
+  }
+  return null
 }

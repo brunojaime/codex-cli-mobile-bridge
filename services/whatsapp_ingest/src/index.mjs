@@ -13,8 +13,9 @@ import QRCode from 'qrcode'
 
 import { AdminGroupManager } from './admin-groups.mjs'
 import { createAdminServer } from './admin-server.mjs'
+import { CommunityManager } from './community-manager.mjs'
 import { loadGroupMappings, loadSettings } from './config.mjs'
-import { parseInboundContent, timestampSeconds } from './message-content.mjs'
+import { parseInboundContent, parseSharedContacts, timestampSeconds } from './message-content.mjs'
 import { ProjectFactoryClient } from './project-factory-client.mjs'
 import { normalizeIdentity, participantJids, ProjectReconciler } from './project-reconciler.mjs'
 import { IntakeStore } from './store.mjs'
@@ -38,6 +39,11 @@ const adminGroups = new AdminGroupManager({
   logger,
   stateFile: settings.adminGroupStateFile,
   subject: settings.adminGroupSubject,
+})
+const communities = new CommunityManager({
+  logger,
+  stateFile: settings.communityStateFile,
+  subject: settings.communitySubject,
 })
 
 const runtime = createRuntimeState()
@@ -110,7 +116,6 @@ async function startSocket() {
     })
 
     socket.ev.on('groups.upsert', () => refreshGroups(socket))
-    socket.ev.on('groups.update', () => refreshGroups(socket))
     socket.ev.on('messages.upsert', async (upsert) => {
       if (upsert.type !== 'notify') return
       for (const message of upsert.messages) {
@@ -158,7 +163,15 @@ async function doRefreshGroups(socket) {
     ])
     const groups = Object.values(participating)
     const adminGroup = await adminGroups.ensureGroup(socket, groups)
-    const projectGroups = groups.filter((group) => !adminGroups.isAdminMetadata(group))
+    const community = await communities.ensureCommunity(
+      socket,
+      groups,
+      adminGroups.coreParticipants(),
+    )
+    const projectGroups = groups.filter((group) => (
+      !adminGroups.isAdminMetadata(group)
+      && !communities.isInfrastructureMetadata(group)
+    ))
     const { projects, resolutions } = await reconciler.reconcile(projectGroups, mappings)
     for (const resolution of resolutions) {
       if (!resolution.promote_from || !resolution.project) continue
@@ -171,7 +184,12 @@ async function doRefreshGroups(socket) {
       }
     }
     runtime.projects = projects
-    runtime.groups = [adminGroups.summary(adminGroup), ...resolutions]
+    runtime.groups = [
+      adminGroups.summary(adminGroup),
+      communities.summary(community),
+      ...resolutions,
+    ]
+      .filter(Boolean)
       .map((resolution) => ({
         ...resolution,
         id: resolution.group_id,
@@ -275,10 +293,24 @@ async function processMessage(socket, message) {
   const groupId = message?.key?.remoteJid
   if (!groupId?.endsWith('@g.us') || message.key.fromMe) return
 
-  const parsed = parseInboundContent(message.message)
-  if (!parsed) return
-
   if (adminGroups.isAdminGroup(groupId)) {
+    const sharedContacts = parseSharedContacts(message.message)
+    if (sharedContacts.length) {
+      const result = await adminGroups.handleSharedContacts({
+        contacts: sharedContacts,
+        message,
+      })
+      if (result.status === 'mariano_registered') await refreshGroups(socket)
+      runtime.recordRecent({
+        kind: 'admin_contact',
+        project: 'whatsapp-group-admin',
+        received_at: new Date().toISOString(),
+        status: result.status,
+      })
+      return
+    }
+    const parsed = parseInboundContent(message.message)
+    if (!parsed) return
     if (parsed.kind !== 'text') {
       runtime.recordRecent({
         kind: parsed.kind,
@@ -298,6 +330,7 @@ async function processMessage(socket, message) {
       socket,
       text: parsed.text,
     })
+    if (result.status === 'mariano_registered') await refreshGroups(socket)
     runtime.recordRecent({
       kind: 'admin',
       project: 'whatsapp-group-admin',
@@ -306,6 +339,9 @@ async function processMessage(socket, message) {
     })
     return
   }
+
+  const parsed = parseInboundContent(message.message)
+  if (!parsed) return
 
   let group = runtime.groups.find((item) => item.id === groupId)
   if (!group) {
@@ -385,7 +421,7 @@ async function createAdminProjectGroup(socket, { participants, project, subject 
     if (duplicate.project === project.slug) return { id: duplicate.id }
     throw new Error(`A WhatsApp group already uses the subject: ${subject}`)
   }
-  const group = await socket.groupCreate(subject, participants)
+  const group = await communities.createProjectGroup(socket, { participants, subject })
   const binding = await reconciler.bindCreatedGroup(group, project.slug)
   runtime.groups.push({ ...binding, id: group.id, provisioning: false })
   try {

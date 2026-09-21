@@ -101,12 +101,7 @@ test('bootstraps the private admin group and executes only authorized commands',
     text: 'Mariano Muratore: +54 9 11 5555-2000',
   })
   assert.equal(registration.status, 'mariano_registered')
-  assert.deepEqual(calls.at(-1), [
-    'participants',
-    'admin@g.us',
-    ['5491155552000@s.whatsapp.net'],
-    'add',
-  ])
+  assert.equal(calls.some((call) => call[0] === 'participants'), false)
 
   let requested = null
   const creation = await manager.handleMessage({
@@ -157,4 +152,74 @@ test('bootstraps the private admin group and executes only authorized commands',
   const storedState = JSON.parse(await readFile(stateFile, 'utf8'))
   assert.equal(storedState.group_id, 'admin@g.us')
   assert.equal(storedState.people.mariano.phone_jid, '5491155552000@s.whatsapp.net')
+})
+
+test('registers a shared Mariano contact without adding anyone to the admin group', async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'whatsapp-admin-contact-'))
+  context.after(() => rm(root, { recursive: true, force: true }))
+  const dataDir = path.join(root, 'data')
+  const messageDir = path.join(dataDir, 'inbox', 'codex', 'record')
+  await mkdir(messageDir, { recursive: true })
+  await writeFile(path.join(messageDir, 'message.json'), JSON.stringify({
+    participant_alt_id: '5491155551000@s.whatsapp.net',
+    participant_id: 'bruno-device@lid',
+    push_name: 'Bruno',
+  }))
+  const stateFile = path.join(dataDir, 'admin-group.json')
+  const manager = new AdminGroupManager({ dataDir, stateFile, subject: 'Admin' })
+  await manager.ensureGroup({
+    groupCreate: async () => ({ id: 'admin@g.us', subject: 'Admin' }),
+    groupUpdateDescription: async () => undefined,
+  }, [])
+  const result = await manager.handleSharedContacts({
+    contacts: [{ displayName: 'Mariano Muratore', phone: '+54 9 11 5555-2000' }],
+    message: {
+      key: {
+        id: 'shared-contact',
+        participant: 'bruno-device@lid',
+        participantAlt: '5491155551000@s.whatsapp.net',
+        remoteJid: 'admin@g.us',
+      },
+    },
+  })
+  assert.equal(result.status, 'mariano_registered')
+  assert.deepEqual(manager.coreParticipants(), [
+    '5491155551000@s.whatsapp.net',
+    '5491155552000@s.whatsapp.net',
+  ])
+})
+
+test('accepts one authorized contact card even when WhatsApp omits its display name', async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'whatsapp-admin-unnamed-contact-'))
+  context.after(() => rm(root, { recursive: true, force: true }))
+  const dataDir = path.join(root, 'data')
+  const messageDir = path.join(dataDir, 'inbox', 'codex', 'record')
+  await mkdir(messageDir, { recursive: true })
+  await writeFile(path.join(messageDir, 'message.json'), JSON.stringify({
+    participant_alt_id: '5491155551000@s.whatsapp.net',
+    participant_id: 'bruno-device@lid',
+    push_name: 'Bruno',
+  }))
+  const manager = new AdminGroupManager({
+    dataDir,
+    stateFile: path.join(dataDir, 'admin-group.json'),
+    subject: 'Admin',
+  })
+  await manager.ensureGroup({
+    groupCreate: async () => ({ id: 'admin@g.us', subject: 'Admin' }),
+    groupUpdateDescription: async () => undefined,
+  }, [])
+  const result = await manager.handleSharedContacts({
+    contacts: [{ displayName: null, phone: '+54 9 11 5555-2000' }],
+    message: {
+      key: {
+        id: 'unnamed-contact',
+        participant: 'bruno-device@lid',
+        participantAlt: '5491155551000@s.whatsapp.net',
+        remoteJid: 'admin@g.us',
+      },
+    },
+  })
+  assert.equal(result.status, 'mariano_registered')
+  assert.equal(manager.coreParticipants().length, 2)
 })

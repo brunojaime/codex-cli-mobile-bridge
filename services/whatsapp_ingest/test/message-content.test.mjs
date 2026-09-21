@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { parseInboundContent, timestampSeconds, unwrapMessageContent } from '../src/message-content.mjs'
+import {
+  parseInboundContent,
+  parseSharedContacts,
+  timestampSeconds,
+  unwrapMessageContent,
+} from '../src/message-content.mjs'
 
 test('parses plain and extended text messages', () => {
   assert.deepEqual(parseInboundContent({ conversation: ' hola ' }), {
@@ -36,6 +41,22 @@ test('unwraps ephemeral audio and preserves voice note metadata', () => {
 
 test('ignores unsupported protocol-only messages', () => {
   assert.equal(parseInboundContent({ protocolMessage: { type: 0 } }), null)
+})
+
+test('extracts WhatsApp numbers from individual and array contact cards', () => {
+  assert.deepEqual(parseSharedContacts({
+    contactMessage: {
+      displayName: 'Mariano Muratore',
+      vcard: 'BEGIN:VCARD\nTEL;type=CELL;waid=5491155552000:+54 9 11 5555-2000\nEND:VCARD',
+    },
+  }), [{ displayName: 'Mariano Muratore', phone: '+5491155552000' }])
+  assert.deepEqual(parseSharedContacts({
+    contactsArrayMessage: {
+      contacts: [{
+        vcard: 'BEGIN:VCARD\nFN:Mariano Muratore\nTEL;TYPE=CELL:+54 9 11 5555-2000\nEND:VCARD',
+      }],
+    },
+  }), [{ displayName: 'Mariano Muratore', phone: '+5491155552000' }])
 })
 
 test('normalizes protobuf-style timestamps', () => {
