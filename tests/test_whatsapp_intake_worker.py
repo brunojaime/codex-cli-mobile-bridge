@@ -16,7 +16,7 @@ from services.whatsapp_ingest.worker import (
     TriageDecision,
     WhatsAppIntakeWorker,
     WorkerSettings,
-    resolve_direct_project,
+    resolve_project_directive,
 )
 
 
@@ -308,13 +308,13 @@ def test_audio_without_speech_is_archived_without_llm_or_retry(tmp_path: Path) -
     assert worker.run_once() == 0
 
 
-def test_direct_bruno_audio_resolves_project_then_uses_existing_triage(tmp_path: Path) -> None:
+def test_direct_bruno_batch_uses_project_directive_then_existing_triage(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     projects_root = tmp_path / "Projects"
-    workspace = projects_root / "rentid"
+    workspace = projects_root / "proyecto-inmobiliaria"
     (workspace / ".codex").mkdir(parents=True)
     (workspace / ".codex" / "project.yaml").write_text(
-        "project:\n  name: Rent ID\n  slug: rentid\n",
+        "project:\n  name: Proyecto Inmobiliaria\n  slug: proyecto-inmobiliaria\n",
         encoding="utf-8",
     )
     original = write_record(
@@ -324,6 +324,21 @@ def test_direct_bruno_audio_resolves_project_then_uses_existing_triage(tmp_path:
         kind="audio",
         source="whatsapp-direct",
     )
+    second_audio = write_record(
+        data_dir,
+        project="direct-bruno",
+        message_id="audio-2",
+        kind="audio",
+        source="whatsapp-direct",
+    )
+    directive = write_record(
+        data_dir,
+        project="direct-bruno",
+        message_id="text-1",
+        kind="text",
+        text="Proyecto: proyecto-inmobiliaria",
+        source="whatsapp-direct",
+    )
     bridge = FakeBridge()
     triage = FakeTriage(decision(actionable=True))
     worker = WhatsAppIntakeWorker(
@@ -331,21 +346,34 @@ def test_direct_bruno_audio_resolves_project_then_uses_existing_triage(tmp_path:
         bridge=bridge,  # type: ignore[arg-type]
         triage=triage,  # type: ignore[arg-type]
         transcribe=lambda _path, _mime: (
-            "Esto es para el proyecto Rent ID. Hay que revisar el acceso principal."
+            "Hay que revisar el acceso principal."
         ),
     )
 
-    assert worker.run_once() == 1
-    moved = data_dir / "inbox" / "rentid" / "2026-09-19" / "audio-1"
+    assert worker.run_once() == 3
+    moved = (
+        data_dir
+        / "inbox"
+        / "proyecto-inmobiliaria"
+        / "2026-09-19"
+        / "audio-1"
+    )
+    moved_directive = moved.parent / "text-1"
+    moved_second_audio = moved.parent / "audio-2"
     assert not original.exists()
+    assert not second_audio.exists()
+    assert not directive.exists()
     assert moved.is_dir()
+    assert moved_second_audio.is_dir()
+    assert moved_directive.is_dir()
     resolution = json.loads((moved / PROJECT_RESOLUTION_FILENAME).read_text())
     assert resolution["status"] == "matched"
-    assert resolution["project"] == "rentid"
+    assert resolution["project"] == "proyecto-inmobiliaria"
+    assert resolution["resolution_source"] == "explicit_directive"
     manifest = json.loads((moved / "message.json").read_text())
     assert manifest["source"] == "whatsapp-direct"
-    assert manifest["target_project"] == "rentid"
-    assert manifest["project_binding_status"] == "matched_from_direct_audio"
+    assert manifest["target_project"] == "proyecto-inmobiliaria"
+    assert manifest["project_binding_status"] == "matched_from_direct_directive"
     assert triage.calls[0]["workspace_path"] == workspace
     assert bridge.created[0]["workspace_path"] == workspace
 
@@ -372,20 +400,30 @@ def test_direct_audio_without_project_stays_pending_without_triage(tmp_path: Pat
 
     assert worker.run_once() == 0
     resolution = json.loads((record / PROJECT_RESOLUTION_FILENAME).read_text())
-    assert resolution["status"] == "unresolved"
+    assert resolution["status"] == "awaiting_directive"
     assert triage.calls == []
     assert bridge.created == []
 
 
-def test_direct_project_resolution_accepts_spoken_spacing(tmp_path: Path) -> None:
+def test_direct_project_resolution_requires_exact_slug_or_name(tmp_path: Path) -> None:
     projects_root = tmp_path / "Projects"
-    project = projects_root / "rentid"
-    project.mkdir(parents=True)
+    project = projects_root / "proyecto-inmobiliaria"
+    (project / ".codex").mkdir(parents=True)
+    (project / ".codex" / "project.yaml").write_text(
+        "project:\n  name: Proyecto Inmobiliaria\n",
+        encoding="utf-8",
+    )
 
-    resolution = resolve_direct_project(
-        "Este audio es para el proyecto Rent ID.",
+    resolution = resolve_project_directive(
+        "proyecto-inmobiliaria",
         projects_root,
     )
 
     assert resolution["status"] == "matched"
-    assert resolution["project"] == "rentid"
+    assert resolution["project"] == "proyecto-inmobiliaria"
+    assert resolve_project_directive(
+        "Proyecto Inmobiliaria", projects_root
+    )["status"] == "matched"
+    assert resolve_project_directive(
+        "proyecto inmobiliario", projects_root
+    )["status"] == "unresolved_directive"

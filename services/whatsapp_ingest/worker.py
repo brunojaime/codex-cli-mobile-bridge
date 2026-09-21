@@ -429,6 +429,7 @@ class WhatsAppIntakeWorker:
         self._transcribe_override = transcribe
 
     def run_once(self) -> int:
+        self._route_direct_batches()
         groups: dict[tuple[str, str], list[PreparedRecord]] = {}
         for record_dir in self._ready_record_directories():
             try:
@@ -473,6 +474,83 @@ class WhatsAppIntakeWorker:
                     )
         return submitted
 
+    def _route_direct_batches(self) -> None:
+        direct_inbox = (
+            self.settings.data_dir / "inbox" / self.settings.direct_inbox_project
+        )
+        if not direct_inbox.is_dir():
+            return
+        by_chat: dict[str, list[tuple[float, Path, dict[str, object]]]] = {}
+        for ready in direct_inbox.glob("*/*/READY"):
+            record_dir = ready.parent
+            if (record_dir / SUBMISSION_FILENAME).exists():
+                continue
+            try:
+                manifest = json.loads(
+                    (record_dir / "message.json").read_text(encoding="utf-8")
+                )
+            except (OSError, json.JSONDecodeError) as exc:
+                self._record_error(record_dir, exc)
+                continue
+            if str(manifest.get("source") or "") != "whatsapp-direct":
+                continue
+            chat_id = str(manifest.get("group_id") or "unknown-direct-chat")
+            by_chat.setdefault(chat_id, []).append(
+                (ready.stat().st_mtime, record_dir, manifest)
+            )
+
+        for entries in by_chat.values():
+            entries.sort(key=lambda item: item[0])
+            for batch in split_direct_batches(entries, self.settings.settle_seconds):
+                newest_ready = max(item[0] for item in batch)
+                if self.clock() - newest_ready < self.settings.settle_seconds:
+                    continue
+                self._route_direct_batch(batch)
+
+    def _route_direct_batch(
+        self,
+        batch: list[tuple[float, Path, dict[str, object]]],
+    ) -> None:
+        directives: list[str] = []
+        for _mtime, record_dir, manifest in batch:
+            kind = str(manifest.get("kind") or "unknown")
+            if kind == "audio":
+                self._audio_transcript(record_dir, manifest)
+            elif kind == "text":
+                directive = parse_project_directive(str(manifest.get("text") or ""))
+                if directive:
+                    directives.append(directive)
+
+        normalized_directives = {
+            normalize_identity(value): value for value in directives
+        }
+        if not normalized_directives:
+            resolution = direct_resolution("awaiting_directive")
+        elif len(normalized_directives) > 1:
+            resolution = direct_resolution(
+                "conflicting_directives",
+                requested_projects=sorted(normalized_directives.values()),
+            )
+        else:
+            project_hint = next(iter(normalized_directives.values()))
+            resolution = resolve_project_directive(
+                project_hint,
+                self.settings.projects_root,
+            )
+
+        for _mtime, record_dir, _manifest in batch:
+            atomic_write_json(record_dir / PROJECT_RESOLUTION_FILENAME, resolution)
+        matched_project = optional_text(resolution.get("project"))
+        if resolution["status"] != "matched" or matched_project is None:
+            return
+        for _mtime, record_dir, manifest in batch:
+            self._move_direct_record(
+                record_dir,
+                manifest,
+                matched_project,
+                resolution,
+            )
+
     def _process_group(self, records: list[PreparedRecord]) -> int:
         processed = 0
         for offset in range(0, len(records), self.settings.batch_size):
@@ -506,23 +584,6 @@ class WhatsAppIntakeWorker:
             content = str(manifest.get("text") or "").strip()
         if not content:
             content = "[Mensaje sin contenido textual utilizable]"
-
-        if (
-            project == self.settings.direct_inbox_project
-            and str(manifest.get("source") or "") == "whatsapp-direct"
-        ):
-            resolution = resolve_direct_project(content, self.settings.projects_root)
-            atomic_write_json(record_dir / PROJECT_RESOLUTION_FILENAME, resolution)
-            matched_project = optional_text(resolution.get("project"))
-            if resolution["status"] != "matched" or matched_project is None:
-                return None
-            record_dir, manifest = self._move_direct_record(
-                record_dir,
-                manifest,
-                matched_project,
-                resolution,
-            )
-            project = matched_project
 
         workspace = (self.settings.projects_root / project).resolve()
         if workspace.parent != self.settings.projects_root or not workspace.is_dir():
@@ -567,7 +628,7 @@ class WhatsAppIntakeWorker:
             **manifest,
             "project": project,
             "target_project": project,
-            "project_binding_status": "matched_from_direct_audio",
+            "project_binding_status": "matched_from_direct_directive",
             "project_resolution": resolution,
         }
         atomic_write_json(record_dir / "message.json", updated)
@@ -891,59 +952,84 @@ En este primer turno comprendé el pedido, inspeccioná el proyecto si necesitá
 """
 
 
-def resolve_direct_project(content: str, projects_root: Path) -> dict[str, object]:
-    normalized_content = normalize_identity(content)
-    windows = compact_windows(normalized_content.split())
-    matches: list[tuple[int, str, str]] = []
-    for project in discover_projects(projects_root):
-        best_score = 0
-        best_identity = ""
-        for identity_value in project["identifiers"]:
-            identity = normalize_identity(identity_value)
-            compact = identity.replace(" ", "")
-            if len(compact) < 4:
-                continue
-            exact_phrase = bool(
-                re.search(rf"(?:^|\s){re.escape(identity)}(?:\s|$)", normalized_content)
-            )
-            compact_match = compact in windows
-            if not exact_phrase and not compact_match:
-                continue
-            score = (200 if exact_phrase else 100) + len(compact)
-            if score > best_score:
-                best_score = score
-                best_identity = identity_value
-        if best_score:
-            matches.append((best_score, str(project["slug"]), best_identity))
+def split_direct_batches(
+    entries: list[tuple[float, Path, dict[str, object]]],
+    settle_seconds: float,
+) -> list[list[tuple[float, Path, dict[str, object]]]]:
+    batches: list[list[tuple[float, Path, dict[str, object]]]] = []
+    maximum_gap = max(settle_seconds, 1.0)
+    for entry in entries:
+        if not batches or entry[0] - batches[-1][-1][0] > maximum_gap:
+            batches.append([entry])
+        else:
+            batches[-1].append(entry)
+    return batches
 
-    matches.sort(key=lambda item: (-item[0], item[1]))
-    candidates = [item[1] for item in matches]
-    if not matches:
-        return {
-            "version": 1,
-            "status": "unresolved",
-            "project": None,
-            "candidates": [],
-            "matched_identity": None,
-            "resolved_at": iso_now(),
-        }
-    if len(matches) > 1 and matches[0][0] == matches[1][0]:
-        return {
-            "version": 1,
-            "status": "ambiguous",
-            "project": None,
-            "candidates": candidates,
-            "matched_identity": None,
-            "resolved_at": iso_now(),
-        }
+
+def parse_project_directive(value: str) -> str | None:
+    match = re.fullmatch(r"\s*proyecto\s*:\s*(.+?)\s*", value, flags=re.IGNORECASE)
+    if not match:
+        return None
+    project_hint = " ".join(match.group(1).split())
+    if not project_hint or len(project_hint) > 160:
+        return None
+    return project_hint
+
+
+def direct_resolution(
+    status: str,
+    *,
+    project: str | None = None,
+    candidates: list[str] | None = None,
+    matched_identity: str | None = None,
+    requested_projects: list[str] | None = None,
+) -> dict[str, object]:
     return {
         "version": 1,
-        "status": "matched",
-        "project": matches[0][1],
-        "candidates": candidates,
-        "matched_identity": matches[0][2],
+        "status": status,
+        "project": project,
+        "candidates": candidates or [],
+        "matched_identity": matched_identity,
+        "requested_projects": requested_projects or [],
+        "resolution_source": "explicit_directive",
         "resolved_at": iso_now(),
     }
+
+
+def resolve_project_directive(
+    project_hint: str,
+    projects_root: Path,
+) -> dict[str, object]:
+    normalized_hint = normalize_identity(project_hint)
+    compact_hint = normalized_hint.replace(" ", "")
+    matches: list[tuple[str, str]] = []
+    for project in discover_projects(projects_root):
+        for identity_value in project["identifiers"]:
+            identity = normalize_identity(identity_value)
+            if identity == normalized_hint or identity.replace(" ", "") == compact_hint:
+                matches.append((str(project["slug"]), str(identity_value)))
+                break
+
+    matches.sort(key=lambda item: item[0])
+    candidates = [item[0] for item in matches]
+    if not matches:
+        return direct_resolution(
+            "unresolved_directive",
+            requested_projects=[project_hint],
+        )
+    if len(matches) > 1:
+        return direct_resolution(
+            "ambiguous_directive",
+            candidates=candidates,
+            requested_projects=[project_hint],
+        )
+    return direct_resolution(
+        "matched",
+        project=matches[0][0],
+        candidates=candidates,
+        matched_identity=matches[0][1],
+        requested_projects=[project_hint],
+    )
 
 
 def discover_projects(projects_root: Path) -> list[dict[str, object]]:
@@ -1014,16 +1100,6 @@ def normalize_identity(value: object) -> str:
         character for character in decomposed if unicodedata.category(character) != "Mn"
     )
     return " ".join(re.sub(r"[^a-z0-9]+", " ", without_marks.lower()).split())
-
-
-def compact_windows(tokens: list[str], *, maximum_words: int = 8) -> set[str]:
-    result: set[str] = set()
-    for start in range(len(tokens)):
-        compact = ""
-        for end in range(start, min(len(tokens), start + maximum_words)):
-            compact += tokens[end]
-            result.add(compact)
-    return result
 
 
 def validate_triage_decision(value: object) -> None:

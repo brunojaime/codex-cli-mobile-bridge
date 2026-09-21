@@ -14,6 +14,7 @@ import QRCode from 'qrcode'
 import { AdminGroupManager } from './admin-groups.mjs'
 import { createAdminServer } from './admin-server.mjs'
 import { CommunityManager } from './community-manager.mjs'
+import { isDirectChat, parseDirectProjectDirective } from './direct-intake.mjs'
 import { loadGroupMappings, loadSettings } from './config.mjs'
 import { parseInboundContent, parseSharedContacts, timestampSeconds } from './message-content.mjs'
 import { ProjectFactoryClient } from './project-factory-client.mjs'
@@ -430,7 +431,10 @@ async function processDirectMessage(message) {
   }
 
   const parsed = parseInboundContent(message.message)
-  if (!parsed || parsed.kind !== 'audio') {
+  const directive = parsed?.kind === 'text'
+    ? parseDirectProjectDirective(parsed.text)
+    : null
+  if (!parsed || (parsed.kind !== 'audio' && !directive)) {
     runtime.recordRecent({
       kind: parsed?.kind || 'unknown',
       project: settings.directInboxProject,
@@ -453,7 +457,9 @@ async function processDirectMessage(message) {
     return
   }
 
-  const mediaBuffer = await downloadMediaMessage(message, 'buffer', {})
+  const mediaBuffer = parsed.kind === 'audio'
+    ? await downloadMediaMessage(message, 'buffer', {})
+    : null
   const manifest = {
     schema: 'nienfos.whatsapp-intake.v1',
     source: 'whatsapp-direct',
@@ -469,10 +475,11 @@ async function processDirectMessage(message) {
     project_binding_status: 'awaiting_transcript_resolution',
     target_project: null,
     kind: parsed.kind,
-    text: null,
+    text: parsed.text,
     mime_type: parsed.mimeType,
     audio_seconds: parsed.seconds,
     voice_note: parsed.voiceNote,
+    project_routing_directive: Boolean(directive),
   }
   const result = await store.persist({
     manifest,
@@ -498,11 +505,6 @@ async function processDirectMessage(message) {
       ? 'Direct WhatsApp audio already stored'
       : 'Stored Bruno direct WhatsApp audio for project resolution',
   )
-}
-
-function isDirectChat(jid) {
-  return String(jid || '').endsWith('@s.whatsapp.net')
-    || String(jid || '').endsWith('@lid')
 }
 
 function jidType(jid) {

@@ -159,17 +159,24 @@ state lives in `.data/whatsapp_ingest/community.json`.
 
 ## Temporary direct-audio intake
 
-Bruno can send a private voice note to Nienfos Codex while project groups are
-still being provisioned. The receiver accepts only audio from Bruno's stored
-WhatsApp identities and silently ignores every other private sender and
-non-audio private message.
+Bruno can send private voice notes to Nienfos Codex while project groups are
+still being provisioned. The receiver accepts only Bruno's stored WhatsApp
+identities and silently ignores every other private sender.
 
-The voice note must mention the project name, slug, WhatsApp subject, or a
-configured alias. It is first stored under the neutral `direct-bruno` inbox,
-transcribed locally, and matched deterministically against the current project
-catalog. A unique match moves the complete record into that project's inbox and
-continues through the ordinary quiet-window triage. An unresolved or ambiguous
-match remains pending and never creates a Codex chat. No WhatsApp reply is sent.
+Each batch requires one exact routing message sent within the same 45-second
+quiet window:
+
+```text
+Proyecto: proyecto-inmobiliaria
+```
+
+`Proyecto:` is case-insensitive, but the colon is mandatory and the value must
+match one project slug, declared name, WhatsApp subject, or configured alias.
+The directive and every adjacent voice note are first stored together under the
+neutral `direct-bruno` inbox. After the quiet window, all audio is transcribed
+locally and the complete batch is moved into the selected project's inbox for
+ordinary triage. Missing, conflicting, unresolved, or ambiguous directives
+remain pending and never create a Codex chat. No WhatsApp reply is sent.
 
 The original audio, transcript, sender, project-resolution decision, triage,
 and Codex submission markers remain together for auditability.
