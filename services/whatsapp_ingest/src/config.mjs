@@ -19,6 +19,10 @@ export function loadSettings() {
   return {
     adminHost: process.env.WHATSAPP_ADMIN_HOST || '127.0.0.1',
     adminPort: envPort('WHATSAPP_ADMIN_PORT', 8787),
+    adminGroupStateFile: path.resolve(
+      process.env.WHATSAPP_ADMIN_GROUP_STATE_FILE || path.join(dataDir, 'admin-group.json'),
+    ),
+    adminGroupSubject: process.env.WHATSAPP_ADMIN_GROUP_SUBJECT || 'Nienfos · Alta de grupos',
     authDir: path.resolve(process.env.WHATSAPP_AUTH_DIR || path.join(dataDir, 'auth')),
     dataDir,
     projectsRoot: path.resolve(

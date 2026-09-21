@@ -11,6 +11,7 @@ import makeWASocket, {
 import pino from 'pino'
 import QRCode from 'qrcode'
 
+import { AdminGroupManager } from './admin-groups.mjs'
 import { createAdminServer } from './admin-server.mjs'
 import { loadGroupMappings, loadSettings } from './config.mjs'
 import { parseInboundContent, timestampSeconds } from './message-content.mjs'
@@ -32,6 +33,12 @@ const reconciler = new ProjectReconciler({
   registryFile: settings.registryFile,
 })
 const projectFactory = new ProjectFactoryClient({ baseUrl: settings.projectFactoryUrl })
+const adminGroups = new AdminGroupManager({
+  dataDir: settings.dataDir,
+  logger,
+  stateFile: settings.adminGroupStateFile,
+  subject: settings.adminGroupSubject,
+})
 
 const runtime = createRuntimeState()
 createAdminServer({
@@ -150,7 +157,9 @@ async function doRefreshGroups(socket) {
       loadGroupMappings(settings.groupsFile),
     ])
     const groups = Object.values(participating)
-    const { projects, resolutions } = await reconciler.reconcile(groups, mappings)
+    const adminGroup = await adminGroups.ensureGroup(socket, groups)
+    const projectGroups = groups.filter((group) => !adminGroups.isAdminMetadata(group))
+    const { projects, resolutions } = await reconciler.reconcile(projectGroups, mappings)
     for (const resolution of resolutions) {
       if (!resolution.promote_from || !resolution.project) continue
       const moved = await store.promotePendingProject(resolution.promote_from, resolution.project)
@@ -161,7 +170,8 @@ async function doRefreshGroups(socket) {
         )
       }
     }
-    runtime.groups = resolutions
+    runtime.projects = projects
+    runtime.groups = [adminGroups.summary(adminGroup), ...resolutions]
       .map((resolution) => ({
         ...resolution,
         id: resolution.group_id,
@@ -268,6 +278,35 @@ async function processMessage(socket, message) {
   const parsed = parseInboundContent(message.message)
   if (!parsed) return
 
+  if (adminGroups.isAdminGroup(groupId)) {
+    if (parsed.kind !== 'text') {
+      runtime.recordRecent({
+        kind: parsed.kind,
+        project: 'whatsapp-group-admin',
+        received_at: new Date().toISOString(),
+        status: 'ignored_non_text_admin_command',
+      })
+      return
+    }
+    const result = await adminGroups.handleMessage({
+      createProjectGroup: ({ participants, project, subject }) => createAdminProjectGroup(
+        socket,
+        { participants, project, subject },
+      ),
+      message,
+      projects: runtime.projects,
+      socket,
+      text: parsed.text,
+    })
+    runtime.recordRecent({
+      kind: 'admin',
+      project: 'whatsapp-group-admin',
+      received_at: new Date().toISOString(),
+      status: result.status,
+    })
+    return
+  }
+
   let group = runtime.groups.find((item) => item.id === groupId)
   if (!group) {
     await refreshGroups(socket)
@@ -338,12 +377,42 @@ async function processMessage(socket, message) {
   )
 }
 
+async function createAdminProjectGroup(socket, { participants, project, subject }) {
+  const duplicate = runtime.groups.find(
+    (group) => normalizeIdentity(group.subject) === normalizeIdentity(subject),
+  )
+  if (duplicate) {
+    if (duplicate.project === project.slug) return { id: duplicate.id }
+    throw new Error(`A WhatsApp group already uses the subject: ${subject}`)
+  }
+  const group = await socket.groupCreate(subject, participants)
+  const binding = await reconciler.bindCreatedGroup(group, project.slug)
+  runtime.groups.push({ ...binding, id: group.id, provisioning: false })
+  try {
+    await socket.groupUpdateDescription(
+      group.id,
+      `Canal del proyecto ${project.name || project.slug}. Los textos y audios se incorporan al espacio de trabajo; no se envían respuestas automáticas.`,
+    )
+  } catch (error) {
+    logger.warn(
+      { err: error, groupId: group.id, project: project.slug },
+      'Created and bound project group, but could not set its description',
+    )
+  }
+  logger.info(
+    { groupId: group.id, project: project.slug, subject },
+    'Created project group from authorized WhatsApp administration command',
+  )
+  return group
+}
+
 function createRuntimeState() {
   return {
     capturedMessages: 0,
     connection: 'starting',
     detail: 'Iniciando servicio…',
     groups: [],
+    projects: [],
     qrPng: null,
     recent: [],
     recordRecent(item) {

@@ -123,6 +123,32 @@ creator; `participants` should contain the owner, partner, and client numbers.
 Creating the group produces WhatsApp's normal visible system event, but the
 service never sends chat messages or automatic replies.
 
+## Private group administration
+
+The receiver maintains a dedicated administrative group named
+`Nienfos · Alta de grupos`. On first bootstrap it discovers Bruno's WhatsApp
+identity from the already captured local manifests and creates the group with
+Bruno as its only participant. The private state, including participant JIDs,
+lives in `.data/whatsapp_ingest/admin-group.json` and is never committed.
+
+Only Bruno, and later Mariano after Bruno registers his number, can issue
+commands there. The service never replies in WhatsApp. Supported commands are:
+
+```text
+Este es el número de Mariano Muratore: +54 ...
+
+Crear grupo: Nombre visible
+proyecto: slug o nombre del proyecto
+clientes: +54 ..., +54 ...
+```
+
+Every created project group automatically includes Bruno and Mariano; Nienfos
+Codex is the creator. The immutable group ID is bound immediately to the
+resolved project. Resolution accepts exact identities and unique,
+high-confidence spacing/prefix variants such as `Rent ID` → `rentid`; ambiguous
+matches are refused. Unauthorized senders and non-text administrative messages
+are silently ignored.
+
 ## Stored record
 
 Each accepted message becomes an immutable directory:
