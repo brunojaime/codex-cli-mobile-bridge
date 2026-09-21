@@ -73,7 +73,7 @@ export class IntakeStore {
       }
 
       if (mediaBuffer) {
-        const filename = `audio-original${extensionForMime(manifest.mime_type)}`
+        const filename = `${mediaBasename(manifest.kind)}${extensionForMime(manifest.mime_type)}`
         await writeFile(path.join(temporary, filename), mediaBuffer, { mode: 0o600 })
         materialized.media_file = filename
         materialized.media_bytes = mediaBuffer.length
@@ -152,7 +152,17 @@ export function extensionForMime(mimeType) {
     'audio/mpeg': '.mp3',
     'audio/ogg': '.ogg',
     'audio/opus': '.opus',
+    'image/gif': '.gif',
+    'image/heic': '.heic',
+    'image/heif': '.heif',
+    'image/jpeg': '.jpg',
+    'image/png': '.png',
+    'image/webp': '.webp',
   }[normalized] || '.bin'
+}
+
+function mediaBasename(kind) {
+  return kind === 'image' ? 'image-original' : 'audio-original'
 }
 
 function validateProjectSlug(project) {

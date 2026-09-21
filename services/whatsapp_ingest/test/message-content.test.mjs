@@ -39,6 +39,26 @@ test('unwraps ephemeral audio and preserves voice note metadata', () => {
   })
 })
 
+test('parses images with and without captions', () => {
+  const image = { mimetype: 'image/png', caption: 'Revisar esta pantalla' }
+  assert.deepEqual(parseInboundContent({ imageMessage: image }), {
+    kind: 'image',
+    media: image,
+    mimeType: 'image/png',
+    seconds: null,
+    text: 'Revisar esta pantalla',
+    voiceNote: false,
+  })
+  assert.deepEqual(parseInboundContent({ imageMessage: {} }), {
+    kind: 'image',
+    media: {},
+    mimeType: 'image/jpeg',
+    seconds: null,
+    text: null,
+    voiceNote: false,
+  })
+})
+
 test('ignores unsupported protocol-only messages', () => {
   assert.equal(parseInboundContent({ protocolMessage: { type: 0 } }), null)
 })

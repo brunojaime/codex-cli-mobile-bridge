@@ -2,7 +2,7 @@
 
 Silent intake and project/group reconciliation service. It links a dedicated
 WhatsApp account as a companion device, discovers its groups, associates each
-group with a project, and writes new text and audio messages as atomic project
+group with a project, and writes new text, audio, and image messages as atomic project
 inbox records under `.data/whatsapp_ingest/inbox`.
 
 This integration uses the unofficial WhatsApp Web protocol through Baileys. It
@@ -112,7 +112,7 @@ which people to add. Add `.codex/integrations/whatsapp.json` inside a project:
     "+5492222222222",
     "+5493333333333"
   ],
-  "description": "Canal del proyecto. Los textos y audios se incorporan al espacio de trabajo.",
+  "description": "Canal del proyecto. Los textos, audios e imágenes se incorporan al espacio de trabajo.",
   "aliases": ["Proyecto Ejemplo"]
 }
 ```
@@ -157,11 +157,11 @@ groups: creating the first linked project group adds Bruno and Mariano to the
 community without creating a separate placeholder group. Private idempotency
 state lives in `.data/whatsapp_ingest/community.json`.
 
-## Temporary direct-audio intake
+## Temporary direct intake
 
-Bruno can send private voice notes to Nienfos Codex while project groups are
-still being provisioned. The receiver accepts only Bruno's stored WhatsApp
-identities and silently ignores every other private sender.
+Bruno can send private text, voice notes, and images to Nienfos Codex while
+project groups are still being provisioned. The receiver accepts only Bruno's
+stored WhatsApp identities and silently ignores every other private sender.
 
 Each batch requires one exact routing message sent within the same 45-second
 quiet window:
@@ -172,14 +172,16 @@ Proyecto: proyecto-inmobiliaria
 
 `Proyecto:` is case-insensitive, but the colon is mandatory and the value must
 match one project slug, declared name, WhatsApp subject, or configured alias.
-The directive and every adjacent voice note are first stored together under the
-neutral `direct-bruno` inbox. After the quiet window, all audio is transcribed
-locally and the complete batch is moved into the selected project's inbox for
-ordinary triage. Missing, conflicting, unresolved, or ambiguous directives
-remain pending and never create a Codex chat. No WhatsApp reply is sent.
+The directive and every adjacent text, voice note, and image are first stored
+together under the neutral `direct-bruno` inbox. After the quiet window, all
+audio is transcribed locally and the complete batch is moved into the selected
+project's inbox for ordinary triage. Images are attached to the triage and, for
+actionable requests, to the planning chat. Missing, conflicting, unresolved, or
+ambiguous directives remain pending and never create a Codex chat. No WhatsApp
+reply is sent.
 
-The original audio, transcript, sender, project-resolution decision, triage,
-and Codex submission markers remain together for auditability.
+The original text/media, audio transcript, sender, project-resolution decision,
+triage, and Codex submission markers remain together for auditability.
 
 ## Stored record
 
@@ -190,6 +192,7 @@ Each accepted message becomes an immutable directory:
 ├── message.json
 ├── message.txt          # text messages only
 ├── audio-original.ogg   # audio messages only; extension follows MIME type
+├── image-original.jpg   # image messages only; extension follows MIME type
 └── READY
 ```
 

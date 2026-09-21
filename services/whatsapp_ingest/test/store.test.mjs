@@ -47,6 +47,28 @@ test('maps common audio mime types to stable extensions', () => {
   assert.equal(extensionForMime('unknown/type'), '.bin')
 })
 
+test('persists image media with a stable image filename', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'whatsapp-ingest-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const store = new IntakeStore(root)
+  await store.initialize()
+  const result = await store.persist({
+    manifest: {
+      message_id: 'IMAGE-1',
+      kind: 'image',
+      mime_type: 'image/png',
+      text: 'captura',
+    },
+    mediaBuffer: Buffer.from('png'),
+    project: 'moldegom',
+    receivedAt: new Date('2026-09-18T20:00:00.000Z'),
+  })
+
+  assert.equal(await readFile(path.join(result.path, 'image-original.png'), 'utf8'), 'png')
+  const saved = JSON.parse(await readFile(path.join(result.path, 'message.json'), 'utf8'))
+  assert.equal(saved.media_file, 'image-original.png')
+})
+
 test('promotes records from a pending inbox when the group becomes matched', async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'whatsapp-ingest-'))
   t.after(() => rm(root, { recursive: true, force: true }))

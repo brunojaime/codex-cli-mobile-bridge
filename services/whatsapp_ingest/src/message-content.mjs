@@ -45,6 +45,17 @@ export function parseInboundContent(message) {
     }
   }
 
+  if (content.imageMessage) {
+    return {
+      kind: 'image',
+      media: content.imageMessage,
+      mimeType: content.imageMessage.mimetype || 'image/jpeg',
+      seconds: null,
+      text,
+      voiceNote: false,
+    }
+  }
+
   if (text) {
     return {
       kind: 'text',

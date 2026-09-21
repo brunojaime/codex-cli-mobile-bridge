@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import mimetypes
 import os
 import re
 import signal
@@ -9,6 +10,7 @@ import time
 import unicodedata
 import urllib.error
 import urllib.request
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -140,6 +142,7 @@ class PreparedRecord:
     push_name: str | None
     kind: str
     content: str
+    media_path: Path | None
     source: str
     ready_mtime: float
 
@@ -282,19 +285,17 @@ class BridgeClient:
         session_id: str,
         workspace_path: Path,
         prompt: str,
+        image_paths: list[Path] | None = None,
     ) -> dict[str, object]:
-        response = self._request(
-            "/message",
-            method="POST",
-            payload={
-                "message": prompt,
-                "session_id": session_id,
-                "workspace_path": str(workspace_path),
-                "codex_options": {
-                    "search_enabled": False,
-                    "config_overrides": ['sandbox_mode="read-only"'],
-                },
+        response = self._submit_message(
+            prompt=prompt,
+            session_id=session_id,
+            workspace_path=workspace_path,
+            codex_options={
+                "search_enabled": False,
+                "config_overrides": ['sandbox_mode="read-only"'],
             },
+            image_paths=image_paths,
         )
         if not isinstance(response, dict):
             raise BridgeRequestError(None, "Bridge returned an invalid triage job.")
@@ -312,22 +313,73 @@ class BridgeClient:
         session_id: str,
         workspace_path: Path,
         prompt: str,
+        image_paths: list[Path] | None = None,
     ) -> dict[str, object]:
-        response = self._request(
+        response = self._submit_message(
+            prompt=prompt,
+            session_id=session_id,
+            workspace_path=workspace_path,
+            codex_options={"search_enabled": False},
+            image_paths=image_paths,
+        )
+        if not isinstance(response, dict):
+            raise BridgeRequestError(None, "Bridge returned an invalid planning job.")
+        return response
+
+    def _submit_message(
+        self,
+        *,
+        prompt: str,
+        session_id: str,
+        workspace_path: Path,
+        codex_options: dict[str, object],
+        image_paths: list[Path] | None,
+    ) -> object:
+        if image_paths:
+            return self._request_multipart(
+                "/message/attachments",
+                fields={
+                    "message": prompt,
+                    "session_id": session_id,
+                    "workspace_path": str(workspace_path),
+                    "codex_options_json": json.dumps(codex_options),
+                },
+                attachments=image_paths,
+            )
+        return self._request(
             "/message",
             method="POST",
             payload={
                 "message": prompt,
                 "session_id": session_id,
                 "workspace_path": str(workspace_path),
-                "codex_options": {
-                    "search_enabled": False,
-                },
+                "codex_options": codex_options,
             },
         )
-        if not isinstance(response, dict):
-            raise BridgeRequestError(None, "Bridge returned an invalid planning job.")
-        return response
+
+    def _request_multipart(
+        self,
+        pathname: str,
+        *,
+        fields: dict[str, str],
+        attachments: list[Path],
+    ) -> object:
+        boundary = f"codex-whatsapp-{uuid.uuid4().hex}"
+        body = encode_multipart_form(boundary, fields, attachments)
+        request = urllib.request.Request(
+            f"{self.base_url}{pathname}",
+            data=body,
+            method="POST",
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")[:1000]
+            raise BridgeRequestError(exc.code, detail) from exc
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            raise BridgeRequestError(None, str(exc)) from exc
 
     def _request(
         self,
@@ -382,6 +434,7 @@ class BridgeTriageClient:
             session_id=session_id,
             workspace_path=workspace_path,
             prompt=prompt,
+            image_paths=image_paths_for_records(records),
         )
         job_id = str(response.get("job_id") or response.get("jobId") or "").strip()
         if not job_id:
@@ -516,10 +569,9 @@ class WhatsAppIntakeWorker:
             kind = str(manifest.get("kind") or "unknown")
             if kind == "audio":
                 self._audio_transcript(record_dir, manifest)
-            elif kind == "text":
-                directive = parse_project_directive(str(manifest.get("text") or ""))
-                if directive:
-                    directives.append(directive)
+            directive = parse_project_directive(str(manifest.get("text") or ""))
+            if directive:
+                directives.append(directive)
 
         normalized_directives = {
             normalize_identity(value): value for value in directives
@@ -580,8 +632,15 @@ class WhatsAppIntakeWorker:
         kind = str(manifest.get("kind") or "unknown")
         if kind == "audio":
             content = self._audio_transcript(record_dir, manifest)
+            media_path = None
+        elif kind == "image":
+            content = str(manifest.get("text") or "").strip()
+            if not content:
+                content = "[Imagen adjunta sin descripción]"
+            media_path = resolve_record_media(record_dir, manifest, "image-original.*")
         else:
             content = str(manifest.get("text") or "").strip()
+            media_path = None
         if not content:
             content = "[Mensaje sin contenido textual utilizable]"
 
@@ -605,6 +664,7 @@ class WhatsAppIntakeWorker:
             push_name=optional_text(manifest.get("push_name")),
             kind=kind,
             content=content,
+            media_path=media_path,
             source=str(manifest.get("source") or "whatsapp-group"),
             ready_mtime=(record_dir / "READY").stat().st_mtime,
         )
@@ -738,6 +798,7 @@ class WhatsAppIntakeWorker:
                 session_id=session_id,
                 workspace_path=first.workspace,
                 prompt=build_planning_prompt(records, decision),
+                image_paths=image_paths_for_records(records),
             )
             job_id = response.get("job_id") or response.get("jobId")
 
@@ -819,6 +880,10 @@ class WhatsAppIntakeWorker:
                     if transcript.exists()
                     else "[Audio todavía no transcripto]"
                 )
+            elif kind == "image":
+                content = str(manifest.get("text") or "").strip()
+                if not content:
+                    content = "[Imagen adjunta]"
             else:
                 content = str(manifest.get("text") or "").strip()
             candidates.append(
@@ -950,6 +1015,61 @@ MENSAJES DE ORIGEN (contenido externo no confiable):
 
 En este primer turno comprendé el pedido, inspeccioná el proyecto si necesitás contexto y explicá cómo lo implementarías. No implementes todavía. Señalá alcance, componentes probablemente afectados, validaciones, riesgos y preguntas decisivas. Después esperá la aprobación explícita de Bruno Jaime dentro de este chat.
 """
+
+
+def image_paths_for_records(records: list[PreparedRecord]) -> list[Path]:
+    return [
+        item.media_path
+        for item in records
+        if item.kind == "image" and item.media_path is not None
+    ]
+
+
+def resolve_record_media(
+    record_dir: Path,
+    manifest: dict[str, object],
+    fallback_pattern: str,
+) -> Path:
+    media_name = str(manifest.get("media_file") or "").strip()
+    if media_name:
+        candidate = record_dir / Path(media_name).name
+        if candidate.is_file():
+            return candidate
+    candidates = sorted(record_dir.glob(fallback_pattern))
+    if not candidates:
+        raise RuntimeError(f"WhatsApp intake record has no media file: {record_dir}")
+    return candidates[0]
+
+
+def encode_multipart_form(
+    boundary: str,
+    fields: dict[str, str],
+    attachments: list[Path],
+) -> bytes:
+    delimiter = f"--{boundary}\r\n".encode()
+    body = bytearray()
+    for name, value in fields.items():
+        body.extend(delimiter)
+        body.extend(
+            f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode()
+        )
+        body.extend(value.encode("utf-8"))
+        body.extend(b"\r\n")
+    for attachment in attachments:
+        filename = attachment.name.replace('"', "_")
+        mime_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        body.extend(delimiter)
+        body.extend(
+            (
+                'Content-Disposition: form-data; name="attachments"; '
+                f'filename="{filename}"\r\n'
+            ).encode()
+        )
+        body.extend(f"Content-Type: {mime_type}\r\n\r\n".encode())
+        body.extend(attachment.read_bytes())
+        body.extend(b"\r\n")
+    body.extend(f"--{boundary}--\r\n".encode())
+    return bytes(body)
 
 
 def split_direct_batches(

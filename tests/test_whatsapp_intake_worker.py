@@ -82,12 +82,14 @@ class FakeBridge:
         session_id: str,
         workspace_path: Path,
         prompt: str,
+        image_paths: list[Path] | None = None,
     ) -> dict[str, object]:
         self.submitted.append(
             {
                 "session_id": session_id,
                 "workspace_path": workspace_path,
                 "prompt": prompt,
+                "image_paths": image_paths or [],
             }
         )
         return {"job_id": "job-1", "session_id": session_id}
@@ -113,14 +115,22 @@ def write_record(
         "participant_id": "5491111111111@s.whatsapp.net",
         "push_name": "Cliente",
         "kind": kind,
-        "text": text if kind == "text" else None,
-        "mime_type": "audio/ogg",
-        "media_file": "audio-original.ogg" if kind == "audio" else None,
+        "text": text if kind in {"text", "image"} else None,
+        "mime_type": "image/png" if kind == "image" else "audio/ogg",
+        "media_file": (
+            "audio-original.ogg"
+            if kind == "audio"
+            else "image-original.png"
+            if kind == "image"
+            else None
+        ),
         "whatsapp_timestamp": "2026-09-19T12:00:00+00:00",
     }
     (record / "message.json").write_text(json.dumps(manifest), encoding="utf-8")
     if kind == "audio":
         (record / "audio-original.ogg").write_bytes(b"fake-audio")
+    elif kind == "image":
+        (record / "image-original.png").write_bytes(b"fake-image")
     ready = record / "READY"
     ready.write_text("", encoding="utf-8")
     if ready_mtime is not None:
@@ -376,6 +386,63 @@ def test_direct_bruno_batch_uses_project_directive_then_existing_triage(tmp_path
     assert manifest["project_binding_status"] == "matched_from_direct_directive"
     assert triage.calls[0]["workspace_path"] == workspace
     assert bridge.created[0]["workspace_path"] == workspace
+
+
+def test_direct_bruno_batch_keeps_text_and_attaches_images(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    projects_root = tmp_path / "Projects"
+    workspace = projects_root / "rd-gestion-hse"
+    workspace.mkdir(parents=True)
+    text_record = write_record(
+        data_dir,
+        project="direct-bruno",
+        message_id="request-1",
+        kind="text",
+        text="Corregir el diseño que se ve en la captura",
+        source="whatsapp-direct",
+    )
+    image_record = write_record(
+        data_dir,
+        project="direct-bruno",
+        message_id="image-1",
+        kind="image",
+        text=None,
+        source="whatsapp-direct",
+    )
+    directive_record = write_record(
+        data_dir,
+        project="direct-bruno",
+        message_id="directive-1",
+        kind="text",
+        text="Proyecto: rd-gestion-hse",
+        source="whatsapp-direct",
+    )
+    bridge = FakeBridge()
+    triage = FakeTriage(decision(actionable=True))
+    worker = WhatsAppIntakeWorker(
+        settings(data_dir, projects_root),
+        bridge=bridge,  # type: ignore[arg-type]
+        triage=triage,  # type: ignore[arg-type]
+    )
+
+    assert worker.run_once() == 3
+    destination = data_dir / "inbox" / "rd-gestion-hse" / "2026-09-19"
+    assert not text_record.exists()
+    assert not image_record.exists()
+    assert not directive_record.exists()
+    moved_text = destination / "request-1"
+    moved_image = destination / "image-1"
+    assert json.loads((moved_text / "message.json").read_text())["text"] == (
+        "Corregir el diseño que se ve en la captura"
+    )
+    prepared = triage.calls[0]["records"]
+    assert sorted(record.kind for record in prepared) == ["image", "text", "text"]
+    prepared_image = next(record for record in prepared if record.kind == "image")
+    assert prepared_image.content == "[Imagen adjunta sin descripción]"
+    assert prepared_image.media_path == moved_image / "image-original.png"
+    assert bridge.submitted[0]["image_paths"] == [
+        moved_image / "image-original.png"
+    ]
 
 
 def test_direct_audio_without_project_stays_pending_without_triage(tmp_path: Path) -> None:

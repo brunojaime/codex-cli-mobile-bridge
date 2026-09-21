@@ -2,7 +2,7 @@
 
 ## Objetivo
 
-Convertir los textos y audios recibidos en grupos de WhatsApp en un historial
+Convertir los textos, audios e imágenes recibidos por WhatsApp en un historial
 auditable por proyecto, detectar trabajo accionable y, según la política del
 proyecto, proponerlo o ejecutarlo con Codex. El sistema nunca responde al grupo
 de WhatsApp.
@@ -32,6 +32,7 @@ Cada mensaje se conserva con:
 - texto original;
 - archivo de audio original, cuando corresponda;
 - transcripción del audio;
+- archivo de imagen original y su caption, cuando corresponda;
 - estado de procesamiento.
 
 El remitente de una nota de voz proviene de los metadatos de WhatsApp. Whisper

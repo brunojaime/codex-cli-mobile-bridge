@@ -375,7 +375,7 @@ async function processMessage(socket, message) {
   }
 
   let mediaBuffer = null
-  if (parsed.kind === 'audio') {
+  if (parsed.kind === 'audio' || parsed.kind === 'image') {
     mediaBuffer = await downloadMediaMessage(message, 'buffer', {})
   }
 
@@ -434,12 +434,12 @@ async function processDirectMessage(message) {
   const directive = parsed?.kind === 'text'
     ? parseDirectProjectDirective(parsed.text)
     : null
-  if (!parsed || (parsed.kind !== 'audio' && !directive)) {
+  if (!parsed || !['audio', 'image', 'text'].includes(parsed.kind)) {
     runtime.recordRecent({
       kind: parsed?.kind || 'unknown',
       project: settings.directInboxProject,
       received_at: new Date().toISOString(),
-      status: 'ignored_non_audio_direct_message',
+      status: 'ignored_unsupported_direct_message',
     })
     return
   }
@@ -457,7 +457,7 @@ async function processDirectMessage(message) {
     return
   }
 
-  const mediaBuffer = parsed.kind === 'audio'
+  const mediaBuffer = parsed.kind === 'audio' || parsed.kind === 'image'
     ? await downloadMediaMessage(message, 'buffer', {})
     : null
   const manifest = {
@@ -502,8 +502,8 @@ async function processDirectMessage(message) {
       storedPath: path.relative(settings.repoRoot, result.path),
     },
     result.duplicate
-      ? 'Direct WhatsApp audio already stored'
-      : 'Stored Bruno direct WhatsApp audio for project resolution',
+      ? 'Direct WhatsApp message already stored'
+      : 'Stored Bruno direct WhatsApp message for project resolution',
   )
 }
 
