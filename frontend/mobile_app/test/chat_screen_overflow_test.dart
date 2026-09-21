@@ -336,6 +336,41 @@ void main() {
     );
   });
 
+  testWidgets('sidebar colors WhatsApp intake titles with their profile color',
+      (WidgetTester tester) async {
+    const whatsappGreen = Color(0xFF25D366);
+    final session = _buildSession(
+      title: 'WhatsApp · Add project indicator',
+      messages: const <ChatMessage>[],
+      agentProfileId: 'whatsapp_intake_planner',
+      agentProfileName: 'WhatsApp Intake',
+      agentProfileColor: '#25D366',
+    );
+
+    await _pumpChatScreen(
+      tester,
+      session: session,
+      apiClient: _ChatScreenOverflowApiClient(session),
+      sidebarWorkspaces: const <Workspace>[
+        Workspace(name: 'Workspace A', path: '/workspace/a'),
+      ],
+    );
+
+    tester.state<ScaffoldState>(find.byType(Scaffold)).openDrawer();
+    await tester.pumpAndSettle();
+
+    final title = tester.widget<Text>(
+      find.descendant(
+        of: find.byType(Drawer),
+        matching: find.text(
+          'WhatsApp · Add project indicator',
+          skipOffstage: false,
+        ),
+      ),
+    );
+    expect(title.style?.color, whatsappGreen);
+  });
+
   testWidgets('sidebar session tiles sort by last message and hide metadata',
       (WidgetTester tester) async {
     final sameLastMessageAt = DateTime.utc(2026, 1, 1, 12);
@@ -605,6 +640,15 @@ void main() {
       find.text('The team enabled the summarizer and added provenance UI.'),
       findsOneWidget,
     );
+    expect(find.text('Provenance'), findsNothing);
+    expect(
+      find.text('Please add a summarizer tab with provenance details.'),
+      findsNothing,
+    );
+
+    await tester.tap(find.text('Show 2 source messages'));
+    await tester.pumpAndSettle();
+
     expect(find.text('Provenance'), findsOneWidget);
     expect(find.textContaining('User'), findsWidgets);
     expect(find.textContaining('Generator'), findsWidgets);
@@ -616,6 +660,64 @@ void main() {
       find.textContaining('Implemented the turn summary view'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('large summary provenance stays collapsed and paged on mobile',
+      (WidgetTester tester) async {
+    final sourceMessages = List<ChatTurnSummarySourceMessage>.generate(
+      114,
+      (index) => ChatTurnSummarySourceMessage(
+        messageId: 'source-$index',
+        isUser: index.isEven,
+        authorType: index.isEven
+            ? ChatMessageAuthorType.human
+            : ChatMessageAuthorType.assistant,
+        agentId: index.isEven ? AgentId.user : AgentId.generator,
+        agentType: index.isEven ? AgentType.human : AgentType.generator,
+        content: 'Large provenance source $index',
+        status: ChatMessageStatus.completed,
+        createdAt: DateTime.utc(2026, 1, 1, 12, index % 60),
+      ),
+    );
+    await _pumpChatScreen(
+      tester,
+      width: 390,
+      session: _buildSession(
+        messages: const <ChatMessage>[],
+        turnSummariesEnabled: true,
+        turnSummaries: <ChatTurnSummary>[
+          ChatTurnSummary(
+            id: 'turn-summary-large',
+            content: 'Large summary remains quick to scan.',
+            sourceMessageIds:
+                sourceMessages.map((message) => message.messageId).toList(),
+            sourceMessages: sourceMessages,
+            createdAt: DateTime.utc(2026, 1, 1, 13),
+            updatedAt: DateTime.utc(2026, 1, 1, 13),
+          ),
+        ],
+      ),
+    );
+
+    await tester.tap(find.text('Chat summary').first);
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('Show 114 source messages'),
+      120,
+      scrollable: _chatBodyScrollable(),
+    );
+    await tester.ensureVisible(find.text('Show 114 source messages'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Large provenance source 0'), findsNothing);
+    await tester.tap(find.text('Show 114 source messages'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Large provenance source 0'), findsOneWidget);
+    expect(find.text('Large provenance source 7'), findsOneWidget);
+    expect(find.text('Large provenance source 8'), findsNothing);
+    expect(find.text('Show more (106 remaining)'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(
@@ -1948,6 +2050,9 @@ SessionDetail _buildSession({
   AgentDisplayMode displayMode = AgentDisplayMode.showAll,
   ConversationProduct? conversationProduct,
   String? topicDescription,
+  String agentProfileId = 'default',
+  String agentProfileName = 'Generator',
+  String agentProfileColor = '#55D6BE',
   bool turnSummariesEnabled = false,
   List<ChatTurnSummary> turnSummaries = const <ChatTurnSummary>[],
 }) {
@@ -1978,9 +2083,9 @@ SessionDetail _buildSession({
     workspacePath: workspacePath,
     workspaceName: workspaceName,
     turnSummariesEnabled: turnSummariesEnabled,
-    agentProfileId: 'default',
-    agentProfileName: 'Generator',
-    agentProfileColor: '#55D6BE',
+    agentProfileId: agentProfileId,
+    agentProfileName: agentProfileName,
+    agentProfileColor: agentProfileColor,
     createdAt: createdAt ?? now,
     updatedAt: updatedAt ?? now,
     messages: messages,

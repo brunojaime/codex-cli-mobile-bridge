@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "actionable",
+    "classification",
+    "confidence",
+    "task_title",
+    "summary",
+    "requested_outcome",
+    "rationale",
+    "source_message_ids",
+    "needs_clarification",
+    "clarification_question"
+  ],
+  "properties": {
+    "version": { "type": "integer", "const": 1 },
+    "actionable": { "type": "boolean" },
+    "classification": {
+      "type": "string",
+      "enum": [
+        "implementation_request",
+        "bug_report",
+        "investigation",
+        "question",
+        "decision",
+        "approval",
+        "feedback",
+        "context",
+        "social",
+        "empty",
+        "unclear"
+      ]
+    },
+    "confidence": {
+      "type": "string",
+      "enum": ["high", "medium", "low"]
+    },
+    "task_title": { "type": "string", "maxLength": 80 },
+    "summary": { "type": "string", "maxLength": 1000 },
+    "requested_outcome": { "type": "string", "maxLength": 1500 },
+    "rationale": { "type": "string", "maxLength": 1000 },
+    "source_message_ids": {
+      "type": "array",
+      "items": { "type": "string", "maxLength": 160 },
+      "maxItems": 50,
+      "uniqueItems": true
+    },
+    "needs_clarification": { "type": "boolean" },
+    "clarification_question": { "type": "string", "maxLength": 500 }
+  }
+}

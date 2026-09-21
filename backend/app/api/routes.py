@@ -6318,21 +6318,24 @@ def _run_configurations_by_id_for_session(
 
 
 @router.get("/sessions", response_model=list[SessionSummaryResponse])
-async def list_sessions(
+def list_sessions(
     service: MessageService = Depends(get_message_service),
 ) -> list[SessionSummaryResponse]:
     sessions = service.list_sessions()
     responses: list[SessionSummaryResponse] = []
 
+    jobs_by_session_id: dict[str, dict[str, Job]] = {}
+    for job in service.list_stored_jobs():
+        jobs_by_session_id.setdefault(job.session_id, {})[job.id] = job
+
     for session in sessions:
         messages = service.list_messages(session.id)
-        jobs_by_id = _jobs_by_id_for_messages(service, messages, sync_jobs=False)
         responses.append(
             SessionSummaryResponse.from_domain(
                 session,
                 messages=messages,
                 turn_summaries=service.list_turn_summaries(session.id),
-                jobs_by_id=jobs_by_id,
+                jobs_by_id=jobs_by_session_id.get(session.id, {}),
             )
         )
 
@@ -6361,7 +6364,7 @@ async def create_session(
 
 
 @router.get("/sessions/{session_id}", response_model=SessionDetailResponse)
-async def get_session(
+def get_session(
     session_id: str,
     before: str | None = Query(default=None),
     limit: int = Query(default=40, ge=1, le=200),
@@ -6372,13 +6375,20 @@ async def get_session(
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found.")
 
-    initial_messages = service.list_messages(session_id)
-    for message in initial_messages:
-        if message.job_id:
-            service.get_job(message.job_id)
-
     messages = service.list_messages(session_id)
-    jobs_by_id = _jobs_by_id_for_messages(service, messages)
+    stored_jobs = service.list_stored_jobs_for_session(session_id)
+    jobs_requiring_sync = [
+        job
+        for job in stored_jobs
+        if not job.status.is_terminal or not job.auto_chain_processed
+    ]
+    for job in jobs_requiring_sync:
+        service.get_job(job.id)
+
+    if jobs_requiring_sync:
+        messages = service.list_messages(session_id)
+        stored_jobs = service.list_stored_jobs_for_session(session_id)
+    jobs_by_id = {job.id: job for job in stored_jobs}
 
     refreshed_session = service.refresh_session(session_id) or session
     try:

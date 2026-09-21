@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "groups": {
+    "120363000000000000@g.us": {
+      "enabled": true,
+      "project": "proyecto-ejemplo"
+    }
+  }
+}

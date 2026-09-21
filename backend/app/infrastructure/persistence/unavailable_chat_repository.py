@@ -46,6 +46,9 @@ class UnavailableChatRepository(ChatRepository):
     def list_jobs(self, *, statuses: set[JobStatus] | None = None) -> list[Job]:
         raise PersistenceUnavailableError(self._issue)
 
+    def list_jobs_for_session(self, session_id: str) -> list[Job]:
+        raise PersistenceUnavailableError(self._issue)
+
     def save_session(self, session: ChatSession) -> None:
         raise PersistenceUnavailableError(self._issue)
 

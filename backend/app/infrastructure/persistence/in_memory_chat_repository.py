@@ -82,6 +82,11 @@ class InMemoryChatRepository(ChatRepository):
             jobs = [job for job in jobs if job.status in statuses]
         return sorted(jobs, key=lambda job: (job.updated_at, job.id), reverse=True)
 
+    def list_jobs_for_session(self, session_id: str) -> list[Job]:
+        with self._lock:
+            jobs = [job for job in self._jobs.values() if job.session_id == session_id]
+        return sorted(jobs, key=lambda job: (job.updated_at, job.id), reverse=True)
+
     def save_session(self, session: ChatSession) -> None:
         normalized_configuration = session.agent_configuration.normalized()
         session.agent_configuration = normalized_configuration

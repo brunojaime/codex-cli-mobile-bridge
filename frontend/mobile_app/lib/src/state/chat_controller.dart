@@ -314,11 +314,11 @@ class ChatController extends ChangeNotifier {
         turnSummariesEnabled: turnSummariesEnabled,
       );
       _errorText = null;
-      await refreshSessions();
       _selectedSessionId = session.id;
       _currentSession = session;
       _trackPendingJobsFromSession(session);
       notifyListeners();
+      await refreshSessions();
     } catch (error) {
       _errorText = '$error';
       notifyListeners();

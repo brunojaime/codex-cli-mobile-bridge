@@ -99,6 +99,10 @@ class ChatRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def list_jobs_for_session(self, session_id: str) -> list[Job]:
+        raise NotImplementedError
+
+    @abstractmethod
     def save_session(self, session: ChatSession) -> None:
         raise NotImplementedError
 

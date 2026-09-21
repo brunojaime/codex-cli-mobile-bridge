@@ -1,0 +1,4 @@
+interface:
+  display_name: "Registro de dominios NIC.ar"
+  short_description: "Prepara compras de dominios .ar con confirmación humana."
+  default_prompt: "Verificá este dominio .ar y prepará el enlace oficial para registrarlo."

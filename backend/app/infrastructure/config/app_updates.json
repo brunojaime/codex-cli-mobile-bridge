@@ -13,6 +13,34 @@
       "android-prod-feedback-v*": "com.ambientando.calendar"
     }
   },
+  "casa-digital-parametrica": {
+    "apkAssetPattern": "casa-digital-parametrica-*.apk",
+    "displayName": "Casa Digital Param\u00e9trica",
+    "enabled": true,
+    "expectedPackageId": "com.nienfos.casadigitalparametrica",
+    "latestAssetName": "casa-digital-parametrica-1.0.0-arm64-release-debug-signed.apk",
+    "mockOrDemo": true,
+    "previewUrl": "https://casa-digital-parametrica-demo.nienfos.workers.dev",
+    "productionReady": false,
+    "releaseChannel": "prerelease",
+    "releaseMetadata": {
+      "arm64Only": true,
+      "debugSigned": true,
+      "externalPublicationApproved": true,
+      "latestAssetName": "casa-digital-parametrica-1.0.0-arm64-release-debug-signed.apk",
+      "publicationScope": "github-prerelease-and-private-bridge-proxy",
+      "releaseTag": "android-preview-v1.0.0-build.1",
+      "sha256": "fb8adab110525401cab7ae64f845d1c75ea723069c795182d6461f63e1e896d6"
+    },
+    "releaseTagPattern": "android-preview-v*",
+    "repo": "brunojaime/casa-digital-parametrica",
+    "requiredMinimumBuild": null,
+    "runtimeProfile": "preview",
+    "verifiedPackageIds": {
+      "android-preview-v*": "com.nienfos.casadigitalparametrica",
+      "casa-digital-parametrica-*.apk": "com.nienfos.casadigitalparametrica"
+    }
+  },
   "codex-mobile": {
     "apkAssetPattern": "codex-mobile-*.apk",
     "displayName": "Codex Mobile Bridge",
@@ -57,6 +85,28 @@
       "android-v1.0.0-build.14": "com.ludmilo.gestion"
     }
   },
+  "puertos-3": {
+    "apkAssetPattern": "puertos-3*.apk",
+    "displayName": "Movimientos del Puerto",
+    "enabled": true,
+    "expectedPackageId": null,
+    "latestAssetName": "puertos-3.apk",
+    "mockOrDemo": false,
+    "previewUrl": "https://preview.nienfos.com/puertos-3",
+    "productionReady": false,
+    "releaseChannel": "prerelease",
+    "releaseMetadata": {
+      "initialPreviewRelease": true,
+      "latestAssetName": "puertos-3.apk",
+      "releaseTag": "android-preview-v0.1.0-build.3",
+      "releaseTagPattern": "android-preview-v*"
+    },
+    "releaseTagPattern": "android-preview-v*",
+    "repo": "brunojaime/puertos-3",
+    "requiredMinimumBuild": null,
+    "runtimeProfile": "preview",
+    "verifiedPackageIds": {}
+  },
   "rentid": {
     "apkAssetPattern": "rentid*.apk",
     "displayName": "Rent ID",
@@ -70,7 +120,7 @@
     "releaseMetadata": {
       "initialPreviewRelease": true,
       "latestAssetName": "rentid.apk",
-      "releaseTag": "android-preview-v0.1.0-build.38",
+      "releaseTag": "android-preview-v0.1.0-build.99",
       "releaseTagPattern": "android-preview-v*"
     },
     "releaseTagPattern": "android-preview-v*",
@@ -93,8 +143,12 @@
     }
   },
   "satshowroom": {
+    "aliases": [
+      "sat",
+      "sat-showroom"
+    ],
     "apkAssetPattern": "satshowroom*.apk",
-    "displayName": "satshowroom Preview",
+    "displayName": "SAT Showroom",
     "enabled": true,
     "expectedPackageId": "com.nienfos.satshowroom",
     "latestAssetName": "satshowroom.apk",
@@ -105,7 +159,7 @@
     "releaseMetadata": {
       "initialPreviewRelease": true,
       "latestAssetName": "satshowroom.apk",
-      "releaseTag": "android-preview-v0.1.0-build.50",
+      "releaseTag": "android-preview-v0.1.0-build.67",
       "releaseTagPattern": "android-preview-v*"
     },
     "releaseTagPattern": "android-preview-v*",
@@ -113,7 +167,7 @@
     "requiredMinimumBuild": null,
     "runtimeProfile": "preview",
     "verifiedPackageIds": {
-      "android-preview-v0.1.0-build.50": "com.nienfos.satshowroom",
+      "android-preview-v0.1.0-build.67": "com.nienfos.satshowroom",
       "satshowroom.apk": "com.nienfos.satshowroom"
     }
   },

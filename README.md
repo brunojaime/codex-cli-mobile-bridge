@@ -67,7 +67,10 @@ Repo app install state is reconciled against the stored Codex MCP server config 
 
 Repo app specs intentionally do not declare `cwd`. The current Codex CLI install flow persists transport type, command, args, and env, but not a stable `cwd`, so this repo's MCP app contract only advertises fields that round-trip through installation accurately.
 
-The first built-in repo app is `project-catalog`, which exposes the folders under `PROJECTS_ROOT` as a read-only MCP server with project metadata.
+Built-in repo apps include:
+
+- `project-catalog`, which exposes the folders under `PROJECTS_ROOT` as a read-only MCP server with project metadata.
+- `nic-ar-domains`, which checks `.ar` availability through NIC Argentina WHOIS, reads current official fees, and prepares a verified TAD/ARCA registration handoff without handling fiscal credentials or payment.
 
 To scaffold a new app, use the repo skill helper:
 
@@ -97,6 +100,7 @@ This repo also includes Codex skills under `codex-skills/`.
 - `codex-mobile-bridge-ubuntu-setup`: install, validate, run, and expose this repo on a fresh Ubuntu/Linux machine, including backend startup and Tailscale setup.
 - `mcp-app-builder`: scaffold repo-local MCP apps.
 - `codex-mobile-android-release`: publish or update the Android APK release.
+- `nic-ar-domain-registration`: prepare a human-confirmed `.ar` registration using the deterministic `nic-ar-domains` MCP tools.
 
 For a quick portability check on a second machine, run:
 

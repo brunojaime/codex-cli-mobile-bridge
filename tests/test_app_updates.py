@@ -329,7 +329,7 @@ def test_default_registry_uses_satshowroom_as_canonical_app() -> None:
     assert config.release_tag_pattern == "android-preview-v*"
     assert config.apk_asset_pattern == "satshowroom*.apk"
     assert config.latest_asset_name == "satshowroom.apk"
-    assert config.expected_package_id == "com.example.satshowroom"
+    assert config.expected_package_id == "com.nienfos.satshowroom"
     assert config.preview_url == "https://preview.nienfos.com/satshowroom"
     assert config.runtime_profile == "preview"
     assert config.mock_or_demo is False

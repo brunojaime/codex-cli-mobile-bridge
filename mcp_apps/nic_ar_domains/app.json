@@ -1,0 +1,32 @@
+{
+  "app_id": "nic-ar-domains",
+  "name": "NIC Argentina Domains",
+  "description": "Verifica dominios .ar, consulta aranceles oficiales vigentes y prepara el enlace de registro en TAD con confirmación humana.",
+  "recommended_server_id": "nic-ar-domains",
+  "transport": "stdio",
+  "command": "uv",
+  "args": [
+    "run",
+    "--project",
+    "{repo_root}",
+    "python",
+    "-m",
+    "mcp_apps.nic_ar_domains.server"
+  ],
+  "env": {
+    "NIC_AR_HTTP_USER_AGENT": "CodexMobileBridge-NICArDomains/1.0"
+  },
+  "supports_ui_extension": false,
+  "ui_entry_uri": null,
+  "tags": [
+    "domains",
+    "nic-ar",
+    "registration",
+    "whois",
+    "read-only"
+  ],
+  "preview_tool": {
+    "name": "get_domain_workflow",
+    "arguments": {}
+  }
+}

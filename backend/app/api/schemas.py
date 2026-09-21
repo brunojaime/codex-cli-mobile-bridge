@@ -2915,6 +2915,7 @@ class TurnSummaryResponse(BaseModel):
         summary: ChatTurnSummary,
         *,
         messages_by_id: dict[str, ChatMessage],
+        source_content_limit: int | None = None,
     ) -> "TurnSummaryResponse":
         source_messages = (
             [
@@ -2925,7 +2926,10 @@ class TurnSummaryResponse(BaseModel):
                     agent_id=message.agent_id,
                     agent_type=message.agent_type,
                     agent_label=message.agent_label,
-                    content=sanitize_image_attachment_error_text(message.content),
+                    content=_turn_summary_source_content(
+                        message.content,
+                        limit=source_content_limit,
+                    ),
                     status=message.status,
                     created_at=message.created_at,
                 )
@@ -2933,7 +2937,15 @@ class TurnSummaryResponse(BaseModel):
             ]
             if summary.source_messages
             else [
-                TurnSummarySourceMessageResponse.from_domain(message)
+                TurnSummarySourceMessageResponse(
+                    **TurnSummarySourceMessageResponse.from_domain(message).model_dump(
+                        exclude={"content"}
+                    ),
+                    content=_turn_summary_source_content(
+                        message.content,
+                        limit=source_content_limit,
+                    ),
+                )
                 for message_id in summary.source_message_ids
                 if (message := messages_by_id.get(message_id)) is not None
             ]
@@ -2946,6 +2958,19 @@ class TurnSummaryResponse(BaseModel):
             created_at=summary.created_at,
             updated_at=summary.updated_at,
         )
+
+
+def _turn_summary_source_content(
+    content: str | None,
+    *,
+    limit: int | None,
+) -> str | None:
+    sanitized = sanitize_image_attachment_error_text(content)
+    if sanitized is None or limit is None or len(sanitized) <= limit:
+        return sanitized
+    if limit <= 3:
+        return sanitized[:limit]
+    return f"{sanitized[: limit - 3].rstrip()}..."
 
 
 class ConversationProductResponse(BaseModel):
@@ -3305,6 +3330,7 @@ class SessionDetailResponse(BaseModel):
                 TurnSummaryResponse.from_domain(
                     summary,
                     messages_by_id=messages_by_id,
+                    source_content_limit=140,
                 )
                 for summary in (turn_summaries or [])
             ],

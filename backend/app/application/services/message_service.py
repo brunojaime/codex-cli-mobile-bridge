@@ -462,6 +462,12 @@ class MessageService:
     def list_sessions(self) -> list[ChatSession]:
         return self._repository.list_sessions()
 
+    def list_stored_jobs(self) -> list[Job]:
+        return self._repository.list_jobs()
+
+    def list_stored_jobs_for_session(self, session_id: str) -> list[Job]:
+        return self._repository.list_jobs_for_session(session_id)
+
     def list_turn_summaries(self, session_id: str) -> list[ChatTurnSummary]:
         return self._repository.list_turn_summaries(session_id)
 

@@ -1195,6 +1195,21 @@ def test_turn_summary_provenance_snapshot_is_immutable_after_source_message_muta
                 message.id: message for message in service.list_messages(session.id)
             },
         )
+        excerpt_response = TurnSummaryResponse.from_domain(
+            original_summary,
+            messages_by_id={},
+            source_content_limit=20,
+        )
+
+        assert excerpt_response.source_messages
+        assert all(
+            source.content is None or len(source.content) <= 20
+            for source in excerpt_response.source_messages
+        )
+        assert any(
+            source.content is not None and source.content.endswith("...")
+            for source in excerpt_response.source_messages
+        )
 
         mutated_message_id = original_summary.source_message_ids[-1]
         mutated_message = repository.get_message(mutated_message_id)

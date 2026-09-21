@@ -5313,6 +5313,8 @@ class _SessionTile extends StatelessWidget {
             : isUploading
                 ? const Color(0xFFEAF0FF)
                 : null;
+    final isWhatsAppIntake =
+        session.agentProfileId == 'whatsapp_intake_planner';
     final timelineColor = isActive || isUploading
         ? const Color(0xFFA8C7C0)
         : const Color(0xFF8B97B5);
@@ -5339,7 +5341,11 @@ class _SessionTile extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              color: session.isArchived ? const Color(0xFFB8C8EA) : titleColor,
+              color: session.isArchived
+                  ? const Color(0xFFB8C8EA)
+                  : isWhatsAppIntake
+                      ? _colorFromHex(session.agentProfileColor)
+                      : titleColor,
               fontSize: 15,
               fontWeight: isActive ? FontWeight.w700 : FontWeight.w600,
             ),
@@ -6325,13 +6331,31 @@ class _TurnSummariesPlaceholder extends StatelessWidget {
   }
 }
 
-class _TurnSummaryCard extends StatelessWidget {
+class _TurnSummaryCard extends StatefulWidget {
   const _TurnSummaryCard({required this.summary});
 
   final ChatTurnSummary summary;
 
   @override
+  State<_TurnSummaryCard> createState() => _TurnSummaryCardState();
+}
+
+class _TurnSummaryCardState extends State<_TurnSummaryCard> {
+  static const int _initialVisibleSourceCount = 8;
+  static const int _sourcePageSize = 16;
+
+  bool _showSources = false;
+  int _visibleSourceCount = _initialVisibleSourceCount;
+
+  @override
   Widget build(BuildContext context) {
+    final summary = widget.summary;
+    final sourceMessages = summary.sourceMessages;
+    final visibleSources = sourceMessages.take(_visibleSourceCount);
+    final remainingSourceCount = math.max(
+      0,
+      sourceMessages.length - _visibleSourceCount,
+    );
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -6356,9 +6380,9 @@ class _TurnSummaryCard extends StatelessWidget {
                 ),
               ),
               Text(
-                summary.sourceMessages.length == 1
+                sourceMessages.length == 1
                     ? '1 source'
-                    : '${summary.sourceMessages.length} sources',
+                    : '${sourceMessages.length} sources',
                 style: const TextStyle(color: Color(0xFF9FB0D4), fontSize: 12),
               ),
             ],
@@ -6368,69 +6392,111 @@ class _TurnSummaryCard extends StatelessWidget {
             summary.content,
             style: const TextStyle(color: Colors.white, height: 1.45),
           ),
-          const SizedBox(height: 14),
-          const Text(
-            'Provenance',
-            style: TextStyle(
-              color: Color(0xFF9FB0D4),
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
           const SizedBox(height: 8),
-          if (summary.sourceMessages.isEmpty)
+          if (sourceMessages.isEmpty)
             const Text(
               'Source message metadata is unavailable for this summary.',
               style: TextStyle(color: Color(0xFFB8C8EA), height: 1.4),
             )
-          else
-            Column(
-              children: summary.sourceMessages.map((message) {
-                final agentLabel = (message.agentLabel ?? '').trim();
-                final label = agentLabel.isNotEmpty
-                    ? agentLabel
-                    : message.isUser
-                        ? 'User'
-                        : message.agentId.name;
-                final excerpt = (message.content ?? '').trim();
-                final excerptText = excerpt.isNotEmpty
-                    ? excerpt.length <= 140
-                        ? excerpt
-                        : '${excerpt.substring(0, 137)}...'
-                    : 'Message text unavailable for this older summary.';
-                return Container(
-                  width: double.infinity,
-                  margin: const EdgeInsets.only(bottom: 8),
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF121A2C),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFF27324F)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Text(
-                        '$label • ${formatChatMessageTime(context, message.createdAt)}',
-                        style: const TextStyle(
-                          color: Color(0xFFDCE5FF),
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        excerptText,
-                        style: const TextStyle(
-                          color: Color(0xFFB8C8EA),
-                          height: 1.35,
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              }).toList(growable: false),
+          else ...<Widget>[
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () {
+                  setState(() {
+                    _showSources = !_showSources;
+                    if (!_showSources) {
+                      _visibleSourceCount = _initialVisibleSourceCount;
+                    }
+                  });
+                },
+                icon: Icon(
+                  _showSources
+                      ? Icons.expand_less_rounded
+                      : Icons.expand_more_rounded,
+                ),
+                label: Text(
+                  _showSources
+                      ? 'Hide source messages'
+                      : 'Show ${sourceMessages.length == 1 ? 'source message' : '${sourceMessages.length} source messages'}',
+                ),
+              ),
             ),
+            if (_showSources) ...<Widget>[
+              const SizedBox(height: 6),
+              const Text(
+                'Provenance',
+                style: TextStyle(
+                  color: Color(0xFF9FB0D4),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Column(
+                children: visibleSources.map((message) {
+                  final agentLabel = (message.agentLabel ?? '').trim();
+                  final label = agentLabel.isNotEmpty
+                      ? agentLabel
+                      : message.isUser
+                          ? 'User'
+                          : message.agentId.name;
+                  final excerpt = (message.content ?? '').trim();
+                  final excerptText = excerpt.isNotEmpty
+                      ? excerpt.length <= 140
+                          ? excerpt
+                          : '${excerpt.substring(0, 137)}...'
+                      : 'Message text unavailable for this older summary.';
+                  return Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF121A2C),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFF27324F)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Text(
+                          '$label • ${formatChatMessageTime(context, message.createdAt)}',
+                          style: const TextStyle(
+                            color: Color(0xFFDCE5FF),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          excerptText,
+                          style: const TextStyle(
+                            color: Color(0xFFB8C8EA),
+                            height: 1.35,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }).toList(growable: false),
+              ),
+              if (remainingSourceCount > 0)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: () {
+                      setState(() {
+                        _visibleSourceCount += _sourcePageSize;
+                      });
+                    },
+                    icon: const Icon(Icons.add_rounded),
+                    label: Text(
+                      'Show more ($remainingSourceCount remaining)',
+                    ),
+                  ),
+                ),
+            ],
+          ],
         ],
       ),
     );

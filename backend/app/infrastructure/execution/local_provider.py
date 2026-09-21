@@ -24,6 +24,57 @@ from backend.app.infrastructure.execution.base import (
 )
 
 
+def _skill_path(skill_id: str, workdir: str | None) -> Path | None:
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", skill_id):
+        return None
+    roots = [Path.home() / ".codex" / "skills", Path.home() / ".agents" / "skills"]
+    if workdir:
+        repo_root = Path(workdir).resolve()
+        roots.extend((repo_root / ".codex" / "skills", repo_root / "codex-skills"))
+    for root in roots:
+        candidate = root / skill_id / "SKILL.md"
+        if candidate.is_file():
+            return candidate.resolve()
+    return None
+
+
+def _message_with_skill_mentions(
+    message: str,
+    codex_options: CodexRunOptions | None,
+) -> str:
+    if codex_options is None:
+        return message
+    mentions = [
+        f"${skill_id}"
+        for skill_id in codex_options.normalized().skill_ids
+        if f"${skill_id}" not in message
+    ]
+    if not mentions:
+        return message
+    return f"{' '.join(mentions)}\n\n{message}"
+
+
+def _app_server_input_items(
+    message: str,
+    codex_options: CodexRunOptions | None,
+    workdir: str | None,
+) -> list[dict[str, object]]:
+    items: list[dict[str, object]] = [
+        {
+            "type": "text",
+            "text": _message_with_skill_mentions(message, codex_options),
+            "text_elements": [],
+        }
+    ]
+    if codex_options is None:
+        return items
+    for skill_id in codex_options.normalized().skill_ids:
+        path = _skill_path(skill_id, workdir)
+        if path is not None:
+            items.append({"type": "skill", "name": skill_id, "path": str(path)})
+    return items
+
+
 @dataclass(slots=True)
 class _ExecutionState:
     status: JobStatus
@@ -330,7 +381,7 @@ class LocalExecutionProvider(ExecutionProvider):
                     repo_root=Path(resolved_workdir).resolve(),
                 )
             command_parts, output_path, stdin_prompt = self._build_command(
-                message,
+                _message_with_skill_mentions(message, codex_options),
                 image_paths=image_paths,
                 provider_session_id=provider_session_id,
                 model=model,
@@ -636,13 +687,11 @@ class LocalExecutionProvider(ExecutionProvider):
                     "method": "turn/start",
                     "params": {
                         "threadId": thread_id,
-                        "input": [
-                            {
-                                "type": "text",
-                                "text": message,
-                                "text_elements": [],
-                            }
-                        ],
+                        "input": _app_server_input_items(
+                            message,
+                            codex_options,
+                            resolved_workdir,
+                        ),
                         "cwd": resolved_workdir,
                         "approvalPolicy": self._approval_policy_for_app_server(
                             self._resume_args

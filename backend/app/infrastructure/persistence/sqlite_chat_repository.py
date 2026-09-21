@@ -138,6 +138,18 @@ class SqliteChatRepository(ChatRepository):
                 ).fetchall()
         return [self._job_from_row(row) for row in rows]
 
+    def list_jobs_for_session(self, session_id: str) -> list[Job]:
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM jobs
+                WHERE session_id = ?
+                ORDER BY updated_at DESC, id DESC
+                """,
+                (session_id,),
+            ).fetchall()
+        return [self._job_from_row(row) for row in rows]
+
     def save_session(self, session: ChatSession) -> None:
         with self._lock, self._connect() as connection:
             self._write_session(connection, session)
@@ -486,6 +498,9 @@ class SqliteChatRepository(ChatRepository):
 
                 CREATE INDEX IF NOT EXISTS idx_messages_session_created_at
                 ON messages(session_id, created_at ASC);
+
+                CREATE INDEX IF NOT EXISTS idx_jobs_session_updated_at
+                ON jobs(session_id, updated_at DESC);
 
                 """
             )
