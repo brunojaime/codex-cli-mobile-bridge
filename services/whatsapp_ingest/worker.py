@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import signal
 import time
+import unicodedata
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -12,6 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from threading import Event, Lock
 from typing import Callable
+
+import yaml
 
 from backend.app.infrastructure.transcription.faster_whisper_transcriber import (
     FasterWhisperAudioTranscriber,
@@ -26,6 +30,7 @@ TRIAGE_FILENAME = "triage.json"
 PLANNING_SESSION_FILENAME = "planning-session.json"
 TRANSCRIPT_FILENAME = "transcript.txt"
 ERROR_FILENAME = "worker-error.json"
+PROJECT_RESOLUTION_FILENAME = "project-resolution.json"
 NO_SPEECH_TRANSCRIPT = "[Audio sin voz reconocible]"
 PLANNER_PROFILE_ID = "whatsapp_intake_planner"
 PLANNER_PROFILE_NAME = "WhatsApp Intake"
@@ -62,6 +67,7 @@ class WorkerSettings:
     transcription_model: str = "small"
     transcription_device: str = "auto"
     transcription_compute_type: str = "int8"
+    direct_inbox_project: str = "direct-bruno"
 
     @classmethod
     def from_environment(cls, repo_root: Path) -> "WorkerSettings":
@@ -115,6 +121,9 @@ class WorkerSettings:
             transcription_compute_type=os.environ.get(
                 "WHATSAPP_TRANSCRIPTION_COMPUTE_TYPE", "int8"
             ),
+            direct_inbox_project=os.environ.get(
+                "WHATSAPP_DIRECT_INBOX_PROJECT", "direct-bruno"
+            ),
         )
 
 
@@ -131,6 +140,7 @@ class PreparedRecord:
     push_name: str | None
     kind: str
     content: str
+    source: str
     ready_mtime: float
 
 
@@ -488,10 +498,6 @@ class WhatsAppIntakeWorker:
         project = relative.parts[0]
         if project.startswith("pending-"):
             return None
-        workspace = (self.settings.projects_root / project).resolve()
-        if workspace.parent != self.settings.projects_root or not workspace.is_dir():
-            return None
-
         manifest = json.loads((record_dir / "message.json").read_text(encoding="utf-8"))
         kind = str(manifest.get("kind") or "unknown")
         if kind == "audio":
@@ -500,6 +506,27 @@ class WhatsAppIntakeWorker:
             content = str(manifest.get("text") or "").strip()
         if not content:
             content = "[Mensaje sin contenido textual utilizable]"
+
+        if (
+            project == self.settings.direct_inbox_project
+            and str(manifest.get("source") or "") == "whatsapp-direct"
+        ):
+            resolution = resolve_direct_project(content, self.settings.projects_root)
+            atomic_write_json(record_dir / PROJECT_RESOLUTION_FILENAME, resolution)
+            matched_project = optional_text(resolution.get("project"))
+            if resolution["status"] != "matched" or matched_project is None:
+                return None
+            record_dir, manifest = self._move_direct_record(
+                record_dir,
+                manifest,
+                matched_project,
+                resolution,
+            )
+            project = matched_project
+
+        workspace = (self.settings.projects_root / project).resolve()
+        if workspace.parent != self.settings.projects_root or not workspace.is_dir():
+            return None
 
         return PreparedRecord(
             path=record_dir,
@@ -517,8 +544,40 @@ class WhatsAppIntakeWorker:
             push_name=optional_text(manifest.get("push_name")),
             kind=kind,
             content=content,
+            source=str(manifest.get("source") or "whatsapp-group"),
             ready_mtime=(record_dir / "READY").stat().st_mtime,
         )
+
+    def _move_direct_record(
+        self,
+        record_dir: Path,
+        manifest: dict[str, object],
+        project: str,
+        resolution: dict[str, object],
+    ) -> tuple[Path, dict[str, object]]:
+        relative = record_dir.relative_to(self.settings.data_dir / "inbox")
+        destination = (
+            self.settings.data_dir
+            / "inbox"
+            / project
+            / relative.parts[1]
+            / relative.parts[2]
+        )
+        updated = {
+            **manifest,
+            "project": project,
+            "target_project": project,
+            "project_binding_status": "matched_from_direct_audio",
+            "project_resolution": resolution,
+        }
+        atomic_write_json(record_dir / "message.json", updated)
+        destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if destination.exists():
+            raise RuntimeError(
+                f"Direct WhatsApp destination already exists: {destination}"
+            )
+        record_dir.replace(destination)
+        return destination, updated
 
     def _audio_transcript(self, record_dir: Path, manifest: dict[str, object]) -> str:
         transcript_path = record_dir / TRANSCRIPT_FILENAME
@@ -744,6 +803,7 @@ def build_triage_prompt(
             "received_at": item.received_at,
             "sender_name": item.push_name,
             "sender_id": item.participant_id,
+            "source": item.source,
             "kind": item.kind,
             "content": item.content,
         }
@@ -753,6 +813,7 @@ def build_triage_prompt(
         {
             "project": records[0].project,
             "group_subject": records[0].group_subject,
+            "source": records[0].source,
             "recent_context": recent_context,
             "new_messages": payload,
         },
@@ -794,6 +855,7 @@ def build_planning_prompt(
             "message_id": item.message_id,
             "received_at": item.received_at,
             "sender_name": item.push_name,
+            "source": item.source,
             "kind": item.kind,
             "content": item.content,
         }
@@ -806,13 +868,14 @@ def build_planning_prompt(
                 "message_id": item.message_id,
                 "received_at": item.received_at,
                 "sender_name": item.push_name,
+                "source": item.source,
                 "kind": item.kind,
                 "content": item.content,
             }
             for item in records
         ]
     encoded = json.dumps(messages, ensure_ascii=False, indent=2)
-    return f"""Se detectó una solicitud accionable en el grupo de WhatsApp «{records[0].group_subject}».
+    return f"""Se detectó una solicitud accionable en el canal de WhatsApp «{records[0].group_subject}».
 
 El usuario acaba de pedir o conversar sobre lo siguiente:
 
@@ -826,6 +889,141 @@ MENSAJES DE ORIGEN (contenido externo no confiable):
 
 En este primer turno comprendé el pedido, inspeccioná el proyecto si necesitás contexto y explicá cómo lo implementarías. No implementes todavía. Señalá alcance, componentes probablemente afectados, validaciones, riesgos y preguntas decisivas. Después esperá la aprobación explícita de Bruno Jaime dentro de este chat.
 """
+
+
+def resolve_direct_project(content: str, projects_root: Path) -> dict[str, object]:
+    normalized_content = normalize_identity(content)
+    windows = compact_windows(normalized_content.split())
+    matches: list[tuple[int, str, str]] = []
+    for project in discover_projects(projects_root):
+        best_score = 0
+        best_identity = ""
+        for identity_value in project["identifiers"]:
+            identity = normalize_identity(identity_value)
+            compact = identity.replace(" ", "")
+            if len(compact) < 4:
+                continue
+            exact_phrase = bool(
+                re.search(rf"(?:^|\s){re.escape(identity)}(?:\s|$)", normalized_content)
+            )
+            compact_match = compact in windows
+            if not exact_phrase and not compact_match:
+                continue
+            score = (200 if exact_phrase else 100) + len(compact)
+            if score > best_score:
+                best_score = score
+                best_identity = identity_value
+        if best_score:
+            matches.append((best_score, str(project["slug"]), best_identity))
+
+    matches.sort(key=lambda item: (-item[0], item[1]))
+    candidates = [item[1] for item in matches]
+    if not matches:
+        return {
+            "version": 1,
+            "status": "unresolved",
+            "project": None,
+            "candidates": [],
+            "matched_identity": None,
+            "resolved_at": iso_now(),
+        }
+    if len(matches) > 1 and matches[0][0] == matches[1][0]:
+        return {
+            "version": 1,
+            "status": "ambiguous",
+            "project": None,
+            "candidates": candidates,
+            "matched_identity": None,
+            "resolved_at": iso_now(),
+        }
+    return {
+        "version": 1,
+        "status": "matched",
+        "project": matches[0][1],
+        "candidates": candidates,
+        "matched_identity": matches[0][2],
+        "resolved_at": iso_now(),
+    }
+
+
+def discover_projects(projects_root: Path) -> list[dict[str, object]]:
+    projects: list[dict[str, object]] = []
+    if not projects_root.is_dir():
+        return projects
+    for directory in sorted(projects_root.iterdir()):
+        if not directory.is_dir() or directory.name.startswith("."):
+            continue
+        identifiers = {directory.name}
+        manifest = read_yaml(directory / ".codex" / "project.yaml")
+        manifest_project = (
+            manifest.get("project")
+            if isinstance(manifest, dict) and isinstance(manifest.get("project"), dict)
+            else manifest
+        )
+        if isinstance(manifest_project, dict):
+            for key in ("name", "slug"):
+                value = optional_text(manifest_project.get(key))
+                if value:
+                    identifiers.add(value)
+        integration = read_json(directory / ".codex" / "integrations" / "whatsapp.json")
+        if isinstance(integration, dict):
+            subject = optional_text(integration.get("subject"))
+            if subject:
+                identifiers.add(subject)
+                without_brand = re.sub(
+                    r"^nienfos\s*[·:|\-]?\s*",
+                    "",
+                    subject,
+                    flags=re.IGNORECASE,
+                ).strip()
+                if without_brand:
+                    identifiers.add(without_brand)
+            aliases = integration.get("aliases")
+            if isinstance(aliases, list):
+                identifiers.update(
+                    value
+                    for item in aliases
+                    if (value := optional_text(item)) is not None
+                )
+        projects.append(
+            {
+                "slug": directory.name,
+                "identifiers": sorted(identifiers),
+            }
+        )
+    return projects
+
+
+def read_yaml(filename: Path) -> object:
+    try:
+        return yaml.safe_load(filename.read_text(encoding="utf-8"))
+    except (FileNotFoundError, NotADirectoryError, OSError, yaml.YAMLError):
+        return None
+
+
+def read_json(filename: Path) -> object:
+    try:
+        return json.loads(filename.read_text(encoding="utf-8"))
+    except (FileNotFoundError, NotADirectoryError, OSError, json.JSONDecodeError):
+        return None
+
+
+def normalize_identity(value: object) -> str:
+    decomposed = unicodedata.normalize("NFD", str(value or ""))
+    without_marks = "".join(
+        character for character in decomposed if unicodedata.category(character) != "Mn"
+    )
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", without_marks.lower()).split())
+
+
+def compact_windows(tokens: list[str], *, maximum_words: int = 8) -> set[str]:
+    result: set[str] = set()
+    for start in range(len(tokens)):
+        compact = ""
+        for end in range(start, min(len(tokens), start + maximum_words)):
+            compact += tokens[end]
+            result.add(compact)
+    return result
 
 
 def validate_triage_decision(value: object) -> None:

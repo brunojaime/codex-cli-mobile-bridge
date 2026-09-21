@@ -157,6 +157,23 @@ groups: creating the first linked project group adds Bruno and Mariano to the
 community without creating a separate placeholder group. Private idempotency
 state lives in `.data/whatsapp_ingest/community.json`.
 
+## Temporary direct-audio intake
+
+Bruno can send a private voice note to Nienfos Codex while project groups are
+still being provisioned. The receiver accepts only audio from Bruno's stored
+WhatsApp identities and silently ignores every other private sender and
+non-audio private message.
+
+The voice note must mention the project name, slug, WhatsApp subject, or a
+configured alias. It is first stored under the neutral `direct-bruno` inbox,
+transcribed locally, and matched deterministically against the current project
+catalog. A unique match moves the complete record into that project's inbox and
+continues through the ordinary quiet-window triage. An unresolved or ambiguous
+match remains pending and never creates a Codex chat. No WhatsApp reply is sent.
+
+The original audio, transcript, sender, project-resolution decision, triage,
+and Codex submission markers remain together for auditability.
+
 ## Stored record
 
 Each accepted message becomes an immutable directory:
@@ -209,6 +226,7 @@ reconciler promotes their intake directory to a real project.
 | `WHATSAPP_ADMIN_HOST` | `127.0.0.1` |
 | `WHATSAPP_ADMIN_PORT` | `8787` |
 | `WHATSAPP_DATA_DIR` | `<repo>/.data/whatsapp_ingest` |
+| `WHATSAPP_DIRECT_INBOX_PROJECT` | `direct-bruno` |
 | `WHATSAPP_AUTH_DIR` | `<data>/auth` |
 | `WHATSAPP_PROJECTS_ROOT` | `/home/batata/Projects` on this installation |
 | `WHATSAPP_PROJECT_FACTORY_URL` | `http://127.0.0.1:8000` |

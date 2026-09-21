@@ -187,6 +187,9 @@ test('registers a shared Mariano contact without adding anyone to the admin grou
     '5491155551000@s.whatsapp.net',
     '5491155552000@s.whatsapp.net',
   ])
+  assert.equal(await manager.roleForMessage({
+    key: { remoteJid: '5491155551000@s.whatsapp.net' },
+  }), 'bruno')
 })
 
 test('accepts one authorized contact card even when WhatsApp omits its display name', async (context) => {

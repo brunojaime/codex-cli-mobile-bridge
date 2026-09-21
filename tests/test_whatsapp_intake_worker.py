@@ -9,12 +9,14 @@ from services.whatsapp_ingest.worker import (
     NO_SPEECH_TRANSCRIPT,
     PLANNER_PROFILE_COLOR,
     PLANNER_PROFILE_ID,
+    PROJECT_RESOLUTION_FILENAME,
     SUBMISSION_FILENAME,
     TRANSCRIPT_FILENAME,
     TRIAGE_FILENAME,
     TriageDecision,
     WhatsAppIntakeWorker,
     WorkerSettings,
+    resolve_direct_project,
 )
 
 
@@ -99,11 +101,13 @@ def write_record(
     kind: str,
     text: str | None = None,
     ready_mtime: float | None = None,
+    source: str = "whatsapp-group",
 ) -> Path:
     record = data_dir / "inbox" / project / "2026-09-19" / message_id
     record.mkdir(parents=True)
     manifest = {
         "message_id": message_id,
+        "source": source,
         "group_id": "group-1@g.us",
         "group_subject": "Cliente Uno",
         "participant_id": "5491111111111@s.whatsapp.net",
@@ -302,3 +306,86 @@ def test_audio_without_speech_is_archived_without_llm_or_retry(tmp_path: Path) -
     assert triage.calls == []
     assert bridge.created == []
     assert worker.run_once() == 0
+
+
+def test_direct_bruno_audio_resolves_project_then_uses_existing_triage(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    projects_root = tmp_path / "Projects"
+    workspace = projects_root / "rentid"
+    (workspace / ".codex").mkdir(parents=True)
+    (workspace / ".codex" / "project.yaml").write_text(
+        "project:\n  name: Rent ID\n  slug: rentid\n",
+        encoding="utf-8",
+    )
+    original = write_record(
+        data_dir,
+        project="direct-bruno",
+        message_id="audio-1",
+        kind="audio",
+        source="whatsapp-direct",
+    )
+    bridge = FakeBridge()
+    triage = FakeTriage(decision(actionable=True))
+    worker = WhatsAppIntakeWorker(
+        settings(data_dir, projects_root),
+        bridge=bridge,  # type: ignore[arg-type]
+        triage=triage,  # type: ignore[arg-type]
+        transcribe=lambda _path, _mime: (
+            "Esto es para el proyecto Rent ID. Hay que revisar el acceso principal."
+        ),
+    )
+
+    assert worker.run_once() == 1
+    moved = data_dir / "inbox" / "rentid" / "2026-09-19" / "audio-1"
+    assert not original.exists()
+    assert moved.is_dir()
+    resolution = json.loads((moved / PROJECT_RESOLUTION_FILENAME).read_text())
+    assert resolution["status"] == "matched"
+    assert resolution["project"] == "rentid"
+    manifest = json.loads((moved / "message.json").read_text())
+    assert manifest["source"] == "whatsapp-direct"
+    assert manifest["target_project"] == "rentid"
+    assert manifest["project_binding_status"] == "matched_from_direct_audio"
+    assert triage.calls[0]["workspace_path"] == workspace
+    assert bridge.created[0]["workspace_path"] == workspace
+
+
+def test_direct_audio_without_project_stays_pending_without_triage(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    projects_root = tmp_path / "Projects"
+    (projects_root / "rentid").mkdir(parents=True)
+    record = write_record(
+        data_dir,
+        project="direct-bruno",
+        message_id="direct-unresolved",
+        kind="audio",
+        source="whatsapp-direct",
+    )
+    bridge = FakeBridge()
+    triage = FakeTriage(decision(actionable=True))
+    worker = WhatsAppIntakeWorker(
+        settings(data_dir, projects_root),
+        bridge=bridge,  # type: ignore[arg-type]
+        triage=triage,  # type: ignore[arg-type]
+        transcribe=lambda _path, _mime: "Quiero revisar una pantalla.",
+    )
+
+    assert worker.run_once() == 0
+    resolution = json.loads((record / PROJECT_RESOLUTION_FILENAME).read_text())
+    assert resolution["status"] == "unresolved"
+    assert triage.calls == []
+    assert bridge.created == []
+
+
+def test_direct_project_resolution_accepts_spoken_spacing(tmp_path: Path) -> None:
+    projects_root = tmp_path / "Projects"
+    project = projects_root / "rentid"
+    project.mkdir(parents=True)
+
+    resolution = resolve_direct_project(
+        "Este audio es para el proyecto Rent ID.",
+        projects_root,
+    )
+
+    assert resolution["status"] == "matched"
+    assert resolution["project"] == "rentid"

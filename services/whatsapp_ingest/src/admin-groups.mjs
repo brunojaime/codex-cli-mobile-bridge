@@ -70,6 +70,11 @@ export class AdminGroupManager {
     ].filter(Boolean)
   }
 
+  async roleForMessage(message) {
+    const state = await this.#loadOrBootstrapState()
+    return authorizedRole(state, senderIdentities(message))
+  }
+
   async handleSharedContacts({ contacts, message }) {
     const state = this.state
     if (!state || !this.isAdminGroup(message?.key?.remoteJid)) {
@@ -311,6 +316,8 @@ function senderIdentities(message) {
   return new Set([
     message?.key?.participant,
     message?.key?.participantAlt,
+    message?.key?.remoteJid,
+    message?.key?.remoteJidAlt,
   ].filter(Boolean).map(normalizeJid))
 }
 

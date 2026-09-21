@@ -27,6 +27,7 @@ export function loadSettings() {
       process.env.WHATSAPP_COMMUNITY_STATE_FILE || path.join(dataDir, 'community.json'),
     ),
     communitySubject: process.env.WHATSAPP_COMMUNITY_SUBJECT || 'Nienfos',
+    directInboxProject: process.env.WHATSAPP_DIRECT_INBOX_PROJECT || 'direct-bruno',
     authDir: path.resolve(process.env.WHATSAPP_AUTH_DIR || path.join(dataDir, 'auth')),
     dataDir,
     projectsRoot: path.resolve(

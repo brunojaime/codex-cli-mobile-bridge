@@ -30,6 +30,28 @@ export class IntakeStore {
     }
   }
 
+  async existsInAnyProject(messageId, receivedAt = new Date()) {
+    const date = receivedAt.toISOString().slice(0, 10)
+    const component = safeComponent(messageId)
+    let projects
+    try {
+      projects = await readdir(this.inboxDir, { withFileTypes: true })
+    } catch (error) {
+      if (error?.code === 'ENOENT') return false
+      throw error
+    }
+    for (const project of projects) {
+      if (!project.isDirectory()) continue
+      try {
+        await stat(path.join(this.inboxDir, project.name, date, component, 'READY'))
+        return true
+      } catch (error) {
+        if (error?.code !== 'ENOENT') throw error
+      }
+    }
+    return false
+  }
+
   async persist({ manifest, mediaBuffer = null, project, receivedAt = new Date() }) {
     const destination = this.destinationFor(project, manifest.message_id, receivedAt)
     if (await this.exists(project, manifest.message_id, receivedAt)) {

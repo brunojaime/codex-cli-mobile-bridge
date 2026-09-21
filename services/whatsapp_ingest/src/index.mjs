@@ -291,7 +291,12 @@ async function provisionConfiguredGroups(socket, projects, groups) {
 
 async function processMessage(socket, message) {
   const groupId = message?.key?.remoteJid
-  if (!groupId?.endsWith('@g.us') || message.key.fromMe) return
+  if (!groupId || message.key.fromMe) return
+
+  if (!groupId.endsWith('@g.us')) {
+    await processDirectMessage(message)
+    return
+  }
 
   if (adminGroups.isAdminGroup(groupId)) {
     const sharedContacts = parseSharedContacts(message.message)
@@ -411,6 +416,97 @@ async function processMessage(socket, message) {
     },
     result.duplicate ? 'WhatsApp message already stored' : 'WhatsApp message stored',
   )
+}
+
+async function processDirectMessage(message) {
+  const chatId = message?.key?.remoteJid
+  if (!isDirectChat(chatId)) return
+  if (await adminGroups.roleForMessage(message) !== 'bruno') {
+    logger.warn(
+      { chatType: jidType(chatId), messageId: message?.key?.id },
+      'Ignoring unauthorized direct WhatsApp message',
+    )
+    return
+  }
+
+  const parsed = parseInboundContent(message.message)
+  if (!parsed || parsed.kind !== 'audio') {
+    runtime.recordRecent({
+      kind: parsed?.kind || 'unknown',
+      project: settings.directInboxProject,
+      received_at: new Date().toISOString(),
+      status: 'ignored_non_audio_direct_message',
+    })
+    return
+  }
+
+  const timestamp = timestampSeconds(message.messageTimestamp)
+  const receivedAt = timestamp ? new Date(timestamp * 1000) : new Date()
+  const messageId = message.key.id || `${timestamp || Date.now()}-bruno-direct`
+  if (await store.existsInAnyProject(messageId, receivedAt)) {
+    runtime.recordRecent({
+      kind: parsed.kind,
+      project: settings.directInboxProject,
+      received_at: receivedAt.toISOString(),
+      status: 'duplicate',
+    })
+    return
+  }
+
+  const mediaBuffer = await downloadMediaMessage(message, 'buffer', {})
+  const manifest = {
+    schema: 'nienfos.whatsapp-intake.v1',
+    source: 'whatsapp-direct',
+    received_at: new Date().toISOString(),
+    whatsapp_timestamp: receivedAt.toISOString(),
+    message_id: messageId,
+    group_id: chatId,
+    group_subject: 'Bruno → Nienfos Codex',
+    participant_id: chatId,
+    participant_alt_id: message.key.remoteJidAlt || null,
+    push_name: message.pushName || 'Bruno',
+    project: settings.directInboxProject,
+    project_binding_status: 'awaiting_transcript_resolution',
+    target_project: null,
+    kind: parsed.kind,
+    text: null,
+    mime_type: parsed.mimeType,
+    audio_seconds: parsed.seconds,
+    voice_note: parsed.voiceNote,
+  }
+  const result = await store.persist({
+    manifest,
+    mediaBuffer,
+    project: settings.directInboxProject,
+    receivedAt,
+  })
+  runtime.capturedMessages += result.duplicate ? 0 : 1
+  runtime.recordRecent({
+    kind: parsed.kind,
+    project: settings.directInboxProject,
+    received_at: receivedAt.toISOString(),
+    status: result.duplicate ? 'duplicate' : 'stored_for_project_resolution',
+  })
+  logger.info(
+    {
+      kind: parsed.kind,
+      messageId,
+      source: 'whatsapp-direct',
+      storedPath: path.relative(settings.repoRoot, result.path),
+    },
+    result.duplicate
+      ? 'Direct WhatsApp audio already stored'
+      : 'Stored Bruno direct WhatsApp audio for project resolution',
+  )
+}
+
+function isDirectChat(jid) {
+  return String(jid || '').endsWith('@s.whatsapp.net')
+    || String(jid || '').endsWith('@lid')
+}
+
+function jidType(jid) {
+  return String(jid || '').split('@').at(-1) || 'unknown'
 }
 
 async function createAdminProjectGroup(socket, { participants, project, subject }) {

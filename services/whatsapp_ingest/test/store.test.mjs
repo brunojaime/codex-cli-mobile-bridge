@@ -37,6 +37,8 @@ test('persists an audio intake atomically and deduplicates it', async (t) => {
     receivedAt,
   })
   assert.equal(second.duplicate, true)
+  assert.equal(await store.existsInAnyProject('ABC/123', receivedAt), true)
+  assert.equal(await store.existsInAnyProject('missing-message', receivedAt), false)
 })
 
 test('maps common audio mime types to stable extensions', () => {
