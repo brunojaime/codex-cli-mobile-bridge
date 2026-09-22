@@ -305,7 +305,7 @@ class BridgeClient:
         session_id: str,
         workspace_path: Path,
         prompt: str,
-        image_paths: list[Path] | None = None,
+        attachment_paths: list[Path] | None = None,
     ) -> dict[str, object]:
         response = self._submit_message(
             prompt=prompt,
@@ -315,7 +315,7 @@ class BridgeClient:
                 "search_enabled": False,
                 "config_overrides": ['sandbox_mode="read-only"'],
             },
-            image_paths=image_paths,
+            attachment_paths=attachment_paths,
         )
         if not isinstance(response, dict):
             raise BridgeRequestError(None, "Bridge returned an invalid triage job.")
@@ -333,14 +333,14 @@ class BridgeClient:
         session_id: str,
         workspace_path: Path,
         prompt: str,
-        image_paths: list[Path] | None = None,
+        attachment_paths: list[Path] | None = None,
     ) -> dict[str, object]:
         response = self._submit_message(
             prompt=prompt,
             session_id=session_id,
             workspace_path=workspace_path,
             codex_options={"search_enabled": False},
-            image_paths=image_paths,
+            attachment_paths=attachment_paths,
         )
         if not isinstance(response, dict):
             raise BridgeRequestError(None, "Bridge returned an invalid planning job.")
@@ -352,14 +352,14 @@ class BridgeClient:
         session_id: str,
         workspace_path: Path,
         prompt: str,
-        image_paths: list[Path] | None = None,
+        attachment_paths: list[Path] | None = None,
     ) -> dict[str, object]:
         response = self._submit_message(
             prompt=prompt,
             session_id=session_id,
             workspace_path=workspace_path,
             codex_options=None,
-            image_paths=image_paths,
+            attachment_paths=attachment_paths,
         )
         if not isinstance(response, dict):
             raise BridgeRequestError(None, "Bridge returned an invalid standard job.")
@@ -372,9 +372,9 @@ class BridgeClient:
         session_id: str,
         workspace_path: Path,
         codex_options: dict[str, object] | None,
-        image_paths: list[Path] | None,
+        attachment_paths: list[Path] | None,
     ) -> object:
-        if image_paths:
+        if attachment_paths:
             fields = {
                 "message": prompt,
                 "session_id": session_id,
@@ -385,7 +385,7 @@ class BridgeClient:
             return self._request_multipart(
                 "/message/attachments",
                 fields=fields,
-                attachments=image_paths,
+                attachments=attachment_paths,
             )
         payload: dict[str, object] = {
             "message": prompt,
@@ -477,7 +477,7 @@ class BridgeTriageClient:
             session_id=session_id,
             workspace_path=workspace_path,
             prompt=prompt,
-            image_paths=image_paths_for_records(records),
+            attachment_paths=attachment_paths_for_records(records),
         )
         job_id = str(response.get("job_id") or response.get("jobId") or "").strip()
         if not job_id:
@@ -718,6 +718,15 @@ class WhatsAppIntakeWorker:
             if not content:
                 content = "[Imagen adjunta sin descripción]"
             media_path = resolve_record_media(record_dir, manifest, "image-original.*")
+        elif kind == "document":
+            content = str(manifest.get("text") or "").strip()
+            if not content:
+                content = "[Documento PDF adjunto]"
+            media_path = resolve_record_media(
+                record_dir,
+                manifest,
+                "document-original.*",
+            )
         else:
             content = str(manifest.get("text") or "").strip()
             media_path = None
@@ -827,11 +836,11 @@ class WhatsAppIntakeWorker:
     def _process_direct_cli_batch(self, records: list[PreparedRecord]) -> None:
         first = records[0]
         message = build_direct_cli_message(records)
-        image_paths = image_paths_for_direct_cli_records(records)
+        attachment_paths = attachment_paths_for_direct_cli_records(records)
         session_id: str | None = None
         job_id: object = None
 
-        if message or image_paths:
+        if message or attachment_paths:
             session = self._existing_direct_cli_session(records)
             if session is None:
                 session_id = self.bridge.create_standard_session(
@@ -856,7 +865,7 @@ class WhatsAppIntakeWorker:
                 session_id=session_id,
                 workspace_path=first.workspace,
                 prompt=message,
-                image_paths=image_paths,
+                attachment_paths=attachment_paths,
             )
             job_id = response.get("job_id") or response.get("jobId")
 
@@ -944,7 +953,7 @@ class WhatsAppIntakeWorker:
                 session_id=session_id,
                 workspace_path=first.workspace,
                 prompt=build_planning_prompt(records, decision),
-                image_paths=image_paths_for_records(records),
+                attachment_paths=attachment_paths_for_records(records),
             )
             job_id = response.get("job_id") or response.get("jobId")
 
@@ -1047,6 +1056,10 @@ class WhatsAppIntakeWorker:
                 content = str(manifest.get("text") or "").strip()
                 if not content:
                     content = "[Imagen adjunta]"
+            elif kind == "document":
+                content = str(manifest.get("text") or "").strip()
+                if not content:
+                    content = "[Documento PDF adjunto]"
             else:
                 content = str(manifest.get("text") or "").strip()
             candidates.append(
@@ -1180,16 +1193,18 @@ En este primer turno comprendé el pedido, inspeccioná el proyecto si necesitá
 """
 
 
-def image_paths_for_records(records: list[PreparedRecord]) -> list[Path]:
+def attachment_paths_for_records(records: list[PreparedRecord]) -> list[Path]:
     return [
         item.media_path
         for item in records
-        if item.kind == "image" and item.media_path is not None
+        if item.kind in {"document", "image"} and item.media_path is not None
     ]
 
 
-def image_paths_for_direct_cli_records(records: list[PreparedRecord]) -> list[Path]:
-    return image_paths_for_records(
+def attachment_paths_for_direct_cli_records(
+    records: list[PreparedRecord],
+) -> list[Path]:
+    return attachment_paths_for_records(
         [
             item
             for item in records
@@ -1208,6 +1223,8 @@ def build_direct_cli_message(records: list[PreparedRecord]) -> str:
             "[Imagen adjunta]",
             "[Imagen adjunta sin descripción]",
         }:
+            continue
+        if item.kind == "document" and content == "[Documento PDF adjunto]":
             continue
         if content:
             parts.append(content)

@@ -89,14 +89,14 @@ class FakeBridge:
         session_id: str,
         workspace_path: Path,
         prompt: str,
-        image_paths: list[Path] | None = None,
+        attachment_paths: list[Path] | None = None,
     ) -> dict[str, object]:
         self.submitted.append(
             {
                 "session_id": session_id,
                 "workspace_path": workspace_path,
                 "prompt": prompt,
-                "image_paths": image_paths or [],
+                "attachment_paths": attachment_paths or [],
             }
         )
         return {"job_id": "job-1", "session_id": session_id}
@@ -107,14 +107,14 @@ class FakeBridge:
         session_id: str,
         workspace_path: Path,
         prompt: str,
-        image_paths: list[Path] | None = None,
+        attachment_paths: list[Path] | None = None,
     ) -> dict[str, object]:
         self.standard_submitted.append(
             {
                 "session_id": session_id,
                 "workspace_path": workspace_path,
                 "prompt": prompt,
-                "image_paths": image_paths or [],
+                "attachment_paths": attachment_paths or [],
             }
         )
         return {"job_id": "standard-job-1", "session_id": session_id}
@@ -140,11 +140,19 @@ def write_record(
         "participant_id": "5491111111111@s.whatsapp.net",
         "push_name": "Cliente",
         "kind": kind,
-        "text": text if kind in {"text", "image"} else None,
-        "mime_type": "image/png" if kind == "image" else "audio/ogg",
+        "text": text if kind in {"document", "image", "text"} else None,
+        "mime_type": (
+            "application/pdf"
+            if kind == "document"
+            else "image/png"
+            if kind == "image"
+            else "audio/ogg"
+        ),
         "media_file": (
             "audio-original.ogg"
             if kind == "audio"
+            else "document-original.pdf"
+            if kind == "document"
             else "image-original.png"
             if kind == "image"
             else None
@@ -154,6 +162,8 @@ def write_record(
     (record / "message.json").write_text(json.dumps(manifest), encoding="utf-8")
     if kind == "audio":
         (record / "audio-original.ogg").write_bytes(b"fake-audio")
+    elif kind == "document":
+        (record / "document-original.pdf").write_bytes(b"%PDF-fake")
     elif kind == "image":
         (record / "image-original.png").write_bytes(b"fake-image")
     ready = record / "READY"
@@ -413,7 +423,7 @@ def test_direct_bruno_batch_uses_project_directive_then_existing_triage(tmp_path
     assert bridge.created[0]["workspace_path"] == workspace
 
 
-def test_direct_bruno_batch_keeps_text_and_attaches_images(tmp_path: Path) -> None:
+def test_direct_bruno_batch_keeps_text_and_attaches_media(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     projects_root = tmp_path / "Projects"
     workspace = projects_root / "rd-gestion-hse"
@@ -434,6 +444,14 @@ def test_direct_bruno_batch_keeps_text_and_attaches_images(tmp_path: Path) -> No
         text=None,
         source="whatsapp-direct",
     )
+    document_record = write_record(
+        data_dir,
+        project="direct-bruno",
+        message_id="document-1",
+        kind="document",
+        text=None,
+        source="whatsapp-direct",
+    )
     directive_record = write_record(
         data_dir,
         project="direct-bruno",
@@ -450,23 +468,36 @@ def test_direct_bruno_batch_keeps_text_and_attaches_images(tmp_path: Path) -> No
         triage=triage,  # type: ignore[arg-type]
     )
 
-    assert worker.run_once() == 3
+    assert worker.run_once() == 4
     destination = data_dir / "inbox" / "rd-gestion-hse" / "2026-09-19"
     assert not text_record.exists()
     assert not image_record.exists()
+    assert not document_record.exists()
     assert not directive_record.exists()
     moved_text = destination / "request-1"
     moved_image = destination / "image-1"
+    moved_document = destination / "document-1"
     assert json.loads((moved_text / "message.json").read_text())["text"] == (
         "Corregir el diseño que se ve en la captura"
     )
     prepared = triage.calls[0]["records"]
-    assert sorted(record.kind for record in prepared) == ["image", "text", "text"]
+    assert sorted(record.kind for record in prepared) == [
+        "document",
+        "image",
+        "text",
+        "text",
+    ]
     prepared_image = next(record for record in prepared if record.kind == "image")
     assert prepared_image.content == "[Imagen adjunta sin descripción]"
     assert prepared_image.media_path == moved_image / "image-original.png"
-    assert bridge.submitted[0]["image_paths"] == [
-        moved_image / "image-original.png"
+    prepared_document = next(
+        record for record in prepared if record.kind == "document"
+    )
+    assert prepared_document.content == "[Documento PDF adjunto]"
+    assert prepared_document.media_path == moved_document / "document-original.pdf"
+    assert bridge.submitted[0]["attachment_paths"] == [
+        moved_document / "document-original.pdf",
+        moved_image / "image-original.png",
     ]
 
 
@@ -503,7 +534,15 @@ def test_cli_directive_opens_transparent_standard_chat_without_triage(
     write_record(
         data_dir,
         project="direct-bruno",
-        message_id="04-cli",
+        message_id="04-pdf",
+        kind="document",
+        text=None,
+        source="whatsapp-direct",
+    )
+    write_record(
+        data_dir,
+        project="direct-bruno",
+        message_id="05-cli",
         kind="text",
         text="CLI",
         source="whatsapp-direct",
@@ -517,7 +556,7 @@ def test_cli_directive_opens_transparent_standard_chat_without_triage(
         transcribe=lambda _path, _mime: "Contenido del audio",
     )
 
-    assert worker.run_once() == 4
+    assert worker.run_once() == 5
     assert triage.calls == []
     assert bridge.created == []
     assert bridge.submitted == []
@@ -528,15 +567,16 @@ def test_cli_directive_opens_transparent_standard_chat_without_triage(
     assert submitted["prompt"] == "Abrí un chat normal\n\nContenido del audio"
     assert "CLI" not in str(submitted["prompt"])
     moved_root = data_dir / "inbox" / "codex-cli-mobile-bridge" / "2026-09-19"
-    assert submitted["image_paths"] == [
-        moved_root / "03-image" / "image-original.png"
+    assert submitted["attachment_paths"] == [
+        moved_root / "03-image" / "image-original.png",
+        moved_root / "04-pdf" / "document-original.pdf",
     ]
     session_marker = json.loads(
         (moved_root / "01-text" / DIRECT_CLI_SESSION_FILENAME).read_text()
     )
     assert session_marker["profile_id"] == "default"
     submission = json.loads(
-        (moved_root / "04-cli" / SUBMISSION_FILENAME).read_text()
+        (moved_root / "05-cli" / SUBMISSION_FILENAME).read_text()
     )
     assert submission["status"] == "direct_cli_submitted"
     assert submission["delivery_mode"] == "direct_cli"

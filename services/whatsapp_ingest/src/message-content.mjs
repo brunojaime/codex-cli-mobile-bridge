@@ -56,6 +56,18 @@ export function parseInboundContent(message) {
     }
   }
 
+  if (isPdfDocument(content.documentMessage)) {
+    return {
+      kind: 'document',
+      media: content.documentMessage,
+      mimeType: content.documentMessage.mimetype || 'application/pdf',
+      fileName: content.documentMessage.fileName || null,
+      seconds: null,
+      text,
+      voiceNote: false,
+    }
+  }
+
   if (text) {
     return {
       kind: 'text',
@@ -68,6 +80,13 @@ export function parseInboundContent(message) {
   }
 
   return null
+}
+
+function isPdfDocument(document) {
+  if (!document) return false
+  const mimeType = String(document.mimetype || '').split(';', 1)[0].trim().toLowerCase()
+  const fileName = String(document.fileName || '').trim().toLowerCase()
+  return mimeType === 'application/pdf' || fileName.endsWith('.pdf')
 }
 
 export function parseSharedContacts(message) {

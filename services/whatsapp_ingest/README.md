@@ -2,7 +2,7 @@
 
 Silent intake and project/group reconciliation service. It links a dedicated
 WhatsApp account as a companion device, discovers its groups, associates each
-group with a project, and writes new text, audio, and image messages as atomic project
+group with a project, and writes new text, audio, image, and PDF messages as atomic project
 inbox records under `.data/whatsapp_ingest/inbox`.
 
 This integration uses the unofficial WhatsApp Web protocol through Baileys. It
@@ -112,7 +112,7 @@ which people to add. Add `.codex/integrations/whatsapp.json` inside a project:
     "+5492222222222",
     "+5493333333333"
   ],
-  "description": "Canal del proyecto. Los textos, audios e imágenes se incorporan al espacio de trabajo.",
+  "description": "Canal del proyecto. Los textos, audios, imágenes y PDFs se incorporan al espacio de trabajo.",
   "aliases": ["Proyecto Ejemplo"]
 }
 ```
@@ -159,7 +159,7 @@ state lives in `.data/whatsapp_ingest/community.json`.
 
 ## Temporary direct intake
 
-Bruno can send private text, voice notes, and images to Nienfos Codex while
+Bruno can send private text, voice notes, images, and PDFs to Nienfos Codex while
 project groups are still being provisioned. The receiver accepts only Bruno's
 stored WhatsApp identities and silently ignores every other private sender.
 
@@ -175,10 +175,11 @@ match one project slug, declared name, WhatsApp subject, or configured alias.
 The directive and every adjacent text, voice note, and image are first stored
 together under the neutral `direct-bruno` inbox. After the quiet window, all
 audio is transcribed locally and the complete batch is moved into the selected
-project's inbox for ordinary triage. Images are attached to the triage and, for
-actionable requests, to the planning chat. Missing, conflicting, unresolved, or
-ambiguous directives remain pending and never create a Codex chat. No WhatsApp
-reply is sent.
+project's inbox for ordinary triage. Images and PDFs are attached to the triage
+and, for actionable requests, to the planning chat; the Bridge extracts PDF
+text before Codex runs. Missing, conflicting, unresolved, or ambiguous
+directives remain pending and never create a Codex chat. No WhatsApp reply is
+sent.
 
 The original text/media, audio transcript, sender, project-resolution decision,
 triage, and Codex submission markers remain together for auditability.
@@ -188,8 +189,8 @@ triage, and Codex submission markers remain together for auditability.
 An exact standalone `CLI` text in Bruno's private batch selects the
 `codex-cli-mobile-bridge` workspace and bypasses triage. After the same quiet
 window, the receiver creates a standard default-profile chat and forwards the
-ordered text and audio transcripts without a WhatsApp wrapper; images are
-attached normally. The `CLI` control message itself is omitted. The frontend
+ordered text and audio transcripts without a WhatsApp wrapper; images and PDFs
+are attached normally. The `CLI` control message itself is omitted. The frontend
 therefore treats the result like an ordinary chat created in the app. This mode
 does not send a WhatsApp reply, and its session/job identifiers remain recorded
 locally for deduplication and auditability.
@@ -204,6 +205,7 @@ Each accepted message becomes an immutable directory:
 ├── message.txt          # text messages only
 ├── audio-original.ogg   # audio messages only; extension follows MIME type
 ├── image-original.jpg   # image messages only; extension follows MIME type
+├── document-original.pdf # PDF messages only
 └── READY
 ```
 

@@ -59,6 +59,26 @@ test('parses images with and without captions', () => {
   })
 })
 
+test('parses PDF documents with their original filename and caption', () => {
+  const document = {
+    mimetype: 'application/pdf',
+    fileName: 'Informe técnico.pdf',
+    caption: 'Revisar este informe',
+  }
+  assert.deepEqual(parseInboundContent({ documentMessage: document }), {
+    kind: 'document',
+    media: document,
+    mimeType: 'application/pdf',
+    fileName: 'Informe técnico.pdf',
+    seconds: null,
+    text: 'Revisar este informe',
+    voiceNote: false,
+  })
+  assert.equal(parseInboundContent({
+    documentMessage: { mimetype: 'application/octet-stream', fileName: 'plano.pdf' },
+  }).kind, 'document')
+})
+
 test('ignores unsupported protocol-only messages', () => {
   assert.equal(parseInboundContent({ protocolMessage: { type: 0 } }), null)
 })

@@ -379,7 +379,7 @@ async function processMessage(socket, message) {
   }
 
   let mediaBuffer = null
-  if (parsed.kind === 'audio' || parsed.kind === 'image') {
+  if (['audio', 'document', 'image'].includes(parsed.kind)) {
     mediaBuffer = await downloadMediaMessage(message, 'buffer', {})
   }
 
@@ -400,6 +400,7 @@ async function processMessage(socket, message) {
     kind: parsed.kind,
     text: parsed.text,
     mime_type: parsed.mimeType,
+    original_filename: parsed.fileName || null,
     audio_seconds: parsed.seconds,
     voice_note: parsed.voiceNote,
   }
@@ -438,7 +439,7 @@ async function processDirectMessage(message) {
   const directive = parsed?.kind === 'text'
     ? parseDirectProjectDirective(parsed.text)
     : null
-  if (!parsed || !['audio', 'image', 'text'].includes(parsed.kind)) {
+  if (!parsed || !['audio', 'document', 'image', 'text'].includes(parsed.kind)) {
     runtime.recordRecent({
       kind: parsed?.kind || 'unknown',
       project: settings.directInboxProject,
@@ -461,7 +462,7 @@ async function processDirectMessage(message) {
     return
   }
 
-  const mediaBuffer = parsed.kind === 'audio' || parsed.kind === 'image'
+  const mediaBuffer = ['audio', 'document', 'image'].includes(parsed.kind)
     ? await downloadMediaMessage(message, 'buffer', {})
     : null
   const manifest = {
@@ -481,6 +482,7 @@ async function processDirectMessage(message) {
     kind: parsed.kind,
     text: parsed.text,
     mime_type: parsed.mimeType,
+    original_filename: parsed.fileName || null,
     audio_seconds: parsed.seconds,
     voice_note: parsed.voiceNote,
     project_routing_directive: Boolean(directive),

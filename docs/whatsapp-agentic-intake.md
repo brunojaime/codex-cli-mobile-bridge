@@ -2,7 +2,7 @@
 
 ## Objetivo
 
-Convertir los textos, audios e imágenes recibidos por WhatsApp en un historial
+Convertir los textos, audios, imágenes y PDFs recibidos por WhatsApp en un historial
 auditable por proyecto, detectar trabajo accionable y, según la política del
 proyecto, proponerlo o ejecutarlo con Codex. El sistema nunca responde al grupo
 de WhatsApp.
@@ -23,7 +23,8 @@ WhatsApp
 Los mensajes privados de Bruno también admiten el control exacto `CLI`. Ese
 modo omite el triage y abre una conversación estándar en
 `codex-cli-mobile-bridge`; el texto y las transcripciones se envían sin un
-prompt envolvente y las imágenes se adjuntan como en la aplicación.
+prompt envolvente; las imágenes y los PDFs se adjuntan como en la aplicación y
+el backend extrae el texto de los PDFs antes de ejecutar Codex.
 
 ## 1. Captura e historial determinístico
 
@@ -38,6 +39,7 @@ Cada mensaje se conserva con:
 - archivo de audio original, cuando corresponda;
 - transcripción del audio;
 - archivo de imagen original y su caption, cuando corresponda;
+- archivo PDF original y texto extraído por el Bridge, cuando corresponda;
 - estado de procesamiento.
 
 El remitente de una nota de voz proviene de los metadatos de WhatsApp. Whisper

@@ -152,6 +152,7 @@ export function extensionForMime(mimeType) {
     'audio/mpeg': '.mp3',
     'audio/ogg': '.ogg',
     'audio/opus': '.opus',
+    'application/pdf': '.pdf',
     'image/gif': '.gif',
     'image/heic': '.heic',
     'image/heif': '.heif',
@@ -162,7 +163,9 @@ export function extensionForMime(mimeType) {
 }
 
 function mediaBasename(kind) {
-  return kind === 'image' ? 'image-original' : 'audio-original'
+  if (kind === 'image') return 'image-original'
+  if (kind === 'document') return 'document-original'
+  return 'audio-original'
 }
 
 function validateProjectSlug(project) {
