@@ -160,6 +160,8 @@ from backend.app.api.schemas import (
     ProjectFactoryReferenceAssetDeleteResponse,
     ProjectFactoryReferenceAssetResponse,
     ProjectFactoryReferenceAssetsResponse,
+    ProjectSecretUpsertRequest,
+    ProjectSecretsResponse,
     RenameSessionRequest,
     ServerCapabilitiesResponse,
     SessionDetailResponse,
@@ -236,6 +238,11 @@ from backend.app.application.services.project_factory_reference_asset_service im
 from backend.app.application.services.project_document_discovery_service import (
     ProjectDocumentNotFoundError,
     ProjectDocumentWorkspaceError,
+)
+from backend.app.application.services.project_secret_service import (
+    ProjectSecretError,
+    ProjectSecretStorageError,
+    ProjectSecretWorkspaceError,
 )
 from backend.app.application.services.web_preview_deploy_service import (
     WebPreviewDeployInput,
@@ -361,6 +368,7 @@ _BACKEND_FEATURES = {
     "sdd": True,
     "feedback_bridge": True,
     "app_updates": True,
+    "project_secrets": True,
 }
 
 
@@ -6227,6 +6235,42 @@ async def list_workspaces(
         WorkspaceResponse(name=workspace.name, path=workspace.path)
         for workspace in service.list_workspaces()
     ]
+
+
+@router.get("/project-secrets", response_model=ProjectSecretsResponse)
+async def list_project_secrets(
+    workspace_path: str = Query(..., min_length=1, max_length=2000),
+    container: AppContainer = Depends(get_container),
+) -> ProjectSecretsResponse:
+    try:
+        payload = await run_in_threadpool(
+            container.project_secret_service.list_secret_names,
+            workspace_path=workspace_path,
+        )
+    except ProjectSecretWorkspaceError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ProjectSecretError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return ProjectSecretsResponse.model_validate(payload)
+
+
+@router.post("/project-secrets", response_model=ProjectSecretsResponse)
+async def set_project_secret(
+    payload: ProjectSecretUpsertRequest,
+    container: AppContainer = Depends(get_container),
+) -> ProjectSecretsResponse:
+    try:
+        result = await run_in_threadpool(
+            container.project_secret_service.set_secret,
+            workspace_path=payload.workspace_path,
+            name=payload.name,
+            value=payload.value,
+        )
+    except ProjectSecretWorkspaceError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ProjectSecretStorageError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return ProjectSecretsResponse.model_validate(result)
 
 
 @router.get("/agent-profiles", response_model=list[AgentProfileResponse])

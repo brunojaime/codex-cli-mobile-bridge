@@ -8,6 +8,7 @@ import 'package:codex_mobile_frontend/src/models/domain_factory.dart';
 import 'package:codex_mobile_frontend/src/models/feedback_queue_item.dart';
 import 'package:codex_mobile_frontend/src/models/installable_app.dart';
 import 'package:codex_mobile_frontend/src/models/project_factory.dart';
+import 'package:codex_mobile_frontend/src/models/project_secrets.dart';
 import 'package:codex_mobile_frontend/src/models/server_capabilities.dart';
 import 'package:codex_mobile_frontend/src/models/server_health.dart';
 import 'package:codex_mobile_frontend/src/models/session_detail.dart';
@@ -48,6 +49,49 @@ String _scaffoldJobJson(String status) => '''
 ''';
 
 void main() {
+  test('api client lists and writes project secrets without expecting values',
+      () async {
+    var step = 0;
+    final client = ApiClient(
+      baseUrl: 'http://localhost:8000',
+      client: MockClient((request) async {
+        step += 1;
+        if (step == 1) {
+          expect(request.method, 'GET');
+          expect(request.url.path, '/project-secrets');
+          expect(
+              request.url.queryParameters['workspace_path'], '/projects/cms');
+          return http.Response(
+            '{"workspace_path":"/projects/cms","workspace_name":"cms","env_file":".env","names":["CMS_URL"]}',
+            200,
+          );
+        }
+        expect(request.method, 'POST');
+        expect(request.url.path, '/project-secrets');
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        expect(body['workspace_path'], '/projects/cms');
+        expect(body['name'], 'CMS_PASSWORD');
+        expect(body['value'], 'test-only-password');
+        return http.Response(
+          '{"workspace_path":"/projects/cms","workspace_name":"cms","env_file":".env","names":["CMS_PASSWORD","CMS_URL"]}',
+          200,
+        );
+      }),
+    );
+
+    final ProjectSecrets listed = await client.listProjectSecrets(
+      workspacePath: '/projects/cms',
+    );
+    expect(listed.names, <String>['CMS_URL']);
+
+    final saved = await client.setProjectSecret(
+      workspacePath: '/projects/cms',
+      name: 'CMS_PASSWORD',
+      value: 'test-only-password',
+    );
+    expect(saved.names, <String>['CMS_PASSWORD', 'CMS_URL']);
+  });
+
   test('installable app model parses install metadata', () {
     final app = InstallableApp.fromJson(const <String, dynamic>{
       'sourceApp': 'satshowroom',

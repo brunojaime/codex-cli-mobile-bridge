@@ -29,6 +29,7 @@ from backend.app.application.services.project_scaffold_service import (
 from backend.app.application.services.project_document_discovery_service import (
     ProjectDocumentDiscoveryService,
 )
+from backend.app.application.services.project_secret_service import ProjectSecretService
 from backend.app.application.services.web_preview_deploy_service import (
     WebPreviewDeployService,
 )
@@ -99,6 +100,7 @@ class AppContainer:
     sdd_workbench_kanban_service: SddWorkbenchKanbanService
     sdd_codex_job_service: SddCodexJobService
     project_document_discovery_service: ProjectDocumentDiscoveryService
+    project_secret_service: ProjectSecretService
     project_factory_service: ProjectFactoryService
     project_factory_init_service: ProjectFactoryInitService
     project_scaffold_service: ProjectScaffoldService
@@ -224,6 +226,10 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         project_factory_service=project_factory_service,
         project_factory_init_service=project_factory_init_service,
     )
+    project_secret_service = ProjectSecretService(
+        projects_root=resolved_settings.projects_root,
+        workspace_aliases=resolved_settings.feedback_source_workspace_alias_map,
+    )
     sdd_workbench_view_service = SddWorkbenchViewService(
         project_document_service=project_document_discovery_service,
     )
@@ -293,6 +299,7 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         sdd_workbench_kanban_service=sdd_workbench_kanban_service,
         sdd_codex_job_service=sdd_codex_job_service,
         project_document_discovery_service=project_document_discovery_service,
+        project_secret_service=project_secret_service,
         project_factory_service=project_factory_service,
         project_factory_init_service=project_factory_init_service,
         project_scaffold_service=project_scaffold_service,

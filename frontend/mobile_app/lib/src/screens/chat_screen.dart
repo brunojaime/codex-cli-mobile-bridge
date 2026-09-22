@@ -40,6 +40,7 @@ import '../widgets/agent_studio_status_button.dart';
 import '../widgets/chat_bubble.dart';
 import '../widgets/installable_apps_sheet.dart';
 import '../widgets/project_documents_panel.dart';
+import '../widgets/project_secrets_sheet.dart';
 import '../widgets/reviewer_status_banner.dart';
 import 'operations_screen.dart';
 
@@ -402,6 +403,7 @@ const Key kChatScreenBodyScrollViewKey = ValueKey<String>(
 
 enum _AppBarOverflowAction {
   apps,
+  secrets,
   conversationContext,
   summaryView,
   codexTools,
@@ -4129,6 +4131,12 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
               label: 'Apps',
             ),
             _buildAppBarOverflowMenuItem(
+              action: _AppBarOverflowAction.secrets,
+              icon: Icons.lock_outline_rounded,
+              label: 'Secrets',
+              enabled: _chatController.currentSession != null,
+            ),
+            _buildAppBarOverflowMenuItem(
               action: _AppBarOverflowAction.conversationContext,
               icon: Icons.topic_outlined,
               label: 'What are we doing?',
@@ -4199,6 +4207,15 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
         },
         icon: const Icon(Icons.apps_rounded),
         tooltip: 'Apps',
+      ),
+      IconButton(
+        onPressed: _chatController.currentSession == null
+            ? null
+            : () async {
+                await _openProjectSecretsSheet();
+              },
+        icon: const Icon(Icons.lock_outline_rounded),
+        tooltip: 'Project secrets',
       ),
       IconButton(
         onPressed: _chatController.currentSession == null
@@ -4320,6 +4337,9 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
       case _AppBarOverflowAction.apps:
         await _openInstallableAppsSheet();
         return;
+      case _AppBarOverflowAction.secrets:
+        await _openProjectSecretsSheet();
+        return;
       case _AppBarOverflowAction.conversationContext:
         await _openConversationContextSheet();
         return;
@@ -4374,6 +4394,22 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
         builder: (context) => OperationsScreen(
           bridgeBaseUrl: _activeServer?.baseUrl ?? widget.initialApiBaseUrl,
         ),
+      ),
+    );
+  }
+
+  Future<void> _openProjectSecretsSheet() async {
+    final session = _chatController.currentSession;
+    if (session == null || session.workspacePath.trim().isEmpty) return;
+    final activeBaseUrl = _activeServer?.baseUrl ?? widget.initialApiBaseUrl;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => ProjectSecretsSheet(
+        apiClient: ApiClient(baseUrl: activeBaseUrl),
+        workspacePath: session.workspacePath,
+        workspaceName: session.workspaceName,
       ),
     );
   }

@@ -3408,6 +3408,26 @@ class WorkspaceResponse(BaseModel):
     path: str
 
 
+class ProjectSecretUpsertRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    workspace_path: str = Field(..., min_length=1, max_length=2000)
+    name: str = Field(
+        ...,
+        min_length=1,
+        max_length=256,
+        pattern=r"^[A-Za-z_][A-Za-z0-9_]*$",
+    )
+    value: str = Field(..., min_length=1, max_length=65536)
+
+
+class ProjectSecretsResponse(BaseModel):
+    workspace_path: str
+    workspace_name: str
+    env_file: Literal[".env"] = ".env"
+    names: list[str] = Field(default_factory=list)
+
+
 class JobResponse(BaseModel):
     job_id: str
     session_id: str

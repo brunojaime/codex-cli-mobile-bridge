@@ -16,6 +16,7 @@ import '../models/feedback_queue_item.dart';
 import '../models/installable_app.dart';
 import '../models/project_documents.dart';
 import '../models/project_factory.dart';
+import '../models/project_secrets.dart';
 import '../models/prod_update_status.dart';
 import '../models/server_capabilities.dart';
 import '../models/session_detail.dart';
@@ -1294,6 +1295,43 @@ class ApiClient {
     return payload
         .map((item) => Workspace.fromJson(item as Map<String, dynamic>))
         .toList();
+  }
+
+  Future<ProjectSecrets> listProjectSecrets({
+    required String workspacePath,
+  }) async {
+    final uri = Uri.parse('$baseUrl/project-secrets').replace(
+      queryParameters: <String, String>{'workspace_path': workspacePath},
+    );
+    final response = await _client.get(uri);
+    if (response.statusCode != 200) {
+      throw Exception('Failed to list project secrets: ${response.body}');
+    }
+    return ProjectSecrets.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<ProjectSecrets> setProjectSecret({
+    required String workspacePath,
+    required String name,
+    required String value,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/project-secrets'),
+      headers: <String, String>{'Content-Type': 'application/json'},
+      body: jsonEncode(<String, String>{
+        'workspace_path': workspacePath,
+        'name': name,
+        'value': value,
+      }),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Failed to save project secret: ${response.body}');
+    }
+    return ProjectSecrets.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
   }
 
   Future<List<AgentProfile>> listAgentProfiles() async {
