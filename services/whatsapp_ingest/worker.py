@@ -61,6 +61,7 @@ class WorkerSettings:
     data_dir: Path
     projects_root: Path
     bridge_url: str = "http://127.0.0.1:8000"
+    direct_cli_bridge_url: str | None = None
     poll_seconds: float = 3.0
     settle_seconds: float = 45.0
     batch_size: int = 20
@@ -81,13 +82,18 @@ class WorkerSettings:
                 str(repo_root / ".data" / "whatsapp_ingest"),
             )
         ).expanduser().resolve()
+        bridge_url = os.environ.get(
+            "WHATSAPP_BRIDGE_URL", "http://127.0.0.1:8000"
+        ).rstrip("/")
         return cls(
             data_dir=data_dir,
             projects_root=Path(
                 os.environ.get("WHATSAPP_PROJECTS_ROOT", str(repo_root.parent))
             ).expanduser().resolve(),
-            bridge_url=os.environ.get(
-                "WHATSAPP_BRIDGE_URL", "http://127.0.0.1:8000"
+            bridge_url=bridge_url,
+            direct_cli_bridge_url=os.environ.get(
+                "WHATSAPP_DIRECT_CLI_BRIDGE_URL",
+                "http://127.0.0.1:8118",
             ).rstrip("/"),
             poll_seconds=max(
                 0.2, float(os.environ.get("WHATSAPP_WORKER_POLL_SECONDS", "3"))
@@ -510,12 +516,19 @@ class WhatsAppIntakeWorker:
         settings: WorkerSettings,
         *,
         bridge: BridgeClient | None = None,
+        direct_cli_bridge: BridgeClient | None = None,
         triage: BridgeTriageClient | None = None,
         transcribe: Callable[[Path, str | None], str] | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self.settings = settings
         self.bridge = bridge or BridgeClient(settings.bridge_url)
+        direct_cli_bridge_url = settings.direct_cli_bridge_url or settings.bridge_url
+        self.direct_cli_bridge = direct_cli_bridge or (
+            self.bridge
+            if direct_cli_bridge_url == settings.bridge_url
+            else BridgeClient(direct_cli_bridge_url)
+        )
         self.triage = triage or BridgeTriageClient(
             bridge=self.bridge,
             timeout_seconds=settings.triage_timeout_seconds,
@@ -843,7 +856,7 @@ class WhatsAppIntakeWorker:
         if message or attachment_paths:
             session = self._existing_direct_cli_session(records)
             if session is None:
-                session_id = self.bridge.create_standard_session(
+                session_id = self.direct_cli_bridge.create_standard_session(
                     workspace_path=first.workspace,
                 )
                 session = {
@@ -852,6 +865,7 @@ class WhatsAppIntakeWorker:
                     "session_id": session_id,
                     "project": first.project,
                     "profile_id": "default",
+                    "bridge_target": "dev",
                 }
                 for item in records:
                     atomic_write_json(
@@ -861,7 +875,7 @@ class WhatsAppIntakeWorker:
             else:
                 session_id = str(session["session_id"])
 
-            response = self.bridge.submit_standard(
+            response = self.direct_cli_bridge.submit_standard(
                 session_id=session_id,
                 workspace_path=first.workspace,
                 prompt=message,
@@ -882,6 +896,7 @@ class WhatsAppIntakeWorker:
             "project": first.project,
             "batch_message_ids": [item.message_id for item in records],
             "delivery_mode": "direct_cli",
+            "bridge_target": "dev",
         }
         for item in records:
             atomic_write_json(item.path / SUBMISSION_FILENAME, submission)
@@ -1517,10 +1532,12 @@ def main() -> int:
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     LOGGER.info(
-        "WhatsApp intake worker started inbox=%s projects=%s bridge=%s",
+        "WhatsApp intake worker started inbox=%s projects=%s bridge=%s "
+        "direct_cli_bridge=%s",
         settings.data_dir / "inbox",
         settings.projects_root,
         settings.bridge_url,
+        settings.direct_cli_bridge_url or settings.bridge_url,
     )
     while not STOP_EVENT.is_set():
         try:

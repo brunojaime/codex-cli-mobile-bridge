@@ -548,10 +548,12 @@ def test_cli_directive_opens_transparent_standard_chat_without_triage(
         source="whatsapp-direct",
     )
     bridge = FakeBridge()
+    dev_bridge = FakeBridge()
     triage = FakeTriage(decision(actionable=True))
     worker = WhatsAppIntakeWorker(
         settings(data_dir, projects_root),
         bridge=bridge,  # type: ignore[arg-type]
+        direct_cli_bridge=dev_bridge,  # type: ignore[arg-type]
         triage=triage,  # type: ignore[arg-type]
         transcribe=lambda _path, _mime: "Contenido del audio",
     )
@@ -560,9 +562,11 @@ def test_cli_directive_opens_transparent_standard_chat_without_triage(
     assert triage.calls == []
     assert bridge.created == []
     assert bridge.submitted == []
-    assert bridge.standard_created == [{"workspace_path": workspace}]
-    assert len(bridge.standard_submitted) == 1
-    submitted = bridge.standard_submitted[0]
+    assert bridge.standard_created == []
+    assert bridge.standard_submitted == []
+    assert dev_bridge.standard_created == [{"workspace_path": workspace}]
+    assert len(dev_bridge.standard_submitted) == 1
+    submitted = dev_bridge.standard_submitted[0]
     assert submitted["session_id"] == "standard-session-1"
     assert submitted["prompt"] == "Abrí un chat normal\n\nContenido del audio"
     assert "CLI" not in str(submitted["prompt"])
@@ -580,9 +584,10 @@ def test_cli_directive_opens_transparent_standard_chat_without_triage(
     )
     assert submission["status"] == "direct_cli_submitted"
     assert submission["delivery_mode"] == "direct_cli"
+    assert submission["bridge_target"] == "dev"
 
     assert worker.run_once() == 0
-    assert len(bridge.standard_submitted) == 1
+    assert len(dev_bridge.standard_submitted) == 1
 
 
 def test_direct_audio_without_project_stays_pending_without_triage(tmp_path: Path) -> None:

@@ -187,13 +187,16 @@ triage, and Codex submission markers remain together for auditability.
 ### Transparent CLI bridge
 
 An exact standalone `CLI` text in Bruno's private batch selects the
-`codex-cli-mobile-bridge` workspace and bypasses triage. After the same quiet
-window, the receiver creates a standard default-profile chat and forwards the
-ordered text and audio transcripts without a WhatsApp wrapper; images and PDFs
-are attached normally. The `CLI` control message itself is omitted. The frontend
-therefore treats the result like an ordinary chat created in the app. This mode
-does not send a WhatsApp reply, and its session/job identifiers remain recorded
-locally for deduplication and auditability.
+`codex-cli-mobile-bridge` workspace on the DEV Bridge and bypasses triage. The
+DEV endpoint defaults to `http://127.0.0.1:8118` and can be overridden with
+`WHATSAPP_DIRECT_CLI_BRIDGE_URL`; the ordinary group/project route continues to
+use `WHATSAPP_BRIDGE_URL`. After the same quiet window, the receiver creates a
+standard default-profile DEV chat and forwards the ordered text and audio
+transcripts without a WhatsApp wrapper; images and PDFs are attached normally.
+The `CLI` control message itself is omitted. The frontend therefore treats the
+result like an ordinary chat created in the DEV app. This mode does not send a
+WhatsApp reply, and its session/job identifiers remain recorded locally for
+deduplication and auditability.
 
 ## Stored record
 

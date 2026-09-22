@@ -21,10 +21,11 @@ WhatsApp
 ```
 
 Los mensajes privados de Bruno también admiten el control exacto `CLI`. Ese
-modo omite el triage y abre una conversación estándar en
+modo omite el triage y abre una conversación estándar en el Bridge DEV para
 `codex-cli-mobile-bridge`; el texto y las transcripciones se envían sin un
 prompt envolvente; las imágenes y los PDFs se adjuntan como en la aplicación y
-el backend extrae el texto de los PDFs antes de ejecutar Codex.
+el backend extrae el texto de los PDFs antes de ejecutar Codex. La ruta
+`Proyecto:` y los grupos mantienen su Bridge configurado por separado.
 
 ## 1. Captura e historial determinístico
 
