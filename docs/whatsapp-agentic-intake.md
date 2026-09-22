@@ -20,6 +20,11 @@ WhatsApp
   -> Codex ejecutor del proyecto
 ```
 
+Los mensajes privados de Bruno también admiten el control exacto `CLI`. Ese
+modo omite el triage y abre una conversación estándar en
+`codex-cli-mobile-bridge`; el texto y las transcripciones se envían sin un
+prompt envolvente y las imágenes se adjuntan como en la aplicación.
+
 ## 1. Captura e historial determinístico
 
 Cada mensaje se conserva con:

@@ -14,7 +14,11 @@ import QRCode from 'qrcode'
 import { AdminGroupManager } from './admin-groups.mjs'
 import { createAdminServer } from './admin-server.mjs'
 import { CommunityManager } from './community-manager.mjs'
-import { isDirectChat, parseDirectProjectDirective } from './direct-intake.mjs'
+import {
+  isDirectChat,
+  isDirectCliDirective,
+  parseDirectProjectDirective,
+} from './direct-intake.mjs'
 import { loadGroupMappings, loadSettings } from './config.mjs'
 import { parseInboundContent, parseSharedContacts, timestampSeconds } from './message-content.mjs'
 import { ProjectFactoryClient } from './project-factory-client.mjs'
@@ -480,6 +484,7 @@ async function processDirectMessage(message) {
     audio_seconds: parsed.seconds,
     voice_note: parsed.voiceNote,
     project_routing_directive: Boolean(directive),
+    direct_cli_directive: parsed.kind === 'text' && isDirectCliDirective(parsed.text),
   }
   const result = await store.persist({
     manifest,

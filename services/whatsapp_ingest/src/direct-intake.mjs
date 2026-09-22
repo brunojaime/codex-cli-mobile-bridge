@@ -8,6 +8,10 @@ export function parseDirectProjectDirective(value) {
   return { projectHint }
 }
 
+export function isDirectCliDirective(value) {
+  return /^cli$/iu.test(String(value || '').trim())
+}
+
 export function isDirectChat(jid) {
   return String(jid || '').endsWith('@s.whatsapp.net')
     || String(jid || '').endsWith('@lid')

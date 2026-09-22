@@ -183,6 +183,17 @@ reply is sent.
 The original text/media, audio transcript, sender, project-resolution decision,
 triage, and Codex submission markers remain together for auditability.
 
+### Transparent CLI bridge
+
+An exact standalone `CLI` text in Bruno's private batch selects the
+`codex-cli-mobile-bridge` workspace and bypasses triage. After the same quiet
+window, the receiver creates a standard default-profile chat and forwards the
+ordered text and audio transcripts without a WhatsApp wrapper; images are
+attached normally. The `CLI` control message itself is omitted. The frontend
+therefore treats the result like an ordinary chat created in the app. This mode
+does not send a WhatsApp reply, and its session/job identifiers remain recorded
+locally for deduplication and auditability.
+
 ## Stored record
 
 Each accepted message becomes an immutable directory:

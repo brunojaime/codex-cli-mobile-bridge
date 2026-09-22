@@ -6,6 +6,7 @@ from pathlib import Path
 
 from backend.app.infrastructure.transcription.base import AudioTranscriptionError
 from services.whatsapp_ingest.worker import (
+    DIRECT_CLI_SESSION_FILENAME,
     NO_SPEECH_TRANSCRIPT,
     PLANNER_PROFILE_COLOR,
     PLANNER_PROFILE_ID,
@@ -64,6 +65,8 @@ class FakeBridge:
     def __init__(self) -> None:
         self.created: list[dict[str, object]] = []
         self.submitted: list[dict[str, object]] = []
+        self.standard_created: list[dict[str, object]] = []
+        self.standard_submitted: list[dict[str, object]] = []
 
     def create_planning_session(self, *, title: str, workspace_path: Path) -> str:
         self.created.append(
@@ -75,6 +78,10 @@ class FakeBridge:
             }
         )
         return "session-1"
+
+    def create_standard_session(self, *, workspace_path: Path) -> str:
+        self.standard_created.append({"workspace_path": workspace_path})
+        return "standard-session-1"
 
     def submit_planning(
         self,
@@ -93,6 +100,24 @@ class FakeBridge:
             }
         )
         return {"job_id": "job-1", "session_id": session_id}
+
+    def submit_standard(
+        self,
+        *,
+        session_id: str,
+        workspace_path: Path,
+        prompt: str,
+        image_paths: list[Path] | None = None,
+    ) -> dict[str, object]:
+        self.standard_submitted.append(
+            {
+                "session_id": session_id,
+                "workspace_path": workspace_path,
+                "prompt": prompt,
+                "image_paths": image_paths or [],
+            }
+        )
+        return {"job_id": "standard-job-1", "session_id": session_id}
 
 
 def write_record(
@@ -443,6 +468,81 @@ def test_direct_bruno_batch_keeps_text_and_attaches_images(tmp_path: Path) -> No
     assert bridge.submitted[0]["image_paths"] == [
         moved_image / "image-original.png"
     ]
+
+
+def test_cli_directive_opens_transparent_standard_chat_without_triage(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "data"
+    projects_root = tmp_path / "Projects"
+    workspace = projects_root / "codex-cli-mobile-bridge"
+    workspace.mkdir(parents=True)
+    write_record(
+        data_dir,
+        project="direct-bruno",
+        message_id="01-text",
+        kind="text",
+        text="Abrí un chat normal",
+        source="whatsapp-direct",
+    )
+    write_record(
+        data_dir,
+        project="direct-bruno",
+        message_id="02-audio",
+        kind="audio",
+        source="whatsapp-direct",
+    )
+    write_record(
+        data_dir,
+        project="direct-bruno",
+        message_id="03-image",
+        kind="image",
+        text=None,
+        source="whatsapp-direct",
+    )
+    write_record(
+        data_dir,
+        project="direct-bruno",
+        message_id="04-cli",
+        kind="text",
+        text="CLI",
+        source="whatsapp-direct",
+    )
+    bridge = FakeBridge()
+    triage = FakeTriage(decision(actionable=True))
+    worker = WhatsAppIntakeWorker(
+        settings(data_dir, projects_root),
+        bridge=bridge,  # type: ignore[arg-type]
+        triage=triage,  # type: ignore[arg-type]
+        transcribe=lambda _path, _mime: "Contenido del audio",
+    )
+
+    assert worker.run_once() == 4
+    assert triage.calls == []
+    assert bridge.created == []
+    assert bridge.submitted == []
+    assert bridge.standard_created == [{"workspace_path": workspace}]
+    assert len(bridge.standard_submitted) == 1
+    submitted = bridge.standard_submitted[0]
+    assert submitted["session_id"] == "standard-session-1"
+    assert submitted["prompt"] == "Abrí un chat normal\n\nContenido del audio"
+    assert "CLI" not in str(submitted["prompt"])
+    moved_root = data_dir / "inbox" / "codex-cli-mobile-bridge" / "2026-09-19"
+    assert submitted["image_paths"] == [
+        moved_root / "03-image" / "image-original.png"
+    ]
+    session_marker = json.loads(
+        (moved_root / "01-text" / DIRECT_CLI_SESSION_FILENAME).read_text()
+    )
+    assert session_marker["profile_id"] == "default"
+    submission = json.loads(
+        (moved_root / "04-cli" / SUBMISSION_FILENAME).read_text()
+    )
+    assert submission["status"] == "direct_cli_submitted"
+    assert submission["delivery_mode"] == "direct_cli"
+
+    assert worker.run_once() == 0
+    assert len(bridge.standard_submitted) == 1
 
 
 def test_direct_audio_without_project_stays_pending_without_triage(tmp_path: Path) -> None:

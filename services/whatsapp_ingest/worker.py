@@ -33,6 +33,7 @@ PLANNING_SESSION_FILENAME = "planning-session.json"
 TRANSCRIPT_FILENAME = "transcript.txt"
 ERROR_FILENAME = "worker-error.json"
 PROJECT_RESOLUTION_FILENAME = "project-resolution.json"
+DIRECT_CLI_SESSION_FILENAME = "direct-cli-session.json"
 NO_SPEECH_TRANSCRIPT = "[Audio sin voz reconocible]"
 PLANNER_PROFILE_ID = "whatsapp_intake_planner"
 PLANNER_PROFILE_NAME = "WhatsApp Intake"
@@ -70,6 +71,7 @@ class WorkerSettings:
     transcription_device: str = "auto"
     transcription_compute_type: str = "int8"
     direct_inbox_project: str = "direct-bruno"
+    direct_cli_project: str = "codex-cli-mobile-bridge"
 
     @classmethod
     def from_environment(cls, repo_root: Path) -> "WorkerSettings":
@@ -126,6 +128,9 @@ class WorkerSettings:
             direct_inbox_project=os.environ.get(
                 "WHATSAPP_DIRECT_INBOX_PROJECT", "direct-bruno"
             ),
+            direct_cli_project=os.environ.get(
+                "WHATSAPP_DIRECT_CLI_PROJECT", "codex-cli-mobile-bridge"
+            ),
         )
 
 
@@ -144,6 +149,8 @@ class PreparedRecord:
     content: str
     media_path: Path | None
     source: str
+    delivery_mode: str
+    direct_batch_id: str | None
     ready_mtime: float
 
 
@@ -272,6 +279,19 @@ class BridgeClient:
             raise BridgeRequestError(None, "Bridge returned a session without an id.")
         return session_id
 
+    def create_standard_session(self, *, workspace_path: Path) -> str:
+        response = self._request(
+            "/sessions",
+            method="POST",
+            payload={"workspace_path": str(workspace_path)},
+        )
+        if not isinstance(response, dict):
+            raise BridgeRequestError(None, "Bridge returned an invalid session.")
+        session_id = str(response.get("id") or "").strip()
+        if not session_id:
+            raise BridgeRequestError(None, "Bridge returned a session without an id.")
+        return session_id
+
     def archive_session(self, session_id: str) -> None:
         self._request(
             f"/sessions/{session_id}/archive",
@@ -326,35 +346,58 @@ class BridgeClient:
             raise BridgeRequestError(None, "Bridge returned an invalid planning job.")
         return response
 
+    def submit_standard(
+        self,
+        *,
+        session_id: str,
+        workspace_path: Path,
+        prompt: str,
+        image_paths: list[Path] | None = None,
+    ) -> dict[str, object]:
+        response = self._submit_message(
+            prompt=prompt,
+            session_id=session_id,
+            workspace_path=workspace_path,
+            codex_options=None,
+            image_paths=image_paths,
+        )
+        if not isinstance(response, dict):
+            raise BridgeRequestError(None, "Bridge returned an invalid standard job.")
+        return response
+
     def _submit_message(
         self,
         *,
         prompt: str,
         session_id: str,
         workspace_path: Path,
-        codex_options: dict[str, object],
+        codex_options: dict[str, object] | None,
         image_paths: list[Path] | None,
     ) -> object:
         if image_paths:
-            return self._request_multipart(
-                "/message/attachments",
-                fields={
-                    "message": prompt,
-                    "session_id": session_id,
-                    "workspace_path": str(workspace_path),
-                    "codex_options_json": json.dumps(codex_options),
-                },
-                attachments=image_paths,
-            )
-        return self._request(
-            "/message",
-            method="POST",
-            payload={
+            fields = {
                 "message": prompt,
                 "session_id": session_id,
                 "workspace_path": str(workspace_path),
-                "codex_options": codex_options,
-            },
+            }
+            if codex_options is not None:
+                fields["codex_options_json"] = json.dumps(codex_options)
+            return self._request_multipart(
+                "/message/attachments",
+                fields=fields,
+                attachments=image_paths,
+            )
+        payload: dict[str, object] = {
+            "message": prompt,
+            "session_id": session_id,
+            "workspace_path": str(workspace_path),
+        }
+        if codex_options is not None:
+            payload["codex_options"] = codex_options
+        return self._request(
+            "/message",
+            method="POST",
+            payload=payload,
         )
 
     def _request_multipart(
@@ -483,7 +526,7 @@ class WhatsAppIntakeWorker:
 
     def run_once(self) -> int:
         self._route_direct_batches()
-        groups: dict[tuple[str, str], list[PreparedRecord]] = {}
+        groups: dict[tuple[str, str, str, str], list[PreparedRecord]] = {}
         for record_dir in self._ready_record_directories():
             try:
                 record = self._prepare_record(record_dir)
@@ -493,7 +536,11 @@ class WhatsAppIntakeWorker:
                 continue
             if record is None:
                 continue
-            groups.setdefault((record.project, record.group_id), []).append(record)
+            batch_key = record.direct_batch_id or "shared"
+            groups.setdefault(
+                (record.project, record.group_id, record.delivery_mode, batch_key),
+                [],
+            ).append(record)
 
         settled_groups: list[list[PreparedRecord]] = []
         for records in groups.values():
@@ -565,6 +612,7 @@ class WhatsAppIntakeWorker:
         batch: list[tuple[float, Path, dict[str, object]]],
     ) -> None:
         directives: list[str] = []
+        cli_directives = 0
         for _mtime, record_dir, manifest in batch:
             kind = str(manifest.get("kind") or "unknown")
             if kind == "audio":
@@ -572,11 +620,37 @@ class WhatsAppIntakeWorker:
             directive = parse_project_directive(str(manifest.get("text") or ""))
             if directive:
                 directives.append(directive)
+            if kind == "text" and is_cli_directive(
+                str(manifest.get("text") or "")
+            ):
+                cli_directives += 1
 
         normalized_directives = {
             normalize_identity(value): value for value in directives
         }
-        if not normalized_directives:
+        batch_id = str(batch[0][2].get("message_id") or batch[0][1].name)
+        if cli_directives and normalized_directives:
+            resolution = direct_resolution(
+                "conflicting_modes",
+                requested_projects=sorted(normalized_directives.values()),
+            )
+        elif cli_directives:
+            resolution = resolve_project_directive(
+                self.settings.direct_cli_project,
+                self.settings.projects_root,
+            )
+            resolution = {
+                **resolution,
+                "resolution_source": "cli_directive",
+            }
+            if resolution["status"] == "matched":
+                resolution = {
+                    **resolution,
+                    "delivery_mode": "direct_cli",
+                    "direct_batch_id": batch_id,
+                    "resolution_source": "cli_directive",
+                }
+        elif not normalized_directives:
             resolution = direct_resolution("awaiting_directive")
         elif len(normalized_directives) > 1:
             resolution = direct_resolution(
@@ -604,6 +678,12 @@ class WhatsAppIntakeWorker:
             )
 
     def _process_group(self, records: list[PreparedRecord]) -> int:
+        delivery_modes = {item.delivery_mode for item in records}
+        if delivery_modes == {"direct_cli"}:
+            self._process_direct_cli_batch(records)
+            return len(records)
+        if len(delivery_modes) != 1:
+            raise RuntimeError("WhatsApp intake batch mixes incompatible delivery modes.")
         processed = 0
         for offset in range(0, len(records), self.settings.batch_size):
             batch = records[offset : offset + self.settings.batch_size]
@@ -666,6 +746,8 @@ class WhatsAppIntakeWorker:
             content=content,
             media_path=media_path,
             source=str(manifest.get("source") or "whatsapp-group"),
+            delivery_mode=str(manifest.get("delivery_mode") or "triage"),
+            direct_batch_id=optional_text(manifest.get("direct_batch_id")),
             ready_mtime=(record_dir / "READY").stat().st_mtime,
         )
 
@@ -690,6 +772,8 @@ class WhatsAppIntakeWorker:
             "target_project": project,
             "project_binding_status": "matched_from_direct_directive",
             "project_resolution": resolution,
+            "delivery_mode": str(resolution.get("delivery_mode") or "triage"),
+            "direct_batch_id": optional_text(resolution.get("direct_batch_id")),
         }
         atomic_write_json(record_dir / "message.json", updated)
         destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -738,6 +822,68 @@ class WhatsAppIntakeWorker:
             filename=audio_path.name,
             content_type=mime_type,
             language="es",
+        )
+
+    def _process_direct_cli_batch(self, records: list[PreparedRecord]) -> None:
+        first = records[0]
+        message = build_direct_cli_message(records)
+        image_paths = image_paths_for_direct_cli_records(records)
+        session_id: str | None = None
+        job_id: object = None
+
+        if message or image_paths:
+            session = self._existing_direct_cli_session(records)
+            if session is None:
+                session_id = self.bridge.create_standard_session(
+                    workspace_path=first.workspace,
+                )
+                session = {
+                    "version": 1,
+                    "created_at": iso_now(),
+                    "session_id": session_id,
+                    "project": first.project,
+                    "profile_id": "default",
+                }
+                for item in records:
+                    atomic_write_json(
+                        item.path / DIRECT_CLI_SESSION_FILENAME,
+                        session,
+                    )
+            else:
+                session_id = str(session["session_id"])
+
+            response = self.bridge.submit_standard(
+                session_id=session_id,
+                workspace_path=first.workspace,
+                prompt=message,
+                image_paths=image_paths,
+            )
+            job_id = response.get("job_id") or response.get("jobId")
+
+        submission = {
+            "version": 1,
+            "status": (
+                "direct_cli_submitted"
+                if session_id is not None
+                else "direct_cli_no_content"
+            ),
+            "submitted_at": iso_now(),
+            "session_id": session_id,
+            "job_id": job_id,
+            "project": first.project,
+            "batch_message_ids": [item.message_id for item in records],
+            "delivery_mode": "direct_cli",
+        }
+        for item in records:
+            atomic_write_json(item.path / SUBMISSION_FILENAME, submission)
+            (item.path / ERROR_FILENAME).unlink(missing_ok=True)
+        LOGGER.info(
+            "Forwarded %s WhatsApp message(s) as direct CLI chat project=%s "
+            "session=%s job=%s",
+            len(records),
+            first.project,
+            session_id,
+            job_id,
         )
 
     def _process_batch(self, records: list[PreparedRecord]) -> None:
@@ -826,6 +972,23 @@ class WhatsAppIntakeWorker:
             session_id,
             job_id,
         )
+
+    def _existing_direct_cli_session(
+        self,
+        records: list[PreparedRecord],
+    ) -> dict[str, object] | None:
+        for item in records:
+            filename = item.path / DIRECT_CLI_SESSION_FILENAME
+            try:
+                value = json.loads(filename.read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                continue
+            if not isinstance(value, dict) or not str(
+                value.get("session_id") or ""
+            ).strip():
+                raise RuntimeError(f"Invalid direct CLI session marker: {filename}")
+            return value
+        return None
 
     def _existing_triage(
         self,
@@ -1025,6 +1188,32 @@ def image_paths_for_records(records: list[PreparedRecord]) -> list[Path]:
     ]
 
 
+def image_paths_for_direct_cli_records(records: list[PreparedRecord]) -> list[Path]:
+    return image_paths_for_records(
+        [
+            item
+            for item in records
+            if not (item.kind == "text" and is_cli_directive(item.content))
+        ]
+    )
+
+
+def build_direct_cli_message(records: list[PreparedRecord]) -> str:
+    parts: list[str] = []
+    for item in records:
+        if item.kind == "text" and is_cli_directive(item.content):
+            continue
+        content = item.content.strip()
+        if item.kind == "image" and content in {
+            "[Imagen adjunta]",
+            "[Imagen adjunta sin descripción]",
+        }:
+            continue
+        if content:
+            parts.append(content)
+    return "\n\n".join(parts)
+
+
 def resolve_record_media(
     record_dir: Path,
     manifest: dict[str, object],
@@ -1094,6 +1283,10 @@ def parse_project_directive(value: str) -> str | None:
     if not project_hint or len(project_hint) > 160:
         return None
     return project_hint
+
+
+def is_cli_directive(value: str) -> bool:
+    return re.fullmatch(r"\s*cli\s*", value, flags=re.IGNORECASE) is not None
 
 
 def direct_resolution(
