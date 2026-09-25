@@ -1684,7 +1684,8 @@ flowchart LR
           body: ChatBubble(
             message: ChatMessage(
               id: 'assistant-1',
-              text: '1. Summarize the repo\n2. Show changed files',
+              text:
+                  'Quick options:\n1. Summarize the repo\n2. Show changed files',
               isUser: false,
               authorType: ChatMessageAuthorType.assistant,
               status: ChatMessageStatus.completed,
@@ -2062,8 +2063,9 @@ flowchart LR
       ),
     );
 
-    expect(find.text('docker-compose.yml'), findsOneWidget);
-    expect(find.text('README.md'), findsOneWidget);
+    expect(find.textContaining('docker-compose.yml', findRichText: true),
+        findsWidgets);
+    expect(find.textContaining('README.md', findRichText: true), findsWidgets);
     expect(find.text('Validation'), findsOneWidget);
     expect(find.text('backend tests'), findsOneWidget);
     expect(find.text('8 passed'), findsOneWidget);
@@ -2098,7 +2100,13 @@ flowchart LR
       ),
     );
 
-    await tester.tap(find.text('README.md'));
+    final state = tester.state<EditableTextState>(find.byType(EditableText));
+    final box = state.renderEditable
+        .getBoxesForSelection(
+          const TextSelection(baseOffset: 5, extentOffset: 14),
+        )
+        .first;
+    await tester.tapAt(state.renderEditable.localToGlobal(box.toRect().center));
     await tester.pump();
 
     expect(tappedTarget, '/tmp/README.md');

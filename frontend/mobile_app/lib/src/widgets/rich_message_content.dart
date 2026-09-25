@@ -1,4 +1,6 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:markdown/markdown.dart' as md;
 import 'package:flutter/services.dart';
 
 class RichMessageContent extends StatelessWidget {
@@ -31,20 +33,20 @@ class RichMessageContent extends StatelessWidget {
 
   Widget _buildBlock(BuildContext context, _MessageBlock block) {
     return switch (block) {
-      _ParagraphBlock() => SelectableText.rich(
-          _inlineSpans(
-            block.text,
-            textColor: textColor,
-            onLinkTap: onLinkTap,
-          ),
+      _ParagraphBlock() => _SelectableInlineText(
+          text: block.text,
+          textColor: textColor,
+          onLinkTap: onLinkTap,
           style: TextStyle(
             color: textColor,
             height: 1.5,
             fontSize: 15,
           ),
         ),
-      _HeadingBlock() => Text(
-          block.text,
+      _HeadingBlock() => _SelectableInlineText(
+          text: block.text,
+          textColor: textColor,
+          onLinkTap: onLinkTap,
           style: TextStyle(
             color: textColor,
             height: 1.3,
@@ -88,12 +90,10 @@ class RichMessageContent extends StatelessWidget {
                       ),
                       const SizedBox(width: 10),
                       Expanded(
-                        child: SelectableText.rich(
-                          _inlineSpans(
-                            item,
-                            textColor: textColor,
-                            onLinkTap: onLinkTap,
-                          ),
+                        child: _SelectableInlineText(
+                          text: item,
+                          textColor: textColor,
+                          onLinkTap: onLinkTap,
                           style: TextStyle(
                             color: textColor,
                             height: 1.5,
@@ -123,25 +123,38 @@ class RichMessageContent extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: block.options
-                  .map(
-                    (option) => ActionChip(
+            for (final option in block.options)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton(
+                    style: OutlinedButton.styleFrom(
+                      alignment: Alignment.centerLeft,
+                      foregroundColor: textColor,
                       backgroundColor: const Color(0xFF223153),
                       side: const BorderSide(color: Color(0xFF314569)),
-                      label: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 240),
-                        child: Text(option.text),
+                      minimumSize: const Size(48, 48),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 12,
                       ),
-                      onPressed: onOptionSelected == null
-                          ? null
-                          : () => onOptionSelected!(option.text),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                     ),
-                  )
-                  .toList(),
-            ),
+                    onPressed: onOptionSelected == null
+                        ? null
+                        : () =>
+                            onOptionSelected!(_plainInlineText(option.text)),
+                    child: Text(
+                      _plainInlineText(option.text),
+                      softWrap: true,
+                      style: const TextStyle(fontSize: 15, height: 1.4),
+                    ),
+                  ),
+                ),
+              ),
           ],
         ),
       _CodeBlock() => _CodeCard(code: block.code, language: block.language),
@@ -438,16 +451,6 @@ class _ValidationItem {
   final Color statusColor;
 }
 
-class _FileReference {
-  _FileReference({
-    required this.label,
-    required this.path,
-  });
-
-  final String label;
-  final String path;
-}
-
 List<_MessageBlock> _parseBlocks(String rawText) {
   final text = rawText.replaceAll('\r\n', '\n');
   final blocks = <_MessageBlock>[];
@@ -504,6 +507,7 @@ List<_MessageBlock> _parseTextChunk(String chunk) {
       .where((value) => value.isNotEmpty);
 
   final blocks = <_MessageBlock>[];
+  var optionsSection = false;
   for (final group in groups) {
     final lines = group
         .split('\n')
@@ -514,9 +518,18 @@ List<_MessageBlock> _parseTextChunk(String chunk) {
       continue;
     }
 
+    // Only explicitly labelled choices become composer actions. Ordinary
+    // numbered instructions (especially links) must stay selectable content.
+    if (_isOptionsHeading(lines.first)) {
+      optionsSection = true;
+      lines.removeAt(0);
+      if (lines.isEmpty) continue;
+    }
+
     final headingMatch =
         RegExp(r'^#{1,3}\s+(.+)$').firstMatch(lines.first.trim());
     if (lines.length == 1 && headingMatch != null) {
+      optionsSection = false;
       blocks.add(_HeadingBlock(headingMatch.group(1)!.trim()));
       continue;
     }
@@ -524,6 +537,7 @@ List<_MessageBlock> _parseTextChunk(String chunk) {
     final sectionMatch =
         RegExp(r'^([A-Z][A-Za-z0-9 /-]{2,}):$').firstMatch(lines.first.trim());
     if (sectionMatch != null && lines.length > 1) {
+      optionsSection = false;
       final body = lines.sublist(1).join('\n');
       final sectionBlocks = _parseTextChunk(body);
       final validationBlock =
@@ -547,19 +561,33 @@ List<_MessageBlock> _parseTextChunk(String chunk) {
       continue;
     }
 
-    final optionMatches = lines
-        .map((line) => RegExp(r'^\d+[.)]\s+(.+)$').firstMatch(line.trim()))
-        .toList();
-    if (optionMatches.every((match) => match != null)) {
-      blocks.add(
-        _OptionListBlock(
-          optionMatches
-              .map((match) => _MessageOption(match!.group(1)!.trim()))
-              .toList(),
-        ),
-      );
+    final optionItems = <String>[];
+    var isList = true;
+    for (final line in lines) {
+      final match = RegExp(r'^\d+[.)]\s+(.+)$').firstMatch(line.trim());
+      if (match != null) {
+        optionItems.add(match.group(1)!.trim());
+      } else if (optionItems.isNotEmpty && line.startsWith(RegExp(r'\s'))) {
+        optionItems[optionItems.length - 1] += '\n${line.trim()}';
+      } else {
+        isList = false;
+        break;
+      }
+    }
+    if (isList && optionItems.isNotEmpty) {
+      if (optionsSection && !optionItems.any(_containsLink)) {
+        final options = optionItems.map(_MessageOption.new).toList();
+        if (blocks.isNotEmpty && blocks.last is _OptionListBlock) {
+          (blocks.last as _OptionListBlock).options.addAll(options);
+        } else {
+          blocks.add(_OptionListBlock(options));
+        }
+      } else {
+        blocks.add(_ParagraphBlock(lines.join('\n')));
+      }
       continue;
     }
+    optionsSection = false;
 
     final bulletMatches = lines
         .map((line) => RegExp(r'^[-*]\s+(.+)$').firstMatch(line.trim()))
@@ -632,136 +660,142 @@ Color _statusColorForResult(String value) {
   return const Color(0xFFB9D8FF);
 }
 
-TextSpan _inlineSpans(
-  String text, {
-  required Color textColor,
-  Future<void> Function(String target)? onLinkTap,
-}) {
-  final tokens = <_InlineToken>[];
-  final pattern = RegExp(r'`([^`]+)`|\[([^\]]+)\]\(([^)]+)\)');
-  var cursor = 0;
-  for (final match in pattern.allMatches(text)) {
-    if (match.start > cursor) {
-      tokens.add(_InlineText(text.substring(cursor, match.start)));
-    }
-
-    if (match.group(1) != null) {
-      tokens.add(_InlineCode(match.group(1)!));
-    } else if (match.group(2) != null && match.group(3) != null) {
-      tokens.add(
-        _InlineFileReference(
-          _FileReference(
-            label: match.group(2)!.trim(),
-            path: match.group(3)!.trim(),
-          ),
-        ),
-      );
-    }
-    cursor = match.end;
-  }
-
-  if (cursor < text.length) {
-    tokens.add(_InlineText(text.substring(cursor)));
-  }
-
-  if (tokens.isEmpty) {
-    return TextSpan(text: text, style: TextStyle(color: textColor));
-  }
-
-  return TextSpan(
-    style: TextStyle(color: textColor),
-    children: [
-      for (final token in tokens)
-        switch (token) {
-          _InlineText() => TextSpan(text: token.text),
-          _InlineCode() => WidgetSpan(
-              alignment: PlaceholderAlignment.middle,
-              child: Container(
-                margin: const EdgeInsets.symmetric(horizontal: 1),
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: const Color(0x2218203A),
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: const Color(0x33455C87)),
-                ),
-                child: Text(
-                  token.code,
-                  style: const TextStyle(
-                    color: Color(0xFFE7EEF9),
-                    fontFamily: 'monospace',
-                    fontSize: 12.5,
-                  ),
-                ),
-              ),
-            ),
-          _InlineFileReference() => WidgetSpan(
-              alignment: PlaceholderAlignment.middle,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(999),
-                  onTap: () async {
-                    if (onLinkTap != null) {
-                      await onLinkTap(token.reference.path);
-                      return;
-                    }
-                    await Clipboard.setData(
-                      ClipboardData(text: token.reference.path),
-                    );
-                  },
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF203150),
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: const Color(0xFF35517A)),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(
-                          Icons.description_outlined,
-                          size: 13,
-                          color: Color(0xFFB9D8FF),
-                        ),
-                        const SizedBox(width: 5),
-                        ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 170),
-                          child: Text(
-                            token.reference.label,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Color(0xFFE7EEF9),
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-        },
-    ],
-  );
+bool _isOptionsHeading(String line) {
+  final label = _plainInlineText(line.replaceFirst(RegExp(r'^#{1,6}\s+'), ''))
+      .trim()
+      .replaceFirst(RegExp(r':$'), '')
+      .toLowerCase();
+  return const {
+    'quick options',
+    'options',
+    'opciones',
+    'opciones rápidas',
+    'opciones rapidas'
+  }.contains(label);
 }
 
-sealed class _InlineToken {}
+List<md.Node> _inlineNodes(String text) => md.Document(
+      encodeHtml: false,
+      extensionSet: md.ExtensionSet.gitHubFlavored,
+    ).parseInline(text);
 
-class _InlineText extends _InlineToken {
-  _InlineText(this.text);
+String _plainInlineText(String text) =>
+    _inlineNodes(text).map((node) => node.textContent).join();
+
+bool _containsLink(String text) {
+  bool visit(md.Node node) =>
+      node is md.Element &&
+      (node.tag == 'a' || (node.children?.any(visit) ?? false));
+  return _inlineNodes(text).any(visit);
+}
+
+/// Text spans keep code and links inside the selectable text buffer. WidgetSpan
+/// contributes U+FFFC (the OBJ placeholder) to Android's selection clipboard.
+class _SelectableInlineText extends StatefulWidget {
+  const _SelectableInlineText({
+    required this.text,
+    required this.textColor,
+    required this.style,
+    this.onLinkTap,
+  });
+
   final String text;
+  final Color textColor;
+  final TextStyle style;
+  final Future<void> Function(String target)? onLinkTap;
+
+  @override
+  State<_SelectableInlineText> createState() => _SelectableInlineTextState();
 }
 
-class _InlineCode extends _InlineToken {
-  _InlineCode(this.code);
-  final String code;
-}
+class _SelectableInlineTextState extends State<_SelectableInlineText> {
+  final _recognizers = <TapGestureRecognizer>[];
+  late TextSpan _span;
 
-class _InlineFileReference extends _InlineToken {
-  _InlineFileReference(this.reference);
-  final _FileReference reference;
+  @override
+  void initState() {
+    super.initState();
+    _updateSpans();
+  }
+
+  @override
+  void didUpdateWidget(_SelectableInlineText oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _updateSpans();
+  }
+
+  void _disposeRecognizers() {
+    for (final recognizer in _recognizers) {
+      recognizer.dispose();
+    }
+    _recognizers.clear();
+  }
+
+  void _updateSpans() {
+    _disposeRecognizers();
+    _span =
+        TextSpan(children: _inlineNodes(widget.text).map(_spanFor).toList());
+  }
+
+  TextSpan _spanFor(md.Node node, [TapGestureRecognizer? link]) {
+    if (node is md.Text) {
+      return TextSpan(text: node.text, recognizer: link);
+    }
+    if (node is! md.Element) return const TextSpan();
+    var recognizer = link;
+    TextStyle? style;
+    switch (node.tag) {
+      case 'code':
+        style = TextStyle(
+          fontFamily: 'monospace',
+          backgroundColor: widget.textColor.withValues(alpha: 0.08),
+        );
+      case 'strong':
+        style = const TextStyle(fontWeight: FontWeight.w700);
+      case 'em':
+        style = const TextStyle(fontStyle: FontStyle.italic);
+      case 'del':
+        style = const TextStyle(decoration: TextDecoration.lineThrough);
+      case 'br':
+        return const TextSpan(text: '\n');
+      case 'a':
+        final target = node.attributes['href'];
+        if (target != null) {
+          recognizer = TapGestureRecognizer()
+            ..onTap = () async {
+              if (widget.onLinkTap != null) {
+                await widget.onLinkTap!(target);
+              } else {
+                await Clipboard.setData(ClipboardData(text: target));
+              }
+            };
+          _recognizers.add(recognizer);
+          style = TextStyle(
+            color: ThemeData.estimateBrightnessForColor(widget.textColor) ==
+                    Brightness.light
+                ? const Color(0xFFB9D8FF)
+                : const Color(0xFF123C69),
+            decoration: TextDecoration.underline,
+          );
+        }
+    }
+    return TextSpan(
+      style: style,
+      recognizer: recognizer,
+      children:
+          node.children?.map((child) => _spanFor(child, recognizer)).toList(),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => SelectableText.rich(
+        _span,
+        style: widget.style,
+      );
+
+  @override
+  void dispose() {
+    _disposeRecognizers();
+    super.dispose();
+  }
 }
