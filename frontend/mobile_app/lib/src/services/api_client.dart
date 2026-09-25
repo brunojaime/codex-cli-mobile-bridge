@@ -20,6 +20,7 @@ import '../models/project_secrets.dart';
 import '../models/prod_update_status.dart';
 import '../models/server_capabilities.dart';
 import '../models/session_detail.dart';
+import '../models/session_file.dart';
 import '../models/chat_session_summary.dart';
 import '../models/server_health.dart';
 import '../models/workspace.dart';
@@ -51,6 +52,50 @@ class ApiClient {
 
   final String baseUrl;
   final http.Client _client;
+
+  Uri sessionFileUri(
+    String sessionId,
+    String path, {
+    String? relativeTo,
+    bool content = false,
+  }) =>
+      Uri.parse('$baseUrl/sessions/${Uri.encodeComponent(sessionId)}/files'
+              '${content ? '/content' : ''}')
+          .replace(queryParameters: {
+        'path': path,
+        if (relativeTo != null) 'relative_to': relativeTo,
+      });
+
+  Future<SessionFile> getSessionFile(
+    String sessionId,
+    String path, {
+    String? relativeTo,
+  }) async {
+    final response = await _client
+        .get(sessionFileUri(sessionId, path, relativeTo: relativeTo))
+        .timeout(const Duration(seconds: 30));
+    if (response.statusCode != 200) {
+      var detail = 'No se pudo abrir el archivo del servidor.';
+      try {
+        detail = (jsonDecode(response.body) as Map<String, dynamic>)['detail']
+                as String? ??
+            detail;
+      } catch (_) {/* Older servers may return a non-JSON error. */}
+      throw Exception(detail);
+    }
+    return SessionFile.fromJson(
+        jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>);
+  }
+
+  Future<Uint8List> downloadSessionFile(String sessionId, String path) async {
+    final response = await _client
+        .get(sessionFileUri(sessionId, path, content: true))
+        .timeout(const Duration(seconds: 60));
+    if (response.statusCode != 200) {
+      throw Exception('No se pudo descargar el archivo del servidor.');
+    }
+    return response.bodyBytes;
+  }
 
   Uri jobStreamUri(String jobId) {
     final httpUri = Uri.parse(baseUrl);

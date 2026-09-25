@@ -24,6 +24,24 @@ from backend.app.infrastructure.execution.base import (
 )
 
 
+_MOBILE_FILE_CONTEXT = (
+    "Mobile client context: The user reads this chat in a remote mobile app and cannot "
+    "open files on the server's disk directly. Deliver reports and screenshots inside "
+    "the current chat workspace and link to existing files with Markdown links. "
+    "The app opens those links through its project file viewer, including relative "
+    "links from a report to nearby screenshots. Put a useful summary in the reply. "
+    "Do not present localhost URLs, file:// URLs, or files outside the workspace as "
+    "public web links. If a deliverable is outside the workspace, copy only the "
+    "intended non-secret deliverable into the project before linking it, or explain "
+    "why it cannot be viewed. Never copy credentials, private backups or secrets "
+    "into a report directory. Keep real HTTP(S) links as normal web links."
+)
+
+
+def _message_with_mobile_file_context(message: str) -> str:
+    return f"{_MOBILE_FILE_CONTEXT}\n\nUser request:\n{message}"
+
+
 def _skill_path(skill_id: str, workdir: str | None) -> Path | None:
     if not re.fullmatch(r"[A-Za-z0-9._-]+", skill_id):
         return None
@@ -62,7 +80,9 @@ def _app_server_input_items(
     items: list[dict[str, object]] = [
         {
             "type": "text",
-            "text": _message_with_skill_mentions(message, codex_options),
+            "text": _message_with_mobile_file_context(
+                _message_with_skill_mentions(message, codex_options)
+            ),
             "text_elements": [],
         }
     ]
@@ -935,7 +955,7 @@ class LocalExecutionProvider(ExecutionProvider):
                 "-",
                 *image_args,
             ]
-        return exec_parts, output_path, message
+        return exec_parts, output_path, _message_with_mobile_file_context(message)
 
     def _build_app_server_command(
         self,

@@ -23,6 +23,7 @@ import '../models/server_capabilities.dart';
 import '../models/server_health.dart';
 import '../models/server_profile.dart';
 import '../models/session_detail.dart';
+import '../models/session_file.dart';
 import '../models/slash_command.dart';
 import '../models/workspace.dart';
 import '../services/api_client.dart';
@@ -43,6 +44,7 @@ import '../widgets/project_documents_panel.dart';
 import '../widgets/project_secrets_sheet.dart';
 import '../widgets/reviewer_status_banner.dart';
 import 'operations_screen.dart';
+import 'session_file_screen.dart';
 
 const String _defaultAutoReviewerPrompt =
     'You are receiving the latest answer from a generator Codex. '
@@ -2076,6 +2078,19 @@ When you create the Project Factory draft, link each asset with POST /project-fa
 
   Future<void> _handleMessageLinkTap(String target) async {
     final trimmedTarget = target.trim();
+    if (isServerFileLink(trimmedTarget)) {
+      final session = _chatController.currentSession;
+      if (session == null) return;
+      await Navigator.of(context).push<void>(MaterialPageRoute(
+        builder: (_) => SessionFileScreen(
+          apiClient: _projectDocumentsClient(),
+          sessionId: session.id,
+          target: trimmedTarget,
+          onExternalLink: _handleMessageLinkTap,
+        ),
+      ));
+      return;
+    }
     final uri = _parseMessageTarget(trimmedTarget);
 
     if (uri == null) {

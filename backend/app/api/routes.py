@@ -216,6 +216,11 @@ from backend.app.api.schemas import (
     WorkspaceResponse,
 )
 from backend.app.application.services.asset_depot_service import AssetDepotError
+from backend.app.application.services.session_file_service import (
+    SessionFileError,
+    resolve_session_file,
+    session_file_metadata,
+)
 from backend.app.application.services.project_factory_manifest_service import (
     ProjectFactoryManifestInput,
 )
@@ -6954,6 +6959,52 @@ async def recover_message(
         run_configurations_by_id=_run_configurations_by_id_for_session(
             service, session_id
         ),
+    )
+
+
+async def _session_file_workspace(session_id: str, service: MessageService) -> str:
+    session = await run_in_threadpool(service.get_session, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Chat no encontrado.")
+    return session.workspace_path
+
+
+@router.get("/sessions/{session_id}/files")
+async def get_session_file(
+    session_id: str,
+    path: str,
+    relative_to: str | None = None,
+    service: MessageService = Depends(get_message_service),
+) -> dict:
+    workspace = await _session_file_workspace(session_id, service)
+    try:
+        return await run_in_threadpool(session_file_metadata, workspace, path, relative_to)
+    except SessionFileError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+@router.get("/sessions/{session_id}/files/content")
+async def download_session_file(
+    session_id: str,
+    path: str,
+    relative_to: str | None = None,
+    service: MessageService = Depends(get_message_service),
+) -> FileResponse:
+    workspace = await _session_file_workspace(session_id, service)
+    try:
+        file = await run_in_threadpool(resolve_session_file, workspace, path, relative_to)
+        if file.is_dir():
+            raise SessionFileError("Seleccioná un archivo dentro de la carpeta.", 422)
+    except SessionFileError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return FileResponse(
+        file,
+        filename=file.name,
+        headers={
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "no-store",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+        },
     )
 
 

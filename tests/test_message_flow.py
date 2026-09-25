@@ -6523,7 +6523,8 @@ def test_app_server_streaming_exposes_partial_response_before_completion() -> No
 
     payload = wait_for_job(client, job_id)
     assert payload["status"] == "completed"
-    assert payload["response"] == f"turn 1: {message}"
+    assert payload["response"].endswith(f"User request:\n{message}")
+    assert payload["response"].startswith("turn 1: Mobile client context:")
 
 
 def test_app_server_streaming_accepts_legacy_delta_events(
@@ -6554,7 +6555,8 @@ def test_app_server_streaming_accepts_legacy_delta_events(
 
     payload = wait_for_job(client, job_id)
     assert payload["status"] == "completed"
-    assert payload["response"] == f"turn 1: {message}"
+    assert payload["response"].endswith(f"User request:\n{message}")
+    assert payload["response"].startswith("turn 1: Mobile client context:")
 
 
 def test_app_server_streaming_ignores_reasoning_tool_and_commentary_events(
@@ -6571,7 +6573,8 @@ def test_app_server_streaming_ignores_reasoning_tool_and_commentary_events(
     payload = wait_for_job(client, job_id)
 
     assert payload["status"] == "completed"
-    assert payload["response"] == f"turn 1: {message}"
+    assert payload["response"].endswith(f"User request:\n{message}")
+    assert payload["response"].startswith("turn 1: Mobile client context:")
     assert "call-mcp-tool" not in payload["response"]
     assert "internal reasoning" not in payload["response"]
 
@@ -6623,7 +6626,8 @@ def test_exec_command_reads_prompt_from_stdin_instead_of_argv() -> None:
     command_parts, output_path, stdin_prompt = provider._build_command(message)
 
     try:
-        assert stdin_prompt == message
+        assert stdin_prompt.endswith(message)
+        assert "Mobile client context:" in stdin_prompt
         assert message not in command_parts
         assert "-" in command_parts
     finally:
@@ -6639,7 +6643,8 @@ def test_exec_resume_command_reads_prompt_from_stdin_instead_of_argv() -> None:
     )
 
     try:
-        assert stdin_prompt == "continue this"
+        assert stdin_prompt.endswith("continue this")
+        assert "Mobile client context:" in stdin_prompt
         assert command_parts[-2:] == ["thread-1", "-"]
     finally:
         provider._cleanup_output_file(output_path)
@@ -6692,7 +6697,8 @@ def test_app_server_streaming_resumes_same_thread_for_follow_up_turns() -> None:
     first_response = client.post("/message", json={"message": "first turn"})
     assert first_response.status_code == 202
     first_job = wait_for_job(client, first_response.json()["job_id"])
-    assert first_job["response"] == "turn 1: first turn"
+    assert first_job["response"].startswith("turn 1: Mobile client context:")
+    assert first_job["response"].endswith("User request:\nfirst turn")
 
     second_response = client.post(
         f"/sessions/{first_job['session_id']}/messages",
@@ -6701,7 +6707,8 @@ def test_app_server_streaming_resumes_same_thread_for_follow_up_turns() -> None:
     assert second_response.status_code == 202
     second_job = wait_for_job(client, second_response.json()["job_id"])
 
-    assert second_job["response"] == "turn 2: second turn"
+    assert second_job["response"].startswith("turn 2: Mobile client context:")
+    assert second_job["response"].endswith("User request:\nsecond turn")
     assert second_job["provider_session_id"] == first_job["provider_session_id"]
 
 
