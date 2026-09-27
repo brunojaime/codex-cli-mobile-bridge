@@ -55,9 +55,23 @@ export function createBatch(config, items, preset) {
   return {
     kind: 'codex.developerFeedbackBatch', version: 1,
     sourceApp: config.sourceApp, sourceDisplayName: config.sourceDisplayName,
-    workflowPresetId: preset, releaseWhenComplete: false, items: items.flatMap(expandTrace),
-    message: `Feedback del entorno ${config.environment}. Implementar y validar los cambios en el proyecto indicado. No desplegar producción. La publicación requiere autorización específica.`,
+    workflowPresetId: preset, releaseWhenComplete: false, items: items.flatMap(expandFeedback).map(item => ({ ...item, contextMetadata: { ...item.contextMetadata, feedbackInstructions: `Feedback del entorno ${config.environment}. Implementar y validar. No desplegar producción. La publicación requiere autorización específica.` } })),
+    // Omit message: the Bridge builds the prompt with comments AND audio transcripts.
   };
+}
+
+// Use the existing one-audio-per-item Bridge contract; retain note order and
+// parent association without putting duplicate binary data in context JSON.
+export function expandFeedback(item) {
+  const { voiceNotes = [], ...base } = item;
+  const expanded = expandTrace({ ...base, hasAudio: !!base.audioBase64 });
+  return [...expanded, ...voiceNotes.map((note, index) => ({
+    ...base, guidedTrace: undefined, feedbackKind: 'codex.developerFeedback.voiceNote',
+    id: `${item.id}-note-${note.id}`, comment: `Nota de voz ${index + 1}/${voiceNotes.length} del feedback ${item.id}. Corresponde a la captura o recorrido anterior.`,
+    hasAudio: true, audioBase64: note.audioBase64, audioMimeType: note.audioMimeType,
+    audioDurationMs: note.audioDurationMs, audioByteLength: note.audioByteLength,
+    contextMetadata: { ...item.contextMetadata, parentFeedbackId: item.id, voiceNoteId: note.id, voiceNoteIndex: index, voiceNoteCount: voiceNotes.length },
+  }))];
 }
 
 // Every frame must become an image attachment: the Bridge omits binary data
@@ -83,7 +97,7 @@ export async function submitBatch(config, items, preset, fetcher = fetch) {
   const response = await fetcher(`${bridgeUrl(config.bridgeUrl)}/feedback-batches/start-session`, {
     method: 'POST', credentials: 'omit', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(createBatch(config, items, preset)),
-    signal: AbortSignal.timeout(60000),
+    signal: AbortSignal.timeout(items.some(item => item.hasAudio || item.voiceNotes?.length) ? 600000 : 60000),
   });
   if (!response.ok) throw new Error(`El Bridge no aceptó el envío (${response.status}). La cola sigue guardada.`);
   const result = await response.json();
