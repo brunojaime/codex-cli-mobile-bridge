@@ -23,6 +23,27 @@ interface Tokens {
   accessToken: string;
   refreshToken: string;
 }
+/** Grace applies only to a still-running process; cold starts never inherit it. */
+export const BACKGROUND_LOCK_MS = 5 * 60_000;
+export class BackgroundLockPolicy {
+  private leftAt: number | null = null;
+  leave(now: number) {
+    this.leftAt ??= now;
+  }
+  due(now: number) {
+    return this.leftAt !== null && (now < this.leftAt || now - this.leftAt >= BACKGROUND_LOCK_MS);
+  }
+  remaining(now: number) {
+    return this.leftAt === null
+      ? BACKGROUND_LOCK_MS
+      : Math.max(0, BACKGROUND_LOCK_MS - (now - this.leftAt));
+  }
+  resume(now: number) {
+    const lock = this.due(now);
+    this.leftAt = null;
+    return lock;
+  }
+}
 export class MobileClient {
   private access: string | null = null;
   private generation = 0;
@@ -123,9 +144,14 @@ export class MobileClient {
   }
   async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     if (!this.access) throw new MobileApiError(401, 'locked', 'Desbloqueá tu sesión.');
+    const generation = this.generation;
     try {
-      return await this.send<T>(path, init, this.access);
+      const result = await this.send<T>(path, init, this.access);
+      if (generation !== this.generation)
+        throw new MobileApiError(401, 'locked', 'Desbloqueá tu sesión.');
+      return result;
     } catch (error) {
+      if (generation !== this.generation) throw error;
       if (!(error instanceof MobileApiError) || error.status !== 401) throw error;
       this.access = null;
       if (!(await this.unlock())) throw error;
@@ -136,6 +162,27 @@ export class MobileClient {
     return this.send<{ message: string }>('auth/recovery', {
       method: 'POST',
       body: JSON.stringify({ email })
+    });
+  }
+  async loginWithDevice(credential: string) {
+    const generation = ++this.generation;
+    const result = await this.send<Tokens>('auth/device', {
+      method: 'POST',
+      body: JSON.stringify({ credential })
+    });
+    if (generation !== this.generation) return false;
+    await this.storage.write(result.refreshToken);
+    if (generation !== this.generation) {
+      await this.storage.clear();
+      return false;
+    }
+    this.access = result.accessToken;
+    return true;
+  }
+  async forgetDevice(credential: string) {
+    return this.send('auth/device/forget', {
+      method: 'POST',
+      body: JSON.stringify({ credential })
     });
   }
   async logout() {
