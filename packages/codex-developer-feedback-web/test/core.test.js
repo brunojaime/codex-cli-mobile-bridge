@@ -70,9 +70,27 @@ test('only dev enables exact configured origins, legacy queues remain isolated',
     assert.equal(enabledAt(scoped, { origin: 'https://app.consultorard.com.ar' }), false);
     assert.equal(enabledAt(scoped, { origin: origin + '.evil.test' }), false);
     assert.notEqual(queueKey(scoped), queueKey({ ...scoped, environment: 'staging' }));
-    assert.match(createBatch(scoped, [item()], 'default').message, new RegExp('entorno ' + environment));
+    assert.match(createBatch(scoped, [item()], 'default').items[0].contextMetadata.feedbackInstructions, new RegExp('entorno ' + environment));
   }
   for (const environment of ['prod', 'production', 'preview', 'unknown']) {
     assert.equal(enabledAt({ ...config, environment }, { origin: config.allowedOrigins[0] }), false);
   }
+});
+
+test('multiple voice comments retain order, parent association and transcriptions via the default Bridge prompt', () => {
+  const entry = { ...item(), hasAudio: true, voiceNotes: Array.from({length:12}, (_,i) => ({id:`note-${i}`,audioBase64:`audio${i}`,audioMimeType:'audio/webm',audioDurationMs:3_600_000,audioByteLength:100})) };
+  const payload = createBatch(config,[entry],'default');
+  assert.equal(payload.message,undefined,'a custom message would suppress the Bridge transcripts and comments');
+  assert.equal(payload.items.length,13);assert.equal(payload.items.filter(i=>i.hasAudio).length,12);
+  assert.equal(payload.items[0].comment,'Ajustar');assert.equal(payload.items[0].voiceNotes,undefined);
+  assert.deepEqual(payload.items.slice(1).map(i=>i.audioBase64),entry.voiceNotes.map(n=>n.audioBase64));
+  for (const [index,note] of payload.items.slice(1).entries()) {
+    assert.equal(note.contextMetadata.parentFeedbackId,entry.id);assert.equal(note.contextMetadata.voiceNoteIndex,index);
+    assert.equal(note.audioDurationMs,3_600_000);assert.equal(note.screenshotPngBase64,entry.screenshotPngBase64);
+    assert.match(note.contextMetadata.feedbackInstructions,/No desplegar producción/);
+  }
+  assert.equal(new Set(payload.items.map(i=>i.id)).size,13);
+  const trace = {...entry,audioBase64:'main-audio',audioMimeType:'audio/webm',guidedTrace:{id:'t',frames:[{screenshotPngBase64:'frame0',atMs:0,screen:{route:'/'}}]}};
+  const combined = createBatch(config,[trace],'default');assert.equal(combined.items[0].audioBase64,'main-audio');
+  assert.equal(combined.items.filter(i=>i.audioBase64).length,13);assert.ok(combined.items.slice(1).every(i=>!i.guidedTrace));
 });
