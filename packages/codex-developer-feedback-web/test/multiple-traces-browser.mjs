@@ -3,7 +3,7 @@ import { build } from 'esbuild';
 import { mkdir,writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import assert from 'node:assert/strict';
-const output=resolve('../../reports/feedback-voice-queue-20260927');await mkdir(output,{recursive:true});
+const output=resolve(process.env.FEEDBACK_REPORT_DIR || '../../reports/feedback-capture-fidelity-20260927');await mkdir(output,{recursive:true});
 const bundle=(await build({stdin:{contents:"export { mountFeedback } from './src/index.js'; import { TRACE_LIMITS } from './src/trace.js'; window.testTraceLimits = TRACE_LIMITS; import { createQueueStore } from './src/queue-store.js'; window.createTestQueueStore = createQueueStore;",resolveDir:process.cwd()},bundle:true,format:'esm',write:false})).outputFiles[0].text;
 const browser=await chromium.launch({headless:true,args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream']});
 let posts=[];

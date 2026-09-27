@@ -58,7 +58,7 @@ export function mountFeedback(config) {
   bridgeUrl(config.bridgeUrl);
   if (document.querySelector('[data-codex-feedback]')) return () => {};
   const host = document.createElement('div');
-  host.dataset.codexFeedback = '0.5.0';
+  host.dataset.codexFeedback = '0.6.0';
   host.setAttribute('data-html2canvas-ignore', 'true');
   const root = host.attachShadow({ mode: 'open' });
   root.innerHTML = `<style>${css}</style>
@@ -326,14 +326,15 @@ export function mountFeedback(config) {
     finally { setBusy(false); }
   };
   el('discard-trace').onclick = () => { traceDraft = null; el('trace-review').close(); };
-  const liveDrawing = createLiveDrawing(el('live-drawing'), () => void recorder.capture('annotation'));
+  let drawingPreparing = false;
+  const liveDrawing = createLiveDrawing(el('live-drawing'), () => void recorder.capture('annotation'), () => { resetLiveDrawing(); el('recording-note').textContent = 'La pantalla cambió de tamaño. Tocá Dibujar para marcar una nueva captura.'; });
   const resetLiveDrawing = () => { liveDrawing.hide(); el('live-tools').hidden = true; el('mark-trace').textContent = 'Dibujar'; el('mark-trace').setAttribute('aria-pressed', 'false'); };
   const recordingEnded = () => { resetLiveDrawing(); el('recording-bar').hidden = true; launch.hidden = false; el('start-trace').disabled = false; };
   const recorder = createTraceRecorder(config, {
     captureScreen: () => liveDrawing.capture(),
     onUpdate: value => {
       el('recording-clock').textContent = traceTime(value.durationMs); el('recording-frames').textContent = value.stopping ? 'Preparando recorrido…' : `${value.frames} capturas · Voz`;
-      el('mark-trace').disabled = value.stopping; el('stop-trace').disabled = value.stopping; el('capture-step').disabled = value.stopping;
+      el('mark-trace').disabled = value.stopping || drawingPreparing; el('stop-trace').disabled = value.stopping; el('capture-step').disabled = value.stopping;
     },
     onReady: (item, note) => { if (disposed) return; recordingEnded(); if (item) { traceDraft = item; openTraceReview(item, false, note); } },
     onError: message => { if (!disposed) { el('recording-note').textContent = message; el('dock-status').textContent = message; } },
@@ -348,8 +349,17 @@ export function mountFeedback(config) {
   };
   el('start-trace').onclick = startTrace; el('new-trace').onclick = startTrace;
   el('mark-trace').onclick = async () => {
+    if (drawingPreparing) return;
     if (liveDrawing.active) { el('mark-trace').disabled = true; await recorder.capture('annotations_complete'); resetLiveDrawing(); el('mark-trace').disabled = false; }
-    else { liveDrawing.show(); el('live-tools').hidden = false; el('mark-trace').textContent = 'Navegar'; el('mark-trace').setAttribute('aria-pressed', 'true'); el('recording-note').textContent = 'La voz sigue grabando. Tocá Navegar para continuar el flujo.'; }
+    else {
+      drawingPreparing = true; el('mark-trace').disabled = true; el('recording-note').textContent = 'Preparando la pantalla para marcar…';
+      try {
+        if (!await liveDrawing.show()) return;
+        el('live-tools').hidden = false; el('mark-trace').textContent = 'Navegar'; el('mark-trace').setAttribute('aria-pressed', 'true');
+        el('recording-note').textContent = 'Marcás esta captura; la voz sigue grabando. Tocá Navegar para continuar.';
+      } catch { el('recording-note').textContent = 'La pantalla está cambiando. Volvé a tocar Dibujar cuando termine de cargar.'; }
+      finally { drawingPreparing = false; el('mark-trace').disabled = false; }
+    }
     recordingFloat.place();
   };
   for (const name of ['pen', 'rectangle', 'arrow']) el(`live-${name}`).onclick = () => { liveDrawing.tool = name; for (const other of ['pen', 'rectangle', 'arrow']) el(`live-${other}`).setAttribute('aria-pressed', String(name === other)); };

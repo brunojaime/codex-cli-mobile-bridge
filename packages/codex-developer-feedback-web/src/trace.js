@@ -29,10 +29,10 @@ export function createTraceRecorder(config, { onUpdate, onReady, onError, captur
           const previous = s.frames.pop(); if (previous) s.frameChars -= previous.screenshotPngBase64.length;
         }
         const id = `${s.id}-frame-${s.nextFrame++}`;
-        s.frames.push({ id, attachmentId: id, atMs, ...image, screen: { route: shot.pathname }, annotations: shot.annotations || [] });
+        s.frames.push({ id, attachmentId: id, atMs, ...image, screen: { route: shot.pathname, viewport: shot.viewport, capturedAt: shot.capturedAt }, annotations: shot.annotations || [] });
         s.frameChars += image.screenshotPngBase64.length;
         event('frame_captured', { frameId: id, reason, route: shot.pathname }); notify();
-      } catch { s.captureErrors++; if (!s.stopping) onError('No se pudo capturar este paso. Podés volver a tocar Capturar paso.'); }
+      } catch (error) { if (error?.retryable) return; s.captureErrors++; if (!s.stopping) onError('No se pudo capturar este paso. Podés volver a tocar Capturar paso.'); }
     })();
     try { await s.capturePromise; } finally { s.capturePromise = null; }
   };

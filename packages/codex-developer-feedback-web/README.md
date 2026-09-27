@@ -42,6 +42,8 @@ Los workspaces deben estar registrados con el mismo nombre que `sourceApp`.
 El test Playwright de `test/browser.mjs` comprueba el widget real con transporte
 simulado: no inicia ejecuciones de Codex ni envía información de negocio.
 
-Desde 0.4.0: durante el recorrido, Dibujar activa una capa transparente de tamaño original con lápiz, rectángulo y flecha. Navegar guarda las marcas y permite seguir usando la app; la voz no se detiene. Las marcas se incluyen en las imágenes enviadas. Los límites de duración y almacenamiento continúan vigentes; no es video continuo ni MP4.
+Desde 0.4.0: durante el recorrido, Dibujar activa un editor de tamaño original con lápiz, rectángulo y flecha. Navegar guarda las marcas y permite seguir usando la app; la voz no se detiene. Las marcas se incluyen en las imágenes enviadas. Los límites de duración y almacenamiento continúan vigentes; no es video continuo ni MP4.
 
 Desde 0.5.0: la cola migra automáticamente desde localStorage a IndexedDB sin eliminar el origen hasta confirmar el guardado. Nuevo recorrido permite agregar sucesivas grabaciones desde la cola. Guardar no envía nada; los fallos de almacenamiento conservan el borrador abierto. Cada recorrido mantiene su propio audio y secuencia.
+
+Desde 0.6.0: se conservan las hojas de estilo ya cargadas, sin depender de volver a descargarlas para la captura. Dibujar fija una imagen a tamaño original y une sus marcas a esa imagen; la voz sigue grabándose. Navegar retoma la app. Cambiar el tamaño de pantalla sale del dibujo para evitar desplazar trazos. Las capturas que cambian de ruta, scroll o viewport durante la copia se omiten y se reintentan en el siguiente intervalo. Los elementos privados se ocultan sin alterar el espacio que ocupan. Esto mejora nuevas capturas; no reconstruye imágenes anteriores dañadas.
