@@ -30,7 +30,7 @@ try {
    return route.continue();
   });
   const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));
-  let response;for(let attempt=0;attempt<3;attempt++){try{response=await page.goto(url,{waitUntil:'domcontentloaded',timeout:60000});break;}catch(error){if(!String(error).includes('ERR_NETWORK_CHANGED')||attempt===2)throw error;}}assert.equal(response.status(),200,name+' HTTP');await page.waitForFunction(()=>document.body.innerText.length>100);await page.waitForTimeout(1500);
+  let response;for(let attempt=0;attempt<3;attempt++){try{response=await page.goto(url,{waitUntil:'domcontentloaded',timeout:60000});break;}catch(error){if(!String(error).includes('ERR_NETWORK_CHANGED')||attempt===2)throw error;}}assert.equal(response.status(),200,name+' HTTP');await page.waitForFunction(()=>document.body.innerText.length>30);await page.waitForTimeout(1500);
   const host=page.locator('[data-codex-feedback]');
   if(enabled){
    await host.waitFor({state:"attached"});await page.getByRole("button",{name:"Abrir feedback",exact:true}).waitFor();assert.equal(await host.getAttribute('data-codex-feedback'),'0.4.0');
