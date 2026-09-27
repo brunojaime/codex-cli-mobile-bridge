@@ -78,6 +78,20 @@ def mobile_job_status(job_id: str) -> dict:
     result=path/'result.json'
     return json.loads(result.read_text()) if result.exists() else {'jobId':job_id,'state':'running'}
 
+@mcp.tool(annotations=WRITE)
+def bump_mobile_version(project: str, version: str) -> dict:
+    """Update SemVer and increment the native build locally; never tag or publish automatically."""
+    root=_project(project)
+    if not re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)',version):raise ValueError('Version must be canonical SemVer')
+    path=root/'infra/mobile/release.json'
+    if path.is_symlink() or not path.resolve().is_relative_to(root):raise ValueError('Release configuration escapes project')
+    release=json.loads(path.read_text())
+    if tuple(map(int,version.split('.'))) < tuple(map(int,release['version'].split('.'))):raise ValueError('Version cannot go backwards')
+    release['version']=version;release['androidBuild']+=1
+    if release['androidBuild']>2100000000:raise ValueError('Android build number exhausted')
+    path.write_text(json.dumps(release,indent=2)+'\n')
+    return {'project':project,'version':version,'build':release['androidBuild'],'state':'local-changes','nextStep':'Validate, commit and build before authorized publication.'}
+
 @mcp.tool(annotations=READ)
 def mobile_sdk_plan(project: str) -> dict:
     """Compare the shared session SDK with one consumer, without overwriting custom code."""

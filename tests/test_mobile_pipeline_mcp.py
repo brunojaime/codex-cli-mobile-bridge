@@ -46,3 +46,9 @@ def test_sdk_update_records_digest_and_requires_native_rebuild(tmp_path,monkeypa
     assert result['state']=='local-changes'
     assert 'authorized-publication' in result['requires']
     assert server.mobile_sdk_plan('gestion')['updateAvailable'] is False
+
+def test_version_bump_monotonic_and_never_publishes(tmp_path,monkeypatch):
+    enrolled(tmp_path);monkeypatch.setattr(server,'ROOT',tmp_path)
+    result=server.bump_mobile_version('gestion','0.1.1')
+    assert result['version']=='0.1.1' and result['build']==2
+    with pytest.raises(ValueError):server.bump_mobile_version('gestion','0.0.9')
