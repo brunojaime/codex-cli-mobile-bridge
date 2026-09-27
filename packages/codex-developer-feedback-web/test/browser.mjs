@@ -12,8 +12,8 @@ const browser = await chromium.launch({ headless: true });
 const results = [];
 try {
   for (const app of [
-    { sourceApp: 'rd-gestion-hse', name: 'RD Gestión HSE', origin: 'https://rd-staging.nienfos.com', production: 'https://app.consultorard.com.ar' },
-    { sourceApp: 'proyecto-inmobiliaria', name: 'Chrem Inmobiliaria', origin: 'https://chrem-staging.nienfos.com', production: 'https://chrempropiedades.com.ar' },
+    { sourceApp: 'rd-gestion-hse', name: 'RD Gestión HSE', origin: 'https://rd-dev.nienfos.com', production: 'https://app.consultorard.com.ar' },
+    { sourceApp: 'proyecto-inmobiliaria', name: 'Chrem Inmobiliaria', origin: 'https://chrem-dev.nienfos.com', production: 'https://chrempropiedades.com.ar' },
   ]) {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true });
     const page = await context.newPage();

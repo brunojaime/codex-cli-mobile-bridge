@@ -7,8 +7,8 @@ const browser = await chromium.launch({ headless: true });
 const results = [];
 try {
  for (const app of [
-  { name: 'rd', origin: 'https://rd-staging.nienfos.com', prod: 'https://app.consultorard.com.ar', port: 5188 },
-  { name: 'chrem', origin: 'https://chrem-staging.nienfos.com', prod: 'https://chrempropiedades.com.ar', port: 5189 },
+  { name: 'rd', origin: 'https://rd-dev.nienfos.com', prod: 'https://app.consultorard.com.ar', port: 5188 },
+  { name: 'chrem', origin: 'https://chrem-dev.nienfos.com', prod: 'https://chrempropiedades.com.ar', port: 5189 },
  ]) {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const page = await context.newPage();
@@ -34,7 +34,7 @@ try {
   await page.goto(app.prod);
   await page.waitForLoadState('networkidle');
   assert.equal(await page.locator('[data-codex-feedback]').count(), 0);
-  results.push({ app: app.name, source: 'real local app, simulated staging origin; API unauthenticated', capture: 'passed', persistence: 'passed', productionHidden: true });
+  results.push({ app: app.name, source: 'real local app, simulated dev origin; API unauthenticated', capture: 'passed', persistence: 'passed', productionHidden: true });
   await context.close();
  }
  await writeFile(resolve(out, 'app-integration-tests.json'), JSON.stringify(results,null,2));

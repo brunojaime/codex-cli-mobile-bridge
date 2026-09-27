@@ -4,12 +4,12 @@ import { resolve, extname } from 'node:path';
 import assert from 'node:assert/strict';
 const app = process.argv[2];
 assert.ok(['rd','chrem'].includes(app));
-const origin = `https://${app}-staging.nienfos.com`;
+const origin = `https://${app}-dev.nienfos.com`;
 const output = resolve('../../reports/staging-feedback-flow-20260926');
 await mkdir(output,{recursive:true});
 const buildRoot = process.env.FEEDBACK_BUILD_ROOT;
 const mode = buildRoot ? 'predeploy' : 'live';
-const browser = await chromium.launch({headless:true,args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream'],proxy:{server:'socks5://127.0.0.1:1055'}});
+const browser = await chromium.launch({headless:true,args:['--use-fake-ui-for-media-stream','--use-fake-device-for-media-stream'],proxy:{server:'http://127.0.0.1:1056'}});
 try {
  const context = await browser.newContext({viewport:{width:390,height:844},hasTouch:true});
  if(buildRoot) await context.route(origin+'/**',async route=>{
@@ -26,7 +26,7 @@ try {
  let submitted=0;page.on('request',r=>{if(r.method()==='POST'&&r.url().includes('/feedback-batches'))submitted++;});
  const response=await page.goto(origin,{waitUntil:'domcontentloaded',timeout:60000});assert.equal(response.status(),200);
  const launch=page.getByRole('button',{name:'Abrir feedback',exact:true});await launch.waitFor();
- assert.equal(await page.locator('[data-codex-feedback]').getAttribute('data-codex-feedback'),'0.3.0');
+ assert.equal(await page.locator('[data-codex-feedback]').getAttribute('data-codex-feedback'),'0.4.0');
  await page.screenshot({path:resolve(output,`${app}-${mode}-bug-390.png`)});
  await launch.click();
  await page.waitForFunction(()=>document.querySelector('[data-codex-feedback]')?.shadowRoot?.querySelectorAll('#preset option').length>2,{},{timeout:20000});
@@ -63,6 +63,6 @@ try {
  await page.getByRole('button',{name:'Abrir feedback, 1 pendientes',exact:true}).click();await page.getByRole('button',{name:'Ver pendientes (1)',exact:true}).click();assert.match(await page.locator('#queue').innerText(),/Recorrido/);
  await page.getByRole('button',{name:'Eliminar',exact:true}).click();assert.equal(submitted,0);
 
- const result={app,mode,url:origin,at:new Date().toISOString(),version:'0.3.0',bugIcon:true,nativeSize:true,floatingTools:true,guidedTrace:true,audioRecorderAndPlayback:true,microphoneDevice:"simulated Chromium device",freehandTouch:true,persistence:true,bridgePresets:presets,submissions:submitted};
+ const result={app,mode,url:origin,at:new Date().toISOString(),version:'0.4.0',bugIcon:true,nativeSize:true,floatingTools:true,guidedTrace:true,audioRecorderAndPlayback:true,microphoneDevice:"simulated Chromium device",freehandTouch:true,persistence:true,bridgePresets:presets,submissions:submitted};
  await writeFile(resolve(output,`${app}-${mode}.json`),JSON.stringify(result,null,2));console.log(result);
 }finally{await browser.close();}
