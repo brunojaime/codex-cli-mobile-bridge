@@ -159,6 +159,98 @@ def mobile_job_status(job_id: str) -> dict:
 
 
 @mcp.tool(annotations=WRITE)
+def verify_android_install(project: str, emulator: str = "emulator-5554") -> dict:
+    """Install the exact signed build on an emulator, capture its screen, and verify API access denial. Never marks real login or biometrics tested."""
+    import hashlib
+    import time
+    import urllib.request
+    import urllib.error
+    from datetime import datetime, timezone
+
+    root = _project(project)
+    if not re.fullmatch(r"emulator-[0-9]{4,5}", emulator):
+        raise ValueError("Select an Android emulator, not a personal device")
+    release = json.loads((root / "infra/mobile/release.json").read_text())
+    tag = f"android-{release['profile']}-v{release['version']}-build.{release['androidBuild']}"
+    if not re.fullmatch(
+        r"android-(preview|staging|production)-v[0-9]+\.[0-9]+\.[0-9]+-build\.[0-9]+",
+        tag,
+    ):
+        raise ValueError("Invalid release identity")
+    output = root / "dist/mobile" / tag
+    receipt = json.loads((output / "release.json").read_text())
+    artifact = output / receipt["artifact"]
+    if (
+        artifact.is_symlink()
+        or artifact.parent != output
+        or not artifact.resolve().is_relative_to(output.resolve())
+    ):
+        raise ValueError("Artifact escapes release")
+    if hashlib.sha256(artifact.read_bytes()).hexdigest() != receipt["sha256"]:
+        raise ValueError("APK digest mismatch")
+    package = receipt["packageId"]
+    if not re.fullmatch(r"[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+", package):
+        raise ValueError("Invalid Android identity")
+
+    def adb(*args, binary=False, timeout=60):
+        result = subprocess.run(
+            ["adb", "-s", emulator, *args], capture_output=True, timeout=timeout
+        )
+        if result.returncode:
+            raise ValueError("Android verification command failed")
+        return result.stdout if binary else result.stdout.decode().strip()
+
+    if adb("shell", "getprop", "sys.boot_completed") != "1":
+        raise ValueError("Emulator is not booted")
+    adb("install", "-r", str(artifact), timeout=180)
+    adb("shell", "am", "start", "-n", package + "/.MainActivity")
+    time.sleep(3)
+    if not adb("shell", "pidof", package):
+        raise ValueError("Application did not remain running")
+    activity = adb("shell", "dumpsys", "activity", "activities")
+    if not any(
+        package in line and ("topResumedActivity" in line or "mResumedActivity" in line)
+        for line in activity.splitlines()
+    ):
+        raise ValueError("Application is not in the foreground")
+    request = urllib.request.Request(
+        receipt["apiOrigin"] + "/api/v1/mobile/projects",
+        headers={
+            "User-Agent": "Nienfos-Mobile-Verification",
+            "Accept": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            status = response.status
+            body = json.load(response)
+    except urllib.error.HTTPError as error:
+        status = error.code
+        body = json.loads(error.read())
+    if status != 401 or body.get("code") != "session_invalid":
+        raise ValueError("Native API authorization probe failed")
+    evidence = root / "docs/reports/mobile" / tag
+    evidence.mkdir(parents=True, exist_ok=True)
+    screenshot = evidence / "launch.png"
+    screenshot.write_bytes(adb("exec-out", "screencap", "-p", binary=True))
+    validation = {
+        "schema": "nienfos.mobile-runtime-validation/v1",
+        "apkSha256": receipt["sha256"],
+        "packageId": package,
+        "installLaunch": True,
+        "apiUnauthorizedStatus": status,
+        "apiCode": body["code"],
+        "androidApi": adb("shell", "getprop", "ro.build.version.sdk"),
+        "realAccountLogin": False,
+        "biometricEnrollmentTested": False,
+        "screenshot": str(screenshot.relative_to(root)),
+        "verifiedAt": datetime.now(timezone.utc).isoformat(),
+    }
+    (output / "validation.json").write_text(json.dumps(validation, indent=2) + "\n")
+    return validation
+
+
+@mcp.tool(annotations=WRITE)
 def prepare_android_signing(project: str) -> dict:
     """Create or reuse a private local Android signing identity; return only its public fingerprint."""
     import hashlib
