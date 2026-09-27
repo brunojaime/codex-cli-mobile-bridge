@@ -1,5 +1,11 @@
 {
   "name": "@nienfos/mobile-core",
-  "version": "0.2.0",
-  "sha256": "e1935a7086b3a69735138c4ea0ec0a010cfbc5403176db1081ebd95e78fc5b7f"
+  "version": "0.3.0",
+  "sha256": "e1935a7086b3a69735138c4ea0ec0a010cfbc5403176db1081ebd95e78fc5b7f",
+  "files": {
+    "updater/UpdatePanel.tsx": "cf4db0fd7340dff63ea3a683f3041e784bbc0a2429222ae51e46ec94e67cd121",
+    "updater/android/BridgeUpdater.kt": "767a07f7e2b51d75d68858794f5766eecec180a4e206e9d64f66ece170d28680",
+    "updater/index.ts": "caee99ad8c76d22f77708a8da91d258495f6ba304a12c322649d9d6573ce5362",
+    "updater/plugin.cjs": "6243b96b7078dce6d0c5d4e71f3c3a6adde9aa664ab5586d480e73871a1e3a4d"
+  }
 }

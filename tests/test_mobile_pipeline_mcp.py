@@ -118,3 +118,29 @@ def test_catalog_refuses_store_profiles_before_network(tmp_path):
     release.write_text(json.dumps(config))
     with pytest.raises(ValueError, match="preview"):
         register(root, "Gestión")
+
+
+def test_updater_custom_changes_abort_entire_promotion(tmp_path, monkeypatch):
+    root = enrolled(tmp_path)
+    monkeypatch.setattr(server, "ROOT", tmp_path)
+    server.update_mobile_sdk("gestion")
+    target = root / "packages/mobile-updater/plugin.cjs"
+    target.write_text("custom native configuration")
+    core = root / "packages/mobile-core/index.ts"
+    before = core.read_bytes()
+    with pytest.raises(ValueError, match="custom updater"):
+        server.update_mobile_sdk("gestion")
+    assert target.read_text() == "custom native configuration"
+    assert core.read_bytes() == before
+
+
+def test_updater_native_files_are_promoted_with_hashes(tmp_path, monkeypatch):
+    import hashlib
+
+    root = enrolled(tmp_path)
+    monkeypatch.setattr(server, "ROOT", tmp_path)
+    server.update_mobile_sdk("gestion")
+    lock = json.loads((root / "infra/mobile/core-lock.json").read_text())
+    for name, digest in lock["files"].items():
+        target = root / "packages/mobile-updater" / name.removeprefix("updater/")
+        assert hashlib.sha256(target.read_bytes()).hexdigest() == digest

@@ -450,6 +450,36 @@ def update_mobile_sdk(project: str) -> dict:
         previous = json.loads(lock.read_text())
         if hashlib.sha256(target.read_bytes()).hexdigest() != previous["sha256"]:
             raise ValueError("Consumer has custom changes; merge them explicitly")
+    # Validate the entire native/UI bundle before writing any consumer file.
+    previous = json.loads(lock.read_text()) if lock.exists() else {}
+    writes = []
+    for relative, digest in manifest.get("files", {}).items():
+        if not re.fullmatch(
+            r"updater/[A-Za-z0-9_./-]+", relative
+        ) or ".." in relative.split("/"):
+            raise ValueError("Invalid SDK file path")
+        source = sdk / relative
+        destination = (
+            root / "packages/mobile-updater" / relative.removeprefix("updater/")
+        )
+        if (
+            source.is_symlink()
+            or not source.resolve().is_relative_to(sdk.resolve())
+            or destination.is_symlink()
+            or not destination.resolve().is_relative_to(root)
+        ):
+            raise ValueError("SDK path escapes project")
+        data = source.read_bytes()
+        if hashlib.sha256(data).hexdigest() != digest:
+            raise ValueError("SDK bundle digest mismatch")
+        if destination.exists() and hashlib.sha256(
+            destination.read_bytes()
+        ).hexdigest() != previous.get("files", {}).get(relative):
+            raise ValueError("Consumer has custom updater changes; merge explicitly")
+        writes.append((destination, data))
+    for destination, data in writes:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(data)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(content)
     lock.write_text(json.dumps(manifest, indent=2) + "\n")

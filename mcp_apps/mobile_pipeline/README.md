@@ -30,3 +30,13 @@ Catalog registration currently targets this Bridge's loopback API on port 8000. 
 - Architecture/security specification: Gestión `specs/007-mobile-application-pipeline/`.
 - Delivery evidence: Gestión `docs/reports/2026-09-27-mobile-delivery/`.
 - iOS, store submission, real-device biometrics and adoption by a second project are separate remaining validations.
+
+SDK 0.3.0 also promotes a React Native preview updater bundle into
+`packages/mobile-updater`. Its `UpdatePanel` uses the existing Bridge app-update
+contract and its Expo plugin adds a DownloadManager/FileProvider native adapter.
+Consumers wire the panel and plugin with their own `sourceApp`, HTTPS Bridge
+origin and preview-only flag. Android 9+ verifies digest, size, package, signing
+certificate and monotonic build before requesting installation. Store profiles
+remove native updater registration and install permissions. The MCP checks every
+bundle hash and all existing consumer files before promoting an update; native
+binaries still require rebuilding and user-confirmed installation.
