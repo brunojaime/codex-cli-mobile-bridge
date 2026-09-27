@@ -1,0 +1,30 @@
+{
+  "name": "@codex/developer-feedback-web",
+  "version": "0.4.0",
+  "type": "module",
+  "description": "Reusable browser feedback for Codex Mobile Bridge",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "import": "./src/index.js"
+    },
+    "./core": "./src/core.js"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "test:browser": "node test/browser.mjs",
+    "test:apps": "node test/apps-browser.mjs"
+  },
+  "dependencies": {
+    "html2canvas": "1.4.1"
+  },
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "playwright": "1.62.1"
+  }
+}
