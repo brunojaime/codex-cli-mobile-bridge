@@ -1,3 +1,4 @@
+import { createVoiceNotes } from './voice-notes.js';
 import { createQueueStore } from './queue-store.js';
 import { createLiveDrawing } from './live-drawing.js';
 import { captureViewport } from './capture.js';
@@ -48,6 +49,7 @@ textarea, select { width: 100%; border: 1px solid #abb9c8; border-radius: 10px; 
 #drawing-hint { margin: 0; padding: 4px 6px 0; font-size: 11px; color: #52667a; }
 #recording-bar { width: 286px; } #live-drawing { position: fixed; inset: 0; z-index: 2147483600; touch-action: none; } .recording-info { flex: 1; min-width: 0; } .recording-info strong { display: block; font-variant-numeric: tabular-nums; } .recording-info small { color: #52667a; } .record-dot { display: inline-block; width: 8px; height: 8px; background: #b42335; border-radius: 50%; margin-right: 6px; }
 #recording-note { margin: 0; font-size: 12px; } #trace-review img { display: block; width: auto; max-width: 100%; height: 30dvh; object-fit: contain; margin: auto; background: #eef2f7; }
+.voice-note { border-top: 1px solid #e2e8f0; padding: 12px 0; } .voice-note span { display: block; } .voice-note audio { display: block; width: 100%; margin: 8px 0; } .voice-note button { font-size: 13px; } .voice-notes { margin-top: 16px; } #voice-review img { max-width: 100%; max-height: 26dvh; display: block; margin: auto; }
 #trace-review audio { width: 100%; margin-top: 12px; } #trace-review input[type=range] { width: 100%; min-height: 44px; } .trace-caption { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
 .item-actions { display: flex; flex-direction: column; gap: 4px; } .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 
@@ -58,13 +60,13 @@ export function mountFeedback(config) {
   bridgeUrl(config.bridgeUrl);
   if (document.querySelector('[data-codex-feedback]')) return () => {};
   const host = document.createElement('div');
-  host.dataset.codexFeedback = '0.6.0';
+  host.dataset.codexFeedback = '0.7.0';
   host.setAttribute('data-html2canvas-ignore', 'true');
   const root = host.attachShadow({ mode: 'open' });
   root.innerHTML = `<style>${css}</style>
-    <button class="launcher primary" aria-label="Abrir feedback" aria-expanded="false" aria-controls="dock" title="Feedback · staging" type="button">${icon('bug')}<span class="badge" hidden></span></button>
+    <button class="launcher primary" aria-label="Abrir feedback" aria-expanded="false" aria-controls="dock" title="Feedback · dev" type="button">${icon('bug')}<span class="badge" hidden></span></button>
     <section class="dock" id="dock" aria-label="Herramientas de feedback" hidden>
-      <strong>Feedback · staging</strong>
+      <strong>Feedback · dev</strong>
       <button id="start-drawing" class="primary" type="button">${icon('pen')}Dibujar en pantalla</button>
       <button id="start-trace" type="button">${icon('mic')}Grabar recorrido con voz</button>
       <p class="muted">Hasta 2 minutos. Capturas automáticas mientras usás la app.</p>
@@ -111,8 +113,10 @@ export function mountFeedback(config) {
       <audio id="trace-audio" controls preload="metadata"></audio>
       <p id="trace-note" class="muted" role="status"></p>
       <label for="trace-comment">¿Qué debería pasar?</label><textarea id="trace-comment" maxlength="10000" placeholder="Podés completar lo que contaste…"></textarea>
+      <section class="voice-notes" id="trace-voice-notes" aria-label="Notas de voz del recorrido"></section>
       <div class="actions"><button id="save-trace" class="primary" type="button">Guardar recorrido</button><button id="discard-trace" type="button">Descartar recorrido</button></div>
     </div></dialog>
+    <dialog id="voice-review" aria-labelledby="voice-review-title"><div class="body"><header><h2 id="voice-review-title">Revisar comentario</h2><button id="close-voice-review" aria-label="Cerrar comentario" type="button">${icon('close')}</button></header><img id="voice-review-image" alt="Captura comentada"><p id="voice-review-comment"></p><section class="voice-notes" id="queued-voice-notes"></section></div></dialog>
     <dialog id="feedback-dialog" aria-labelledby="title"><div class="body">
       <header><div><h2 id="title">Feedback de desarrollo</h2><p class="muted" id="app"></p></div><button id="close" class="icon-button" aria-label="Cerrar feedback" type="button">${icon('close')}</button></header>
       <div class="actions"><button id="capture" type="button">${icon('pen')}Nueva captura</button><button id="new-trace" type="button">${icon('mic')}Nuevo recorrido</button></div>
@@ -120,6 +124,7 @@ export function mountFeedback(config) {
         <div class="preview"><canvas id="canvas" aria-label="Vista previa de la captura dibujada"></canvas></div>
         <button id="edit" type="button">${icon('pen')}Editar dibujo</button>
         <label for="comment">¿Qué querés cambiar?</label><textarea id="comment" maxlength="10000" placeholder="Describí el cambio o problema…"></textarea>
+        <section class="voice-notes" id="capture-voice-notes" aria-label="Notas de voz de la captura"></section>
         <div class="actions"><button id="save" class="primary" type="button">Guardar en la cola</button><button id="discard" type="button">Descartar captura</button></div>
       </section>
       <label id="queue-label">Capturas y recorridos pendientes</label><div id="queue" aria-labelledby="queue-label"></div>
@@ -149,6 +154,7 @@ export function mountFeedback(config) {
       const row = document.createElement('div'); row.className = 'item';
       const img = document.createElement('img'); img.src = `data:image/png;base64,${item.screenshotPngBase64}`; img.alt = 'Captura guardada';
       const label = document.createElement('span'); label.textContent = item.guidedTrace ? `Recorrido · ${traceTime(item.audioDurationMs || 0)} · ${item.guidedTrace.frames.length} capturas${item.comment ? ` · ${item.comment}` : ''}` : item.comment || 'Captura sin comentario';
+      if (item.voiceNotes?.length) label.textContent += ` · ${item.voiceNotes.length} notas de voz`;
       const remove = document.createElement('button'); remove.textContent = 'Eliminar'; remove.disabled = busy; remove.type = 'button';
       remove.onclick = async () => {
         if (busy) return; setBusy(true);
@@ -157,7 +163,8 @@ export function mountFeedback(config) {
         finally { setBusy(false); }
       };
       const actions = document.createElement('div'); actions.className = 'item-actions';
-      if (item.guidedTrace) { const review = document.createElement('button'); review.type = 'button'; review.textContent = 'Revisar'; review.onclick = () => openTraceReview(item, true); actions.append(review); }
+      if (item.guidedTrace) { const review = document.createElement('button'); review.type = 'button'; review.textContent = 'Revisar'; review.onclick = () => { if (!busy) openTraceReview(item, true); }; actions.append(review); }
+      else if (item.voiceNotes?.length) { const review = document.createElement('button'); review.type = 'button'; review.textContent = 'Escuchar notas'; review.onclick = () => { if (busy) return; queuedNotes.set(item.voiceNotes, { readOnly: true }); el('voice-review-image').src = `data:image/png;base64,${item.screenshotPngBase64}`; el('voice-review-comment').textContent = item.comment; el('voice-review').showModal(); }; actions.append(review); }
       actions.append(remove); row.append(img, label, actions); el('queue').append(row);
     }
     el('send').disabled = busy || !items.length || queueError;
@@ -172,9 +179,15 @@ export function mountFeedback(config) {
   renderQueue();
   const setBusy = value => {
     busy = value;
-    for (const id of ['capture', 'new-trace', 'start-drawing', 'start-trace', 'save', 'discard', 'edit', 'comment', 'preset', 'save-trace', 'discard-trace']) el(id).disabled = value;
+    root.querySelectorAll('.voice-start, .voice-note button').forEach(button => { button.disabled = value; });
+    for (const id of ['capture', 'new-trace', 'start-drawing', 'start-trace', 'save', 'discard', 'edit', 'comment', 'trace-comment', 'preset', 'save-trace', 'discard-trace']) el(id).disabled = value;
     renderQueue();
   };
+  const captureNotes = createVoiceNotes(el('capture-voice-notes'), { onBusy: setBusy });
+  const traceNotes = createVoiceNotes(el('trace-voice-notes'), { onBusy: setBusy });
+  const queuedNotes = createVoiceNotes(el('queued-voice-notes'));
+  el('close-voice-review').onclick = () => el('voice-review').close();
+  el('voice-review').addEventListener('close', () => queuedNotes.set([], { readOnly: true }));
   const paint = (canvas, includeActive = false) => {
     if (!snapshot) return;
     if (canvas.width !== snapshot.width || canvas.height !== snapshot.height) { canvas.width = snapshot.width; canvas.height = snapshot.height; }
@@ -242,9 +255,9 @@ export function mountFeedback(config) {
   el('exit-editor').onclick = showComment;
   editor.addEventListener('cancel', event => { event.preventDefault(); showComment(); });
   el('edit').onclick = openEditor;
-  el('discard').onclick = () => { snapshot = null; strokes = []; active = null; el('comment').value = ''; el('draft').hidden = true; };
+  el('discard').onclick = () => { captureNotes.set(); snapshot = null; strokes = []; active = null; el('comment').value = ''; el('draft').hidden = true; };
   el('close').onclick = () => dialog.close();
-  dialog.addEventListener('close', () => { if (!editor.open) launch.focus(); });
+  dialog.addEventListener('close', () => { void captureNotes.stop(); captureNotes.pause(); if (!editor.open) launch.focus(); });
   const loadPresets = async () => {
     if (presetLoaded) return;
     try {
@@ -278,8 +291,9 @@ export function mountFeedback(config) {
     try {
       paint(el('canvas'));
       const item = createItem(config, { screenshot: el('canvas').toDataURL('image/png'), comment: el('comment').value, points: strokes.flatMap(s => s.points), strokes, width, height, pathname });
+      item.voiceNotes = captureNotes.notes; item.hasAudio = item.voiceNotes.length > 0;
       const next = [...items, item]; await queueStore.save(next); items = next;
-      snapshot = null; strokes = []; active = null; el('comment').value = ''; el('draft').hidden = true; renderQueue(); status('Guardado en este navegador. Todavía no se envió a Codex.');
+      captureNotes.set(); snapshot = null; strokes = []; active = null; el('comment').value = ''; el('draft').hidden = true; renderQueue(); status('Guardado en este navegador. Todavía no se envió a Codex.');
     } catch (error) { status(error.message || 'No hay espacio disponible en el navegador.', true); }
     finally { setBusy(false); }
   };
@@ -308,6 +322,7 @@ export function mountFeedback(config) {
     if (dialog.open) dialog.close(); dock(false); reviewItem = item; releaseAudio();
     el('trace-summary').textContent = `${traceTime(item.audioDurationMs)} · ${item.guidedTrace.frames.length} capturas · ${item.hasAudio ? 'Con voz' : 'Sin audio'}`;
     el('trace-position').max = String(item.guidedTrace.frames.length - 1); el('trace-note').textContent = note;
+    traceNotes.set(item.voiceNotes || [], { readOnly: queued });
     el('trace-comment').value = item.comment; el('trace-comment').readOnly = queued;
     el('save-trace').hidden = queued; el('discard-trace').hidden = queued;
     el('trace-audio').hidden = !item.hasAudio;
@@ -316,12 +331,12 @@ export function mountFeedback(config) {
   };
   el('trace-position').oninput = () => { const index = Number(el('trace-position').value); showTraceFrame(index); if (reviewItem?.hasAudio) el('trace-audio').currentTime = reviewItem.guidedTrace.frames[index].atMs / 1000; };
   el('trace-audio').ontimeupdate = () => { if (!reviewItem) return; const ms = el('trace-audio').currentTime * 1000; let index = 0; reviewItem.guidedTrace.frames.forEach((f, i) => { if (f.atMs <= ms) index = i; }); showTraceFrame(index); };
-  el('trace-review').addEventListener('close', () => { if (traceDraft && reviewItem === traceDraft) traceDraft.comment = el('trace-comment').value; releaseAudio(); launch.focus(); });
+  el('trace-review').addEventListener('close', () => { const draft = traceDraft && reviewItem === traceDraft ? traceDraft : null; if (draft) draft.comment = el('trace-comment').value; void traceNotes.stop().then(() => { if (draft) draft.voiceNotes = traceNotes.notes; }); traceNotes.pause(); releaseAudio(); launch.focus(); });
   el('close-trace-review').onclick = () => el('trace-review').close();
   el('save-trace').onclick = async () => {
     if (!traceDraft || queueError || busy) return;
     setBusy(true);
-    try { traceDraft.comment = el('trace-comment').value.trim(); const next = [...items, traceDraft]; await queueStore.save(next); items = next; traceDraft = null; el('trace-review').close(); renderQueue(); showComment(); status('Recorrido guardado en la cola. Tocá Nuevo recorrido para seguir agregando.'); }
+    try { traceDraft.voiceNotes = traceNotes.notes; traceDraft.comment = el('trace-comment').value.trim(); const next = [...items, traceDraft]; await queueStore.save(next); items = next; traceDraft = null; el('trace-review').close(); renderQueue(); showComment(); status('Recorrido guardado en la cola. Tocá Nuevo recorrido para seguir agregando.'); }
     catch (error) { el('trace-note').textContent = error.message; }
     finally { setBusy(false); }
   };
@@ -366,5 +381,5 @@ export function mountFeedback(config) {
   el('live-undo').onclick = () => liveDrawing.undo(); el('live-clear').onclick = () => liveDrawing.clear();
   el('stop-trace').onclick = () => void recorder.stop(); el('capture-step').onclick = () => void recorder.capture();
   el('cancel-trace').onclick = () => { recorder.cancel(); recordingEnded(); };
-  return () => { disposed = true; void queueStore.close(); liveDrawing.dispose(); recorder.cancel(); releaseAudio(); drawingFloat.dispose(); recordingFloat.dispose(); resize.disconnect(); if (frame) cancelAnimationFrame(frame); host.remove(); };
+  return () => { disposed = true; captureNotes.dispose(); traceNotes.dispose(); queuedNotes.dispose(); void queueStore.close(); liveDrawing.dispose(); recorder.cancel(); releaseAudio(); drawingFloat.dispose(); recordingFloat.dispose(); resize.disconnect(); if (frame) cancelAnimationFrame(frame); host.remove(); };
 }
