@@ -96,10 +96,10 @@
     "productionReady": false,
     "releaseChannel": "prerelease",
     "releaseMetadata": {
-      "gitCommit": "588ba4e06e1ee13a9c3eedcb4d3cc3043a77cc07",
-      "sha256": "0aebbd41412207f11b651e6f1df230f9d36124716c4bacbfb3581dfdf20f77a8",
+      "gitCommit": "40287123c4c0c155710888efb0ce64cf0155329b",
+      "sha256": "1d988f612fe9a16d0e9973451ab5168b8c31bf6e59ed8d6b6d3428e2f3a9a61d",
       "signingCertificateSha256": "17d014a96693c6e763e572a8a9261e4733d03f729be8fb390bf3d58303f9f61e",
-      "tag": "android-preview-v0.1.1-build.2",
+      "tag": "android-preview-v0.1.2-build.4",
       "toolkitVersion": "0.1.0"
     },
     "releaseTagPattern": "android-preview-v*",
@@ -107,7 +107,7 @@
     "requiredMinimumBuild": null,
     "runtimeProfile": "preview",
     "verifiedPackageIds": {
-      "android-preview-v0.1.1-build.2": "com.nienfos.gestion.preview",
+      "android-preview-v0.1.2-build.4": "com.nienfos.gestion.preview",
       "nienfos-gestion.apk": "com.nienfos.gestion.preview"
     }
   },
