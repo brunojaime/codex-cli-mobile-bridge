@@ -159,6 +159,124 @@ def mobile_job_status(job_id: str) -> dict:
 
 
 @mcp.tool(annotations=WRITE)
+def prepare_android_signing(project: str) -> dict:
+    """Create or reuse a private local Android signing identity; return only its public fingerprint."""
+    import hashlib
+    import secrets
+
+    root = _project(project)
+    manifest = json.loads((root / "infra/mobile/project.json").read_text())
+    release_path = root / "infra/mobile/release.json"
+    if release_path.is_symlink() or not release_path.resolve().is_relative_to(root):
+        raise ValueError("Configuration escapes project")
+    release = json.loads(release_path.read_text())
+    source = manifest.get("sourceApp", "")
+    profile = release.get("profile", "")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,63}", source) or profile not in {
+        "preview",
+        "staging",
+        "production",
+    }:
+        raise ValueError("Invalid signing identity")
+    private = Path.home() / ".local/state/nienfos-mobile-signing"
+    private.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if private.is_symlink() or private.stat().st_mode & 0o077:
+        raise ValueError("Signing directory must be private")
+    credential = private / f"{source}-{profile}.json"
+    key = private / f"{source}-{profile}.jks"
+    java = Path(
+        os.environ.get("JAVA_HOME", str(Path.home() / ".local/share/java/jdk-17"))
+    )
+    keytool = java / "bin/keytool"
+    if not keytool.is_file():
+        raise ValueError("Configure JAVA_HOME with keytool")
+    created = False
+    if credential.exists():
+        if credential.is_symlink() or credential.stat().st_mode & 0o077:
+            raise ValueError("Signing credentials must be a private regular file")
+        values = json.loads(credential.read_text())
+    else:
+        if key.exists():
+            raise ValueError("Unregistered key exists; recover it without overwriting")
+        password = secrets.token_urlsafe(36)
+        values = {
+            "ANDROID_KEYSTORE_PATH": str(key),
+            "ANDROID_STORE_PASSWORD": password,
+            "ANDROID_KEY_PASSWORD": password,
+            "ANDROID_KEY_ALIAS": "nienfos",
+        }
+        env = dict(os.environ, NG_SIGN_PASS=password)
+        result = subprocess.run(
+            [
+                str(keytool),
+                "-genkeypair",
+                "-keystore",
+                str(key),
+                "-storepass:env",
+                "NG_SIGN_PASS",
+                "-keypass:env",
+                "NG_SIGN_PASS",
+                "-alias",
+                "nienfos",
+                "-keyalg",
+                "RSA",
+                "-keysize",
+                "3072",
+                "-validity",
+                "10000",
+                "-dname",
+                "CN=Nienfos Mobile,O=Nienfos,C=AR",
+            ],
+            env=env,
+            capture_output=True,
+            timeout=120,
+        )
+        if result.returncode:
+            raise ValueError(
+                "Signing key generation failed; inspect private operator state"
+            )
+        key.chmod(0o600)
+        with credential.open("x") as output:
+            os.chmod(credential, 0o600)
+            output.write(json.dumps(values))
+        created = True
+    env = dict(os.environ, NG_SIGN_PASS=values["ANDROID_STORE_PASSWORD"])
+    result = subprocess.run(
+        [
+            str(keytool),
+            "-exportcert",
+            "-keystore",
+            values["ANDROID_KEYSTORE_PATH"],
+            "-storepass:env",
+            "NG_SIGN_PASS",
+            "-alias",
+            values["ANDROID_KEY_ALIAS"],
+        ],
+        env=env,
+        capture_output=True,
+        timeout=60,
+    )
+    if result.returncode:
+        raise ValueError("Existing signing identity could not be verified")
+    digest = hashlib.sha256(result.stdout).hexdigest()
+    if (
+        release.get("signingCertificateSha256")
+        and release["signingCertificateSha256"] != digest
+    ):
+        raise ValueError("Refusing to replace the registered signing identity")
+    release["signingCertificateSha256"] = digest
+    release_path.write_text(json.dumps(release, indent=2) + "\n")
+    return {
+        "project": project,
+        "profile": profile,
+        "created": created,
+        "certificateSha256": digest,
+        "privateCredentialStored": True,
+        "nextStep": "Keep a private recoverable backup; validate and commit the public configuration before build.",
+    }
+
+
+@mcp.tool(annotations=WRITE)
 def bump_mobile_version(project: str, version: str) -> dict:
     """Update SemVer and increment the native build locally; never tag or publish automatically."""
     root = _project(project)
