@@ -229,7 +229,7 @@ def verify_android_install(project: str, emulator: str = "emulator-5554") -> dic
         body = json.loads(error.read())
     if status != 401 or body.get("code") != "session_invalid":
         raise ValueError("Native API authorization probe failed")
-    evidence = root / "docs/reports/mobile" / tag
+    evidence = output / "screenshots"
     evidence.mkdir(parents=True, exist_ok=True)
     screenshot = evidence / "launch.png"
     screenshot.write_bytes(adb("exec-out", "screencap", "-p", binary=True))

@@ -93,3 +93,10 @@ def test_version_bump_monotonic_and_never_publishes(tmp_path, monkeypatch):
     assert result["version"] == "0.1.1" and result["build"] == 2
     with pytest.raises(ValueError):
         server.bump_mobile_version("gestion", "0.0.9")
+
+
+def test_runtime_verification_refuses_personal_devices(tmp_path, monkeypatch):
+    enrolled(tmp_path)
+    monkeypatch.setattr(server, "ROOT", tmp_path)
+    with pytest.raises(ValueError, match="emulator"):
+        server.verify_android_install("gestion", "physical-device-123")
