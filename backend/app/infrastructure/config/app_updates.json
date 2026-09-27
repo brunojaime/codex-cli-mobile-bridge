@@ -85,6 +85,32 @@
       "android-v1.0.0-build.14": "com.ludmilo.gestion"
     }
   },
+  "nienfos-gestion": {
+    "apkAssetPattern": "nienfos-gestion.apk",
+    "displayName": "Nienfos Gesti\u00f3n \u00b7 QA",
+    "enabled": true,
+    "expectedPackageId": "com.nienfos.gestion.preview",
+    "latestAssetName": "nienfos-gestion.apk",
+    "mockOrDemo": false,
+    "previewUrl": "https://qa.gestion.nienfos.com",
+    "productionReady": false,
+    "releaseChannel": "prerelease",
+    "releaseMetadata": {
+      "gitCommit": "aaea2bfa146cf9f4762847ee1ed0c523a6a7b4fe",
+      "sha256": "339959651f48e233bc4ac90eac1d848c5fa54c126b5637322485cc307b691602",
+      "signingCertificateSha256": "17d014a96693c6e763e572a8a9261e4733d03f729be8fb390bf3d58303f9f61e",
+      "tag": "android-preview-v0.1.0-build.1",
+      "toolkitVersion": "0.1.0"
+    },
+    "releaseTagPattern": "android-preview-v*",
+    "repo": "brunojaime/nienfos-gestion",
+    "requiredMinimumBuild": null,
+    "runtimeProfile": "preview",
+    "verifiedPackageIds": {
+      "android-preview-v0.1.0-build.1": "com.nienfos.gestion.preview",
+      "nienfos-gestion.apk": "com.nienfos.gestion.preview"
+    }
+  },
   "puertos-3": {
     "apkAssetPattern": "puertos-3*.apk",
     "displayName": "Movimientos del Puerto",

@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 import pytest
 from mcp_apps.mobile_pipeline import server
 
@@ -78,7 +77,7 @@ def test_sdk_update_preserves_unreviewed_custom_code(tmp_path, monkeypatch):
 
 
 def test_sdk_update_records_digest_and_requires_native_rebuild(tmp_path, monkeypatch):
-    root = enrolled(tmp_path)
+    enrolled(tmp_path)
     monkeypatch.setattr(server, "ROOT", tmp_path)
     result = server.update_mobile_sdk("gestion")
     assert result["state"] == "local-changes"
@@ -100,3 +99,22 @@ def test_runtime_verification_refuses_personal_devices(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "ROOT", tmp_path)
     with pytest.raises(ValueError, match="emulator"):
         server.verify_android_install("gestion", "physical-device-123")
+
+
+def test_catalog_requires_approval_before_registration(tmp_path, monkeypatch):
+    enrolled(tmp_path)
+    monkeypatch.setattr(server, "ROOT", tmp_path)
+    with pytest.raises(ValueError, match="authorization"):
+        server.register_mobile_catalog("gestion", "Gestión QA")
+
+
+def test_catalog_refuses_store_profiles_before_network(tmp_path):
+    from mcp_apps.mobile_pipeline.catalog import register
+
+    root = enrolled(tmp_path)
+    release = root / "infra/mobile/release.json"
+    config = json.loads(release.read_text())
+    config["profile"] = "production"
+    release.write_text(json.dumps(config))
+    with pytest.raises(ValueError, match="preview"):
+        register(root, "Gestión")

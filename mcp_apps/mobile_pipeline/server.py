@@ -251,6 +251,18 @@ def verify_android_install(project: str, emulator: str = "emulator-5554") -> dic
 
 
 @mcp.tool(annotations=WRITE)
+def register_mobile_catalog(
+    project: str, display_name: str, approval_reference: str = ""
+) -> dict:
+    """Register a published preview in Bridge and verify its proxied APK digest. Requires human publication authorization."""
+    if not re.fullmatch(r"[A-Za-z0-9:/._-]{8,128}", approval_reference):
+        raise ValueError("Supply the human publication authorization reference")
+    from .catalog import register
+
+    return register(_project(project), display_name)
+
+
+@mcp.tool(annotations=WRITE)
 def prepare_android_signing(project: str) -> dict:
     """Create or reuse a private local Android signing identity; return only its public fingerprint."""
     import hashlib
