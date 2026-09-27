@@ -1,6 +1,6 @@
 import { captureViewport, traceScreenshot } from './capture.js';
 import { createItem } from './core.js';
-export const TRACE_LIMITS = { durationMs: 120_000, intervalMs: 2000, maxFrames: 48, maxEvents: 160, frameChars: 1_800_000, audioBytes: 900_000 };
+export const TRACE_LIMITS = { durationMs: 120_000, intervalMs: 1000, maxFrames: 120, maxEvents: 512, frameChars: 1_800_000, audioBytes: 900_000 };
 const base64 = blob => new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result.split(',')[1]); reader.onerror = reject; reader.readAsDataURL(blob); });
 export const traceTime = ms => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
 

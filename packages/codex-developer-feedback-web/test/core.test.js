@@ -13,13 +13,12 @@ test('Bridge only accepts HTTPS without embedded credentials', () => {
   assert.equal(bridgeUrl('https://bridge.example/'), 'https://bridge.example');
   for (const url of ['http://bridge.example', 'https://user:secret@bridge.example', 'https://bridge.example?token=secret']) assert.throws(() => bridgeUrl(url));
 });
-test('queue persistence is local, isolated per source and environment, bounded', () => {
+test('queue persistence is local, isolated per source and environment, without a fixed item cap', () => {
   const store = memory(), key = queueKey(config), entry = item();
   saveQueue(store, key, [entry]); assert.deepEqual(loadQueue(store, key), [entry]);
   assert.deepEqual(loadQueue(store, queueKey({ ...config, sourceApp: 'proyecto-inmobiliaria' })), []);
-  assert.throws(() => saveQueue(store, key, Array(9).fill(entry)));
-  assert.throws(() => saveQueue(store, key, [{ ...entry, screenshotPngBase64: 'a'.repeat(4_000_000) }]));
-  assert.deepEqual(loadQueue(store, key), [entry]);
+  const many = Array.from({length: 12}, (_, n) => ({ ...entry, id: `item-${n}` }));
+  saveQueue(store, key, many); assert.deepEqual(loadQueue(store, key), many);
 });
 test('batch uses the existing Bridge contract and disables automatic release', () => {
   const entry = item(), payload = createBatch(config, [entry], 'default');

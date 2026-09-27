@@ -79,6 +79,7 @@ try {
     await page.locator('#drawing-hint').filter({ hasText: '3 trazos' }).waitFor();
     await page.getByRole('button', { name: 'Comentar', exact: true }).click();
     await page.getByRole('button', { name: 'Guardar en la cola', exact: true }).click();
+    await page.locator('#status').filter({hasText:'Guardado en este navegador'}).waitFor();
     assert.equal(posts.length, 0, 'saving must not submit');
     await page.reload();
     await page.getByRole('button', { name: 'Abrir feedback, 1 pendientes', exact: true }).click();

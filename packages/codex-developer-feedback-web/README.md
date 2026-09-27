@@ -7,11 +7,11 @@ para que CI no dependa de rutas a otros proyectos ni de una rama flotante.
 - Editor a tamaño original (1 píxel CSS por píxel capturado), sin reducir la pantalla. Barra flotante arrastrable con dedo/mouse o flechas del teclado, plegable; lápiz, rectángulo, flecha, deshacer y borrar.
 - Admite mouse, dedo y stylus; conserva trazos al cambiar tamaño y al volver desde el comentario.
 - Guarda el PNG anotado y metadata de trazos con las coordenadas originales.
-- Guarda hasta ocho capturas o recorridos localmente (máximo 4 MB) y envía el lote sólo al pulsar Enviar.
+- Guarda capturas y recorridos localmente en IndexedDB, sin límite fijo de cantidad y sujeto al espacio disponible del dispositivo y envía el lote sólo al pulsar Enviar.
 - Descubre perfiles desde `GET /feedback-workflow-presets`.
 - Envía el contrato `codex.developerFeedbackBatch` a `POST /feedback-batches/start-session`.
 - No publica automáticamente: `releaseWhenComplete=false` y ambiente explícito.
-- Recorrido guiado con voz: micrófono sólo tras pulsar Grabar y aceptar el permiso, capturas cada 2 segundos, omitiendo imágenes consecutivas iguales, al navegar e interactuar, y manuales. Hasta 2 minutos / 48 capturas; se detiene antes si alcanza el presupuesto de almacenamiento.
+- Recorrido guiado con voz: micrófono sólo tras pulsar Grabar y aceptar el permiso, capturas cada segundo, omitiendo imágenes consecutivas iguales, al navegar e interactuar, y manuales. Hasta 2 minutos / 120 capturas; se detiene antes si alcanza el presupuesto de almacenamiento.
 - La app sigue operable durante el recorrido. Barra movible, detener/cancelar, revisión por tiempo y reproducción de voz. Se detiene al ocultar la pestaña. Las navegaciones que recargan todo el documento requieren finalizar el recorrido.
 - El recorrido se guarda como un elemento local `codex.liveFeedback.guidedTrace`; al enviar, cada frame se adjunta como una imagen y el audio completo sólo una vez. No es un archivo MP4.
 - Cancelar, detener o desmontar el componente libera el micrófono.
@@ -43,3 +43,5 @@ El test Playwright de `test/browser.mjs` comprueba el widget real con transporte
 simulado: no inicia ejecuciones de Codex ni envía información de negocio.
 
 Desde 0.4.0: durante el recorrido, Dibujar activa una capa transparente de tamaño original con lápiz, rectángulo y flecha. Navegar guarda las marcas y permite seguir usando la app; la voz no se detiene. Las marcas se incluyen en las imágenes enviadas. Los límites de duración y almacenamiento continúan vigentes; no es video continuo ni MP4.
+
+Desde 0.5.0: la cola migra automáticamente desde localStorage a IndexedDB sin eliminar el origen hasta confirmar el guardado. Nuevo recorrido permite agregar sucesivas grabaciones desde la cola. Guardar no envía nada; los fallos de almacenamiento conservan el borrador abierto. Cada recorrido mantiene su propio audio y secuencia.

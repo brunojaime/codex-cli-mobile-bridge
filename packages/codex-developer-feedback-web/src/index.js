@@ -1,8 +1,9 @@
+import { createQueueStore } from './queue-store.js';
 import { createLiveDrawing } from './live-drawing.js';
 import { captureViewport } from './capture.js';
 import { makeFloating } from './floating.js';
 import { createTraceRecorder, traceTime } from './trace.js';
-import { enabledAt, bridgeUrl, queueKey, loadQueue, saveQueue, createItem, submitBatch } from './core.js';
+import { enabledAt, bridgeUrl, queueKey, createItem, submitBatch } from './core.js';
 import { canvasPoint, paintAnnotations } from './annotations.js';
 
 const paths = {
@@ -57,7 +58,7 @@ export function mountFeedback(config) {
   bridgeUrl(config.bridgeUrl);
   if (document.querySelector('[data-codex-feedback]')) return () => {};
   const host = document.createElement('div');
-  host.dataset.codexFeedback = '0.4.0';
+  host.dataset.codexFeedback = '0.5.0';
   host.setAttribute('data-html2canvas-ignore', 'true');
   const root = host.attachShadow({ mode: 'open' });
   root.innerHTML = `<style>${css}</style>
@@ -113,15 +114,15 @@ export function mountFeedback(config) {
       <div class="actions"><button id="save-trace" class="primary" type="button">Guardar recorrido</button><button id="discard-trace" type="button">Descartar recorrido</button></div>
     </div></dialog>
     <dialog id="feedback-dialog" aria-labelledby="title"><div class="body">
-      <header><div><h2 id="title">Feedback de staging</h2><p class="muted" id="app"></p></div><button id="close" class="icon-button" aria-label="Cerrar feedback" type="button">${icon('close')}</button></header>
-      <button id="capture" type="button">${icon('pen')}Nueva captura</button>
+      <header><div><h2 id="title">Feedback de desarrollo</h2><p class="muted" id="app"></p></div><button id="close" class="icon-button" aria-label="Cerrar feedback" type="button">${icon('close')}</button></header>
+      <div class="actions"><button id="capture" type="button">${icon('pen')}Nueva captura</button><button id="new-trace" type="button">${icon('mic')}Nuevo recorrido</button></div>
       <section id="draft" hidden>
         <div class="preview"><canvas id="canvas" aria-label="Vista previa de la captura dibujada"></canvas></div>
         <button id="edit" type="button">${icon('pen')}Editar dibujo</button>
         <label for="comment">¿Qué querés cambiar?</label><textarea id="comment" maxlength="10000" placeholder="Describí el cambio o problema…"></textarea>
         <div class="actions"><button id="save" class="primary" type="button">Guardar en la cola</button><button id="discard" type="button">Descartar captura</button></div>
       </section>
-      <label id="queue-label">Capturas pendientes</label><div id="queue" aria-labelledby="queue-label"></div>
+      <label id="queue-label">Capturas y recorridos pendientes</label><div id="queue" aria-labelledby="queue-label"></div>
       <label for="preset">Flujo de trabajo</label><select id="preset"><option value="generator_only">Generador</option><option value="generator_reviewer">Generador + revisor</option></select>
       <p class="muted">Conectá Tailscale para enviar. Sólo se envía al tocar «Enviar a Codex».</p>
       <div class="actions"><button id="send" class="primary" type="button">Enviar a Codex</button></div>
@@ -132,6 +133,7 @@ export function mountFeedback(config) {
   const dialog = el('feedback-dialog'), editor = el('editor'), launch = root.querySelector('.launcher');
   el('app').textContent = config.sourceDisplayName;
   const key = queueKey(config);
+  const queueStore = createQueueStore(key);
   let items = [], snapshot = null, strokes = [], active = null, pointerId = null, tool = 'pen';
   let busy = false, disposed = false, frame = 0, presetLoaded = false;
   let traceDraft = null, reviewItem = null, audioUrl = null;
@@ -142,15 +144,17 @@ export function mountFeedback(config) {
   const dock = open => { el('dock').hidden = !open; launch.setAttribute('aria-expanded', String(open)); };
   const renderQueue = () => {
     el('queue').replaceChildren();
-    if (!items.length) el('queue').textContent = 'Todavía no guardaste capturas.';
+    if (!items.length) el('queue').textContent = 'Todavía no guardaste capturas ni recorridos.';
     for (const item of items) {
       const row = document.createElement('div'); row.className = 'item';
       const img = document.createElement('img'); img.src = `data:image/png;base64,${item.screenshotPngBase64}`; img.alt = 'Captura guardada';
       const label = document.createElement('span'); label.textContent = item.guidedTrace ? `Recorrido · ${traceTime(item.audioDurationMs || 0)} · ${item.guidedTrace.frames.length} capturas${item.comment ? ` · ${item.comment}` : ''}` : item.comment || 'Captura sin comentario';
       const remove = document.createElement('button'); remove.textContent = 'Eliminar'; remove.disabled = busy; remove.type = 'button';
-      remove.onclick = () => {
-        try { const next = items.filter(i => i.id !== item.id); saveQueue(localStorage, key, next); items = next; renderQueue(); }
+      remove.onclick = async () => {
+        if (busy) return; setBusy(true);
+        try { const next = items.filter(i => i.id !== item.id); await queueStore.save(next); items = next; renderQueue(); }
         catch { status('No se pudo actualizar la cola del navegador.', true); }
+        finally { setBusy(false); }
       };
       const actions = document.createElement('div'); actions.className = 'item-actions';
       if (item.guidedTrace) { const review = document.createElement('button'); review.type = 'button'; review.textContent = 'Revisar'; review.onclick = () => openTraceReview(item, true); actions.append(review); }
@@ -161,12 +165,14 @@ export function mountFeedback(config) {
     launch.setAttribute('aria-label', items.length ? `Abrir feedback, ${items.length} pendientes` : 'Abrir feedback');
     el('pending').querySelector('span').textContent = `Ver pendientes${items.length ? ` (${items.length})` : ''}`;
   };
-  try { items = loadQueue(localStorage, key); }
-  catch { queueError = true; status('No se pudo abrir el almacenamiento local. Permití el almacenamiento del sitio y recargá.', true); }
+  launch.disabled = true;
+  void queueStore.load().then(saved => { if (!disposed) { items = saved; renderQueue(); } }).catch(() => {
+    queueError = true; status('No se pudo abrir la cola local. Permití el almacenamiento del sitio y recargá.', true);
+  }).finally(() => { if (!disposed) { launch.disabled = false; renderQueue(); } });
   renderQueue();
   const setBusy = value => {
     busy = value;
-    for (const id of ['capture', 'start-drawing', 'start-trace', 'save', 'discard', 'edit', 'comment', 'preset']) el(id).disabled = value;
+    for (const id of ['capture', 'new-trace', 'start-drawing', 'start-trace', 'save', 'discard', 'edit', 'comment', 'preset', 'save-trace', 'discard-trace']) el(id).disabled = value;
     renderQueue();
   };
   const paint = (canvas, includeActive = false) => {
@@ -266,14 +272,16 @@ export function mountFeedback(config) {
     finally { if (!disposed) { host.style.visibility = ''; setBusy(false); } }
   };
   el('capture').onclick = capture; el('start-drawing').onclick = capture;
-  el('save').onclick = () => {
-    if (!snapshot || queueError) return;
+  el('save').onclick = async () => {
+    if (!snapshot || queueError || busy) return;
+    setBusy(true);
     try {
       paint(el('canvas'));
       const item = createItem(config, { screenshot: el('canvas').toDataURL('image/png'), comment: el('comment').value, points: strokes.flatMap(s => s.points), strokes, width, height, pathname });
-      const next = [...items, item]; saveQueue(localStorage, key, next); items = next;
-      el('discard').click(); renderQueue(); status('Guardado en este navegador. Todavía no se envió a Codex.');
+      const next = [...items, item]; await queueStore.save(next); items = next;
+      snapshot = null; strokes = []; active = null; el('comment').value = ''; el('draft').hidden = true; renderQueue(); status('Guardado en este navegador. Todavía no se envió a Codex.');
     } catch (error) { status(error.message || 'No hay espacio disponible en el navegador.', true); }
+    finally { setBusy(false); }
   };
   el('send').onclick = async () => {
     if (busy || !items.length) return;
@@ -282,7 +290,7 @@ export function mountFeedback(config) {
     try {
       const result = await submitBatch(config, items, el('preset').value);
       items = [];
-      try { localStorage.removeItem(key); } catch { queueError = true; }
+      try { await queueStore.save([]); } catch { queueError = true; }
       if (!disposed) status(`Enviado a Codex. Seguí el trabajo en Codex Mobile.\nReferencia: ${result.batchId || result.feedback_batch_id || result.job_id || result.jobId}${queueError ? '\nNo se pudo limpiar el almacenamiento: no reenvíes estas capturas al recargar.' : ''}`);
     } catch (error) {
       if (!disposed) status(error.name === 'TimeoutError' || error instanceof TypeError
@@ -308,12 +316,14 @@ export function mountFeedback(config) {
   };
   el('trace-position').oninput = () => { const index = Number(el('trace-position').value); showTraceFrame(index); if (reviewItem?.hasAudio) el('trace-audio').currentTime = reviewItem.guidedTrace.frames[index].atMs / 1000; };
   el('trace-audio').ontimeupdate = () => { if (!reviewItem) return; const ms = el('trace-audio').currentTime * 1000; let index = 0; reviewItem.guidedTrace.frames.forEach((f, i) => { if (f.atMs <= ms) index = i; }); showTraceFrame(index); };
-  el('trace-review').addEventListener('close', () => { if (reviewItem === traceDraft) traceDraft.comment = el('trace-comment').value; releaseAudio(); launch.focus(); });
+  el('trace-review').addEventListener('close', () => { if (traceDraft && reviewItem === traceDraft) traceDraft.comment = el('trace-comment').value; releaseAudio(); launch.focus(); });
   el('close-trace-review').onclick = () => el('trace-review').close();
-  el('save-trace').onclick = () => {
-    if (!traceDraft || queueError) return;
-    try { traceDraft.comment = el('trace-comment').value.trim(); const next = [...items, traceDraft]; saveQueue(localStorage, key, next); items = next; traceDraft = null; el('trace-review').close(); renderQueue(); showComment(); status('Recorrido guardado. Se enviará con las capturas y la voz.'); }
+  el('save-trace').onclick = async () => {
+    if (!traceDraft || queueError || busy) return;
+    setBusy(true);
+    try { traceDraft.comment = el('trace-comment').value.trim(); const next = [...items, traceDraft]; await queueStore.save(next); items = next; traceDraft = null; el('trace-review').close(); renderQueue(); showComment(); status('Recorrido guardado en la cola. Tocá Nuevo recorrido para seguir agregando.'); }
     catch (error) { el('trace-note').textContent = error.message; }
+    finally { setBusy(false); }
   };
   el('discard-trace').onclick = () => { traceDraft = null; el('trace-review').close(); };
   const liveDrawing = createLiveDrawing(el('live-drawing'), () => void recorder.capture('annotation'));
@@ -328,12 +338,15 @@ export function mountFeedback(config) {
     onReady: (item, note) => { if (disposed) return; recordingEnded(); if (item) { traceDraft = item; openTraceReview(item, false, note); } },
     onError: message => { if (!disposed) { el('recording-note').textContent = message; el('dock-status').textContent = message; } },
   });
-  el('start-trace').onclick = async () => {
+  const startTrace = async () => {
+    if (busy || queueError) return;
     if (traceDraft) { openTraceReview(traceDraft); return; }
     if (snapshot) { showComment(); status('Guardá o descartá la captura antes de grabar el recorrido.', true); return; }
+    if (dialog.open) dialog.close();
     dock(false); launch.hidden = true; el('recording-bar').hidden = false; el('recording-clock').textContent = '0:00'; el('recording-frames').textContent = 'Esperando micrófono…'; el('recording-note').textContent = ''; el('stop-trace').disabled = true; el('capture-step').disabled = true; recordingFloat.place();
     try { await recorder.start(); } catch (error) { if (!disposed) { recordingEnded(); dock(true); el('dock-status').textContent = error.message; } }
   };
+  el('start-trace').onclick = startTrace; el('new-trace').onclick = startTrace;
   el('mark-trace').onclick = async () => {
     if (liveDrawing.active) { el('mark-trace').disabled = true; await recorder.capture('annotations_complete'); resetLiveDrawing(); el('mark-trace').disabled = false; }
     else { liveDrawing.show(); el('live-tools').hidden = false; el('mark-trace').textContent = 'Navegar'; el('mark-trace').setAttribute('aria-pressed', 'true'); el('recording-note').textContent = 'La voz sigue grabando. Tocá Navegar para continuar el flujo.'; }
@@ -343,5 +356,5 @@ export function mountFeedback(config) {
   el('live-undo').onclick = () => liveDrawing.undo(); el('live-clear').onclick = () => liveDrawing.clear();
   el('stop-trace').onclick = () => void recorder.stop(); el('capture-step').onclick = () => void recorder.capture();
   el('cancel-trace').onclick = () => { recorder.cancel(); recordingEnded(); };
-  return () => { disposed = true; liveDrawing.dispose(); recorder.cancel(); releaseAudio(); drawingFloat.dispose(); recordingFloat.dispose(); resize.disconnect(); if (frame) cancelAnimationFrame(frame); host.remove(); };
+  return () => { disposed = true; void queueStore.close(); liveDrawing.dispose(); recorder.cancel(); releaseAudio(); drawingFloat.dispose(); recordingFloat.dispose(); resize.disconnect(); if (frame) cancelAnimationFrame(frame); host.remove(); };
 }

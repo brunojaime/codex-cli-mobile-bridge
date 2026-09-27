@@ -15,9 +15,7 @@ export function queueKey(config) {
 }
 
 export function saveQueue(storage, key, items) {
-  if (items.length > 8) throw new Error('Podés guardar hasta 8 capturas por envío.');
   const data = JSON.stringify(items);
-  if (data.length > 4_000_000) throw new Error('Las capturas ocupan demasiado espacio. Enviá o eliminá algunas.');
   storage.setItem(key, data);
 }
 

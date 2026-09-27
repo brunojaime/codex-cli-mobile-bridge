@@ -29,6 +29,7 @@ try {
   await page.getByLabel('¿Qué querés cambiar?').fill('Prueba local de integración. No enviada.');
   await page.screenshot({ path: resolve(out, `${app.name}-app-integration-390.png`), fullPage: false });
   await page.getByRole('button', { name: 'Guardar en la cola', exact: true }).click();
+    await page.locator('#status').filter({hasText:'Guardado en este navegador'}).waitFor();
   await page.reload();
   await page.getByRole('button', { name: 'Abrir feedback, 1 pendientes', exact: true }).waitFor();
   await page.goto(app.prod);
