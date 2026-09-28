@@ -1,0 +1,31 @@
+{
+  "app_id": "mobile-pipeline",
+  "name": "Nienfos Mobile Pipeline",
+  "description": "Build, version and publish React Native applications locally without GitHub Actions.",
+  "recommended_server_id": "mobile-pipeline",
+  "transport": "stdio",
+  "command": "uv",
+  "args": [
+    "run",
+    "--project",
+    "{repo_root}",
+    "python",
+    "-m",
+    "mcp_apps.mobile_pipeline.server"
+  ],
+  "env": {
+    "PROJECTS_ROOT": "{projects_root}"
+  },
+  "supports_ui_extension": false,
+  "ui_entry_uri": null,
+  "tags": [
+    "mobile",
+    "react-native",
+    "local-build",
+    "github-releases"
+  ],
+  "preview_tool": {
+    "name": "list_mobile_projects",
+    "arguments": {}
+  }
+}

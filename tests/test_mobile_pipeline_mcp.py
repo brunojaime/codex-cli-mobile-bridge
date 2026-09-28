@@ -1,0 +1,146 @@
+import json
+import pytest
+from mcp_apps.mobile_pipeline import server
+
+
+def enrolled(tmp_path):
+    path = tmp_path / "gestion" / "infra/mobile"
+    path.mkdir(parents=True)
+    (path / "project.json").write_text(
+        json.dumps({"kind": "nienfos.mobile-project", "sourceApp": "gestion"})
+    )
+    (path / "release.json").write_text(
+        json.dumps(
+            {
+                "profile": "preview",
+                "version": "0.1.0",
+                "androidBuild": 1,
+                "toolkitVersion": "0.1.0",
+            }
+        )
+    )
+    return path.parents[1]
+
+
+def test_discovery_reports_pinned_consumer_without_secrets(tmp_path, monkeypatch):
+    enrolled(tmp_path)
+    monkeypatch.setattr(server, "ROOT", tmp_path)
+    result = server.list_mobile_projects()
+    assert result["projects"][0]["sourceApp"] == "gestion"
+    assert result["projects"][0]["toolkitUpdateAvailable"] is False
+    assert "password" not in json.dumps(result)
+
+
+@pytest.mark.parametrize(
+    "name", ["../gestion", "/tmp/gestion", "gestion;touch", "gestion/../../x"]
+)
+def test_project_traversal_is_rejected(name, tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "ROOT", tmp_path)
+    with pytest.raises(ValueError):
+        server._project(name)
+
+
+def test_symlink_escape_is_rejected(tmp_path, monkeypatch):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    root = tmp_path / "projects"
+    root.mkdir()
+    (root / "gestion").symlink_to(outside, target_is_directory=True)
+    monkeypatch.setattr(server, "ROOT", root)
+    with pytest.raises(ValueError):
+        server._project("gestion")
+
+
+def test_publish_needs_human_reference_before_process(tmp_path, monkeypatch):
+    enrolled(tmp_path)
+    monkeypatch.setattr(server, "ROOT", tmp_path)
+    with pytest.raises(ValueError):
+        server.start_mobile_job("gestion", "publish")
+
+
+def test_arbitrary_operations_rejected(tmp_path, monkeypatch):
+    enrolled(tmp_path)
+    monkeypatch.setattr(server, "ROOT", tmp_path)
+    with pytest.raises(ValueError):
+        server.start_mobile_job("gestion", "shell")
+
+
+def test_sdk_update_preserves_unreviewed_custom_code(tmp_path, monkeypatch):
+    root = enrolled(tmp_path)
+    monkeypatch.setattr(server, "ROOT", tmp_path)
+    target = root / "packages/mobile-core/index.ts"
+    target.parent.mkdir(parents=True)
+    target.write_text("custom code")
+    with pytest.raises(ValueError):
+        server.update_mobile_sdk("gestion")
+    assert target.read_text() == "custom code"
+
+
+def test_sdk_update_records_digest_and_requires_native_rebuild(tmp_path, monkeypatch):
+    enrolled(tmp_path)
+    monkeypatch.setattr(server, "ROOT", tmp_path)
+    result = server.update_mobile_sdk("gestion")
+    assert result["state"] == "local-changes"
+    assert "authorized-publication" in result["requires"]
+    assert server.mobile_sdk_plan("gestion")["updateAvailable"] is False
+
+
+def test_version_bump_monotonic_and_never_publishes(tmp_path, monkeypatch):
+    enrolled(tmp_path)
+    monkeypatch.setattr(server, "ROOT", tmp_path)
+    result = server.bump_mobile_version("gestion", "0.1.1")
+    assert result["version"] == "0.1.1" and result["build"] == 2
+    with pytest.raises(ValueError):
+        server.bump_mobile_version("gestion", "0.0.9")
+
+
+def test_runtime_verification_refuses_personal_devices(tmp_path, monkeypatch):
+    enrolled(tmp_path)
+    monkeypatch.setattr(server, "ROOT", tmp_path)
+    with pytest.raises(ValueError, match="emulator"):
+        server.verify_android_install("gestion", "physical-device-123")
+
+
+def test_catalog_requires_approval_before_registration(tmp_path, monkeypatch):
+    enrolled(tmp_path)
+    monkeypatch.setattr(server, "ROOT", tmp_path)
+    with pytest.raises(ValueError, match="authorization"):
+        server.register_mobile_catalog("gestion", "Gestión QA")
+
+
+def test_catalog_refuses_store_profiles_before_network(tmp_path):
+    from mcp_apps.mobile_pipeline.catalog import register
+
+    root = enrolled(tmp_path)
+    release = root / "infra/mobile/release.json"
+    config = json.loads(release.read_text())
+    config["profile"] = "production"
+    release.write_text(json.dumps(config))
+    with pytest.raises(ValueError, match="preview"):
+        register(root, "Gestión")
+
+
+def test_updater_custom_changes_abort_entire_promotion(tmp_path, monkeypatch):
+    root = enrolled(tmp_path)
+    monkeypatch.setattr(server, "ROOT", tmp_path)
+    server.update_mobile_sdk("gestion")
+    target = root / "packages/mobile-updater/plugin.cjs"
+    target.write_text("custom native configuration")
+    core = root / "packages/mobile-core/index.ts"
+    before = core.read_bytes()
+    with pytest.raises(ValueError, match="custom updater"):
+        server.update_mobile_sdk("gestion")
+    assert target.read_text() == "custom native configuration"
+    assert core.read_bytes() == before
+
+
+def test_updater_native_files_are_promoted_with_hashes(tmp_path, monkeypatch):
+    import hashlib
+
+    root = enrolled(tmp_path)
+    monkeypatch.setattr(server, "ROOT", tmp_path)
+    server.update_mobile_sdk("gestion")
+    lock = json.loads((root / "infra/mobile/core-lock.json").read_text())
+    for name, digest in lock["files"].items():
+        target = root / "packages/mobile-updater" / name.removeprefix("updater/")
+        assert hashlib.sha256(target.read_bytes()).hexdigest() == digest
