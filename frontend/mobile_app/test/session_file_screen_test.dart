@@ -214,6 +214,23 @@ void main() {
     expect(find.byTooltip('Descargar archivo'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+  for (final name in ['unsupported.mp4', 'unsupported.mp3']) {
+    testWidgets('$name keeps download when native preview fails',
+        (tester) async {
+      await showFile(
+          tester,
+          ApiClient(
+              baseUrl: 'http://bridge',
+              client: MockClient((request) async =>
+                  request.url.path.endsWith('/content')
+                      ? http.Response.bytes([0, 1, 2], 200)
+                      : metadata(kind: 'file', path: name, text: null))));
+      expect(find.textContaining('No se pudo mostrar la vista previa.'),
+          findsOneWidget);
+      expect(find.byTooltip('Descargar archivo'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
   testWidgets('missing files explain the error and allow retry',
       (tester) async {
     var failed = true;
