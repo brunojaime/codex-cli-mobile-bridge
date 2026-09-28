@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 from urllib.parse import unquote, urlsplit
 
-MAX_FILE_BYTES = 50 * 1024 * 1024
+MAX_FILE_BYTES = 512 * 1024 * 1024
 MAX_TEXT_BYTES = 256 * 1024
 TEXT_EXTENSIONS = frozenset(
     {
@@ -34,18 +34,133 @@ TEXT_EXTENSIONS = frozenset(
         ".sh",
         ".mjs",
         ".cjs",
+        ".log",
+        ".jsonl",
+        ".ndjson",
+        ".tsv",
+        ".rst",
+        ".ini",
+        ".cfg",
+        ".conf",
+        ".properties",
+        ".diff",
+        ".patch",
+        ".ipynb",
+        ".c",
+        ".h",
+        ".cpp",
+        ".hpp",
+        ".cs",
+        ".java",
+        ".kt",
+        ".kts",
+        ".swift",
+        ".go",
+        ".rs",
+        ".rb",
+        ".php",
+        ".vue",
+        ".svelte",
+        ".scss",
+        ".sass",
+        ".less",
+        ".r",
+        ".lua",
+        ".ps1",
+        ".bat",
+        ".gradle",
+        ".graphql",
+        ".gql",
+        ".proto",
+        ".tex",
+        ".srt",
+        ".vtt",
     }
 )
-IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp"})
+IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico"})
+AUDIO_EXTENSIONS = frozenset({".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac", ".opus"})
+VIDEO_EXTENSIONS = frozenset({".mp4", ".webm", ".mov", ".m4v", ".mkv", ".avi", ".3gp"})
+TEXT_NAMES = frozenset(
+    {
+        "readme",
+        "license",
+        "licence",
+        "dockerfile",
+        "makefile",
+        "changelog",
+        ".gitignore",
+        ".dockerignore",
+        "cmakelists.txt",
+    }
+)
 FILE_EXTENSIONS = (
     TEXT_EXTENSIONS
     | IMAGE_EXTENSIONS
+    | AUDIO_EXTENSIONS
+    | VIDEO_EXTENSIONS
     | {
         ".pdf",
         ".docx",
         ".xlsx",
         ".pptx",
         ".zip",
+        ".apk",
+        ".aab",
+        ".apks",
+        ".xapk",
+        ".ipa",
+        ".exe",
+        ".msi",
+        ".dmg",
+        ".deb",
+        ".rpm",
+        ".appimage",
+        ".7z",
+        ".rar",
+        ".tar",
+        ".gz",
+        ".bz2",
+        ".xz",
+        ".tgz",
+        ".zst",
+        ".doc",
+        ".xls",
+        ".ppt",
+        ".odt",
+        ".ods",
+        ".odp",
+        ".rtf",
+        ".epub",
+        ".mobi",
+        ".heic",
+        ".heif",
+        ".tif",
+        ".tiff",
+        ".avif",
+        ".psd",
+        ".ai",
+        ".eps",
+        ".sketch",
+        ".fig",
+        ".glb",
+        ".gltf",
+        ".stl",
+        ".obj",
+        ".fbx",
+        ".blend",
+        ".step",
+        ".stp",
+        ".fcstd",
+        ".dwg",
+        ".dxf",
+        ".ttf",
+        ".otf",
+        ".woff",
+        ".woff2",
+        ".ics",
+        ".vcf",
+        ".torrent",
+        ".wasm",
     }
 )
 PRIVATE_PARTS = frozenset(
@@ -121,12 +236,15 @@ def resolve_session_file(
     if not path.exists():
         raise SessionFileError("El archivo ya no está disponible en el servidor.", 404)
     if not path.is_dir():
-        if not path.is_file() or path.suffix.lower() not in FILE_EXTENSIONS:
+        if not path.is_file() or (
+            path.suffix.lower() not in FILE_EXTENSIONS
+            and path.name.lower() not in TEXT_NAMES
+        ):
             raise SessionFileError(
                 "Este tipo de archivo no está disponible en el visor.", 415
             )
         if path.stat().st_size > MAX_FILE_BYTES:
-            raise SessionFileError("El archivo supera el límite de 50 MB.", 413)
+            raise SessionFileError("El archivo supera el límite de 512 MB.", 413)
     return path
 
 
@@ -141,7 +259,7 @@ def session_file_metadata(
         else "image"
         if path.suffix.lower() in IMAGE_EXTENSIONS
         else "text"
-        if path.suffix.lower() in TEXT_EXTENSIONS
+        if path.suffix.lower() in TEXT_EXTENSIONS or path.name.lower() in TEXT_NAMES
         else "file"
     )
     result = {

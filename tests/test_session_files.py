@@ -110,6 +110,18 @@ def test_session_routes_report_image_download_and_workspace_boundary(workspace):
             url + "/content",
             params={"path": "captura.png", "relative_to": "reports/INFORME.md"},
         )
+        (workspace / "app.apk").write_bytes(b"APK download bytes")
+        apk_metadata = client.get(url, params={"path": "app.apk"})
+        assert apk_metadata.status_code == 200
+        assert apk_metadata.json()["kind"] == "file"
+        apk = client.get(url + "/content", params={"path": "app.apk"})
+        assert apk.content == b"APK download bytes"
+        assert "app.apk" in apk.headers["content-disposition"]
+        partial = client.get(
+            url + "/content", params={"path": "app.apk"}, headers={"Range": "bytes=0-2"}
+        )
+        assert partial.status_code == 206
+        assert partial.content == b"APK"
         assert image.status_code == 200
         assert image.content == b"image-bytes"
         assert image.headers["content-type"] == "image/png"
@@ -124,3 +136,73 @@ def test_session_routes_report_image_download_and_workspace_boundary(workspace):
             ).status_code
             == 404
         )
+
+
+@pytest.mark.parametrize(
+    "name,kind",
+    [
+        ("app.apk", "file"),
+        ("bundle.aab", "file"),
+        ("archive.7z", "file"),
+        ("archive.tar.gz", "file"),
+        ("sheet.ods", "file"),
+        ("old.doc", "file"),
+        ("drawing.FCStd", "file"),
+        ("model.glb", "file"),
+        ("photo.heic", "file"),
+        ("sound.mp3", "file"),
+        ("movie.mp4", "file"),
+        ("document.pdf", "file"),
+        ("data.jsonl", "text"),
+        ("table.tsv", "text"),
+        ("Dockerfile", "text"),
+        ("LICENSE", "text"),
+        ("source.kt", "text"),
+        ("logo.svg", "text"),
+        ("image.bmp", "image"),
+    ],
+)
+def test_standard_formats(workspace, name, kind):
+    (workspace / name).write_bytes(b"example")
+    metadata = session_file_metadata(str(workspace), name)
+    assert metadata["kind"] == kind
+    assert metadata["size_bytes"] == 7
+    assert name in {
+        item["name"] for item in session_file_metadata(str(workspace), ".")["entries"]
+    }
+
+
+def test_large_apk_and_limit(workspace):
+    from backend.app.application.services.session_file_service import MAX_FILE_BYTES
+
+    apk = workspace / "large.apk"
+    with apk.open("wb") as handle:
+        handle.truncate(80 * 1024 * 1024)
+    assert (
+        session_file_metadata(str(workspace), apk.name)["size_bytes"]
+        == 80 * 1024 * 1024
+    )
+    with apk.open("wb") as handle:
+        handle.truncate(MAX_FILE_BYTES + 1)
+    with pytest.raises(SessionFileError) as error:
+        resolve_session_file(str(workspace), apk.name)
+    assert error.value.status_code == 413
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "signing.jks",
+        "private.pem",
+        "private.key",
+        ".env.backup.apk",
+        ".release-signing/app.apk",
+        "unknown.bin",
+    ],
+)
+def test_expansion_still_rejects_private_or_unknown_formats(workspace, name):
+    path = workspace / name
+    path.parent.mkdir(exist_ok=True)
+    path.write_bytes(b"private")
+    with pytest.raises(SessionFileError):
+        resolve_session_file(str(workspace), name)

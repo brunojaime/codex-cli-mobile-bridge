@@ -139,6 +139,81 @@ void main() {
     expect(saved, report);
     expect(find.text('Archivo guardado.'), findsOneWidget);
   });
+  testWidgets('APK has a useful download action and preserves binary bytes',
+      (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final binary = [0x50, 0x4b, 0, 255];
+    final client = ApiClient(
+        baseUrl: 'http://bridge',
+        client: MockClient((request) async =>
+            request.url.path.endsWith('/content')
+                ? http.Response.bytes(binary, 200)
+                : metadata(kind: 'file', path: 'build/app.apk', text: null)));
+    await showFile(tester, client, onSave: (bytes, file) async {
+      expect(bytes, binary);
+      expect(file.name, 'app.apk');
+    });
+    expect(find.textContaining('Instalador de Android'), findsOneWidget);
+    if (const bool.fromEnvironment('CAPTURE_FILE_VIEWER')) {
+      final boundary = tester.renderObject<RenderRepaintBoundary>(
+          find.byKey(const ValueKey('file-capture')));
+      await tester.runAsync(() async {
+        final image = await boundary.toImage(pixelRatio: 1);
+        final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+        await File('/tmp/apk-file-viewer.png')
+            .writeAsBytes(bytes!.buffer.asUint8List());
+        image.dispose();
+      });
+    }
+    await tester.tap(find.widgetWithText(FilledButton, 'Descargar archivo'));
+    await tester.pumpAndSettle();
+    expect(find.text('Archivo guardado.'), findsOneWidget);
+  });
+  test('download stream preserves binary chunks and reports HTTP failures',
+      () async {
+    final client = ApiClient(
+        baseUrl: 'http://bridge',
+        client: MockClient((request) async =>
+            request.url.queryParameters['path'] == 'app.apk'
+                ? http.Response.bytes([0, 255, 1], 200)
+                : http.Response('missing', 404)));
+    final chunks = await client.streamSessionFile('chat-1', 'app.apk');
+    expect(await chunks.expand((chunk) => chunk).toList(), [0, 255, 1]);
+    await expectLater(
+        client.streamSessionFile('chat-1', 'missing.apk'), throwsException);
+  });
+  test('previews use format and size, including metadata from older backends',
+      () {
+    SessionFile file(String name, {int size = 0}) => SessionFile(
+        name: name,
+        path: name,
+        kind: 'file',
+        contentType: 'application/octet-stream',
+        sizeBytes: size);
+    expect(file('report.PDF').previewKind, 'pdf');
+    expect(file('logo.svg').previewKind, 'svg');
+    expect(file('voice.mp3').previewKind, 'audio');
+    expect(file('video.mp4').previewKind, 'video');
+    expect(file('app.apk', size: 80 * 1024 * 1024).previewKind, 'file');
+    expect(file('report.pdf', size: 80 * 1024 * 1024).previewKind, 'file');
+    expect(file('app.apk', size: 80 * 1024 * 1024).sizeLabel, '80.0 MB');
+  });
+  testWidgets('SVG uses a zoomable preview', (tester) async {
+    await showFile(
+        tester,
+        ApiClient(
+            baseUrl: 'http://bridge',
+            client: MockClient((_) async => metadata(
+                path: 'logo.svg',
+                text:
+                    '<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30"><rect width="30" height="30" fill="red"/></svg>'))));
+    expect(find.byType(InteractiveViewer), findsOneWidget);
+    expect(find.byTooltip('Descargar archivo'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
   testWidgets('missing files explain the error and allow retry',
       (tester) async {
     var failed = true;

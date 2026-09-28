@@ -87,6 +87,17 @@ class ApiClient {
         jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>);
   }
 
+  Future<Stream<List<int>>> streamSessionFile(String sessionId, String path) async {
+    final response = await _client.send(
+      http.Request('GET', sessionFileUri(sessionId, path, content: true)),
+    ).timeout(const Duration(seconds: 30));
+    if (response.statusCode != 200) {
+      await response.stream.drain<void>();
+      throw Exception('No se pudo descargar el archivo del servidor.');
+    }
+    return response.stream.timeout(const Duration(seconds: 60));
+  }
+
   Future<Uint8List> downloadSessionFile(String sessionId, String path) async {
     final response = await _client
         .get(sessionFileUri(sessionId, path, content: true))
