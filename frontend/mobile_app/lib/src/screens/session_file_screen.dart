@@ -3,6 +3,9 @@ import 'dart:typed_data';
 import 'package:file_saver/file_saver.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
+import 'package:flutter_svg/flutter_svg.dart';
+
+import '../widgets/session_file_preview.dart';
 
 import '../models/session_file.dart';
 import '../services/api_client.dart';
@@ -48,6 +51,7 @@ class _SessionFileScreenState extends State<SessionFileScreen> {
     setState(() {
       _loading = true;
       _error = null;
+      _file = null;
     });
     try {
       final file = await widget.apiClient.getSessionFile(
@@ -88,17 +92,19 @@ class _SessionFileScreenState extends State<SessionFileScreen> {
     if (file == null || _saving) return;
     setState(() => _saving = true);
     try {
-      final bytes = await widget.apiClient
-          .downloadSessionFile(widget.sessionId, file.path);
-      if (!mounted) return;
       if (widget.onSave != null) {
+        final bytes = await widget.apiClient
+            .downloadSessionFile(widget.sessionId, file.path);
+        if (!mounted) return;
         await widget.onSave!(bytes, file);
       } else {
         final dot = file.name.lastIndexOf('.');
-        final saved = await FileSaver.instance.saveAs(
+        final stream = await widget.apiClient
+            .streamSessionFile(widget.sessionId, file.path);
+        final saved = await FileSaver.instance.saveAsStream(
           name: dot < 0 ? file.name : file.name.substring(0, dot),
           fileExtension: dot < 0 ? '' : file.name.substring(dot + 1),
-          bytes: bytes,
+          stream: stream,
           mimeType: MimeType.custom,
           customMimeType: file.contentType,
         );
@@ -159,7 +165,28 @@ class _SessionFileScreenState extends State<SessionFileScreen> {
       );
 
   Widget _content(SessionFile file) {
-    if (file.kind == 'image') {
+    if (const {'pdf', 'audio', 'video'}.contains(file.previewKind)) {
+      return SessionFilePreview(
+          key: ValueKey(file.path),
+          file: file,
+          apiClient: widget.apiClient,
+          sessionId: widget.sessionId);
+    }
+    if (file.previewKind == 'svg' && !file.truncated) {
+      return InteractiveViewer(
+          minScale: 0.5,
+          maxScale: 5,
+          child: Center(
+              child: SvgPicture.string(
+            file.text ?? '',
+            semanticsLabel: file.name,
+            errorBuilder: (_, error, stack) => const Padding(
+                padding: EdgeInsets.all(24),
+                child: Text(
+                    'No se pudo mostrar el SVG. Podés descargarlo desde el botón superior.')),
+          )));
+    }
+    if (file.previewKind == 'image') {
       return InteractiveViewer(
         minScale: 0.5,
         maxScale: 5,
@@ -233,14 +260,18 @@ class _SessionFileScreenState extends State<SessionFileScreen> {
                 const Icon(Icons.description_outlined, size: 48),
                 const SizedBox(height: 16),
                 Text(file.name, style: Theme.of(context).textTheme.titleLarge),
+                const SizedBox(height: 8),
+                Text('${file.extension.toUpperCase()} · ${file.sizeLabel}'),
                 const SizedBox(height: 12),
-                const Text(
-                    'Descargá este archivo para abrirlo con una aplicación del teléfono.'),
+                Text(file.extension == 'apk'
+                    ? 'Instalador de Android. Guardalo y abrilo desde Descargas para instalarlo.'
+                    : 'Descargá este archivo para abrirlo con una aplicación del teléfono.'),
                 const SizedBox(height: 16),
                 FilledButton.icon(
                     onPressed: _saving ? null : _save,
                     icon: const Icon(Icons.download_rounded),
-                    label: const Text('Descargar archivo')),
+                    label:
+                        Text(_saving ? 'Descargando…' : 'Descargar archivo')),
               ],
             ],
           )),
