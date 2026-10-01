@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
+import fcntl
+import tempfile
 from pathlib import Path
 import re
 import subprocess
@@ -80,7 +83,8 @@ class ProjectSecretService:
             raise ProjectSecretStorageError("Secret values cannot contain NUL bytes.")
 
         env_path = self._env_path(workspace)
-        with self._lock:
+        with self._write_lock(workspace):
+            env_path = self._env_path(workspace)
             self._ensure_env_is_not_tracked(workspace)
             self._ensure_env_is_ignored(workspace)
             self._ensure_agent_guidance(workspace)
@@ -99,6 +103,83 @@ class ProjectSecretService:
                 ) from exc
             names = self._read_secret_names(env_path)
         return self._payload(workspace, names)
+
+    @contextmanager
+    def _write_lock(self, workspace: Path):
+        # DEV and PROD may address the same workspace from separate processes.
+        with self._lock:
+            try:
+                fd = os.open(workspace / ".env.bridge.lock",
+                             os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+                with os.fdopen(fd, "w") as handle:
+                    fcntl.flock(handle, fcntl.LOCK_EX)
+                    yield
+            except OSError as exc:
+                raise ProjectSecretStorageError("Could not update the project .env file.") from exc
+
+    def update_secret(self, *, workspace_path: str, name: str,
+                      new_name: str, value: str | None = None) -> dict[str, object]:
+        return self._change_secret(workspace_path=workspace_path, name=name,
+                                   new_name=new_name, value=value)
+
+    def delete_secret(self, *, workspace_path: str, name: str) -> dict[str, object]:
+        return self._change_secret(workspace_path=workspace_path, name=name,
+                                   new_name=None, value=None)
+
+    def _change_secret(self, *, workspace_path: str, name: str,
+                       new_name: str | None, value: str | None) -> dict[str, object]:
+        workspace = self._resolve_workspace(workspace_path)
+        if new_name is not None and not _SECRET_NAME_PATTERN.fullmatch(new_name):
+            raise ProjectSecretStorageError("Invalid secret name.")
+        if value is not None and (not value or "\x00" in value):
+            raise ProjectSecretStorageError("Secret values must be nonempty and cannot contain NUL bytes.")
+        with self._write_lock(workspace):
+            env_path = self._env_path(workspace)
+            self._ensure_env_is_not_tracked(workspace)
+            try:
+                with env_path.open(encoding="utf-8") as handle:
+                    bindings = list(parse_stream(handle))
+            except FileNotFoundError as exc:
+                raise ProjectSecretStorageError("Secret no longer exists. Refresh the list.") from exc
+            except (OSError, UnicodeError) as exc:
+                raise ProjectSecretStorageError("Could not read the project .env file.") from exc
+            matches = [binding for binding in bindings if binding.key == name]
+            if not matches:
+                raise ProjectSecretStorageError("Secret no longer exists. Refresh the list.")
+            if new_name != name and any(b.key == new_name for b in bindings if b.key):
+                raise ProjectSecretStorageError("A secret with that name already exists.")
+            # Parse without interpolation: renaming must preserve literal tokens.
+            new_value = value if value is not None else matches[-1].value
+            replacement = ""
+            if new_name is not None:
+                if new_value is None:
+                    replacement = new_name + "\n"
+                else:
+                    escaped = new_value.replace("'", "\\'")
+                    replacement = f"{new_name}='{escaped}'\n"
+            chunks = []
+            inserted = False
+            for binding in bindings:
+                if binding.key == name:
+                    if not inserted:
+                        chunks.append(replacement)
+                        inserted = True
+                else:
+                    chunks.append(binding.original.string)
+            self._ensure_env_is_ignored(workspace)
+            temp_name = None
+            try:
+                with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8",
+                                                 dir=workspace, prefix=".env-", delete=False) as handle:
+                    temp_name = handle.name
+                    handle.write("".join(chunks))
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temp_name, env_path)
+            finally:
+                if temp_name and os.path.exists(temp_name):
+                    os.unlink(temp_name)
+            return self._payload(workspace, self._read_secret_names(env_path))
 
     def _resolve_workspace(self, workspace_path: str) -> Path:
         raw_path = workspace_path.strip()

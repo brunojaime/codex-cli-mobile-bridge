@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:codex_mobile_frontend/src/services/api_client.dart';
 import 'package:codex_mobile_frontend/src/widgets/project_secrets_sheet.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -104,6 +105,135 @@ void main() {
     );
     expect(find.text('test-only-password'), findsNothing);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+      'edits name and hidden value, copies only name, cancels and confirms deletion',
+      (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    var names = <String>['TOKEN', 'OTHER'];
+    var value = 'original-private';
+    var writes = 0;
+    String? clipboard;
+    tester.binding.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.setData') {
+        clipboard = (call.arguments as Map)['text'] as String;
+      }
+      return null;
+    });
+    addTearDown(() => tester.binding.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, null));
+    final client = ApiClient(
+        baseUrl: 'http://bridge.test',
+        client: MockClient((request) async {
+          if (request.method == 'PATCH') {
+            writes++;
+            final body = jsonDecode(request.body) as Map<String, dynamic>;
+            final old = body['name'] as String;
+            names[names.indexOf(old)] = body['new_name'] as String;
+            if (body.containsKey('value')) value = body['value'] as String;
+          } else if (request.method == 'DELETE') {
+            writes++;
+            names.remove(request.url.queryParameters['name']);
+          }
+          return http.Response(
+              jsonEncode({
+                'workspace_path': '/projects/cms',
+                'workspace_name': 'cms',
+                'env_file': '.env',
+                'names': names
+              }),
+              200);
+        }));
+    await tester.pumpWidget(_harness(client));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Actions for TOKEN'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Copy name'));
+    await tester.pumpAndSettle();
+    expect(clipboard, 'TOKEN');
+    await tester.tap(find.text('TOKEN'));
+    await tester.pumpAndSettle();
+    final nameField = find.byKey(const ValueKey<String>('project-secret-name'));
+    final valueField =
+        find.byKey(const ValueKey<String>('project-secret-value'));
+    expect(tester.widget<TextFormField>(valueField).controller!.text, isEmpty);
+    expect(
+        tester
+            .widget<EditableText>(find.descendant(
+                of: valueField, matching: find.byType(EditableText)))
+            .obscureText,
+        isTrue);
+    await tester.enterText(nameField, 'RENAMED');
+    await tester.ensureVisible(find.text('Save changes'));
+    await tester.tap(find.text('Save changes'));
+    await tester.pumpAndSettle();
+    expect(value, 'original-private');
+    expect(names, contains('RENAMED'));
+    expect(names, isNot(contains('TOKEN')));
+    await tester.ensureVisible(find.text('RENAMED'));
+    await tester.tap(find.text('RENAMED'));
+    await tester.pumpAndSettle();
+    await tester.enterText(valueField, 'new-private');
+    await tester.ensureVisible(find.text('Save changes'));
+    await tester.tap(find.text('Save changes'));
+    await tester.pumpAndSettle();
+    expect(value, 'new-private');
+    expect(find.text('new-private'), findsNothing);
+    for (final confirm in [false, true]) {
+      await tester.ensureVisible(find.byTooltip('Actions for RENAMED'));
+      await tester.tap(find.byTooltip('Actions for RENAMED'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete secret'));
+      await tester.pumpAndSettle();
+      await tester.tap(confirm
+          ? find.byKey(const ValueKey<String>('confirm-delete-secret'))
+          : find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(names.contains('RENAMED'), !confirm);
+    }
+    expect(writes, 3);
+    expect(names, ['OTHER']);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('failed edit keeps input hidden and cancel clears it',
+      (tester) async {
+    final client = ApiClient(
+        baseUrl: 'http://bridge.test',
+        client: MockClient((request) async => request.method == 'GET'
+            ? http.Response(
+                '{"workspace_path":"/projects/cms","workspace_name":"cms","env_file":".env","names":["TOKEN"]}',
+                200)
+            : http.Response('private-server-value', 409)));
+    await tester.pumpWidget(_harness(client));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('TOKEN'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+        find.byKey(const ValueKey<String>('project-secret-value')),
+        'private-input');
+    await tester.ensureVisible(find.text('Save changes'));
+    await tester.tap(find.text('Save changes'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('private-server-value'), findsNothing);
+    expect(find.textContaining('Could not save the secret'), findsOneWidget);
+    await tester.ensureVisible(find.text('Cancel'));
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('TOKEN'));
+    await tester.pumpAndSettle();
+    expect(
+        tester
+            .widget<TextFormField>(
+                find.byKey(const ValueKey<String>('project-secret-value')))
+            .controller!
+            .text,
+        isEmpty);
   });
 
   testWidgets('shows validation without sending malformed names',

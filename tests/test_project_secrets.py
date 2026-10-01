@@ -198,3 +198,80 @@ def _client(projects_root: Path) -> TestClient:
         project_factory_state_dir=str(projects_root / ".state"),
     )
     return TestClient(create_app(settings))
+
+
+def test_edit_delete_preserve_literal_values_and_other_entries(tmp_path: Path) -> None:
+    from dotenv import dotenv_values
+    project = tmp_path / 'app'
+    project.mkdir()
+    env = project / '.env'
+    env.write_text("# Keep comment\nOTHER='untouched'\nTOKEN='duplicate'\nTOKEN='literal ${OTHER}\\nline'\n")
+    client = _client(tmp_path)
+    original = dotenv_values(env, interpolate=False)['TOKEN']
+    body = {'workspace_path': str(project), 'name': 'TOKEN', 'new_name': 'RENAMED'}
+    response = client.patch('/project-secrets', json=body)
+    assert response.status_code == 200
+    assert response.json()['names'] == ['OTHER', 'RENAMED']
+    assert dotenv_values(env, interpolate=False)['RENAMED'] == original
+    assert 'literal' not in response.text
+    assert 'TOKEN=' not in env.read_text()
+    assert '# Keep comment' in env.read_text()
+    assert env.stat().st_mode & 0o777 == 0o600
+    rotated = "replacement with ' quotes\nand ${OTHER}"
+    response = client.patch('/api/v1/project-secrets', json={
+        **body, 'name': 'RENAMED', 'new_name': 'FINAL', 'value': rotated,
+    })
+    assert response.status_code == 200
+    assert dotenv_values(env, interpolate=False) == {'OTHER': 'untouched', 'FINAL': rotated}
+    assert rotated not in response.text
+    response = client.delete('/project-secrets', params={'workspace_path': str(project), 'name': 'FINAL'})
+    assert response.status_code == 200
+    assert response.json()['names'] == ['OTHER']
+    assert dotenv_values(env, interpolate=False) == {'OTHER': 'untouched'}
+    assert '# Keep comment' in env.read_text()
+    assert 'replacement' not in env.read_text()
+
+
+def test_edit_collisions_missing_invalid_and_no_value_echo(tmp_path: Path) -> None:
+    project = tmp_path / 'app'
+    project.mkdir()
+    env = project / '.env'
+    env.write_text("FIRST='first-private'\nSECOND='second-private'\n")
+    original = env.read_bytes()
+    client = _client(tmp_path)
+    body = {'workspace_path': str(project), 'name': 'FIRST', 'new_name': 'SECOND', 'value': 'do-not-echo'}
+    assert client.patch('/project-secrets', json=body).status_code == 409
+    assert client.patch('/project-secrets', json={**body, 'name': 'MISSING'}).status_code == 409
+    assert client.delete('/project-secrets', params={'workspace_path': str(project), 'name': 'MISSING'}).status_code == 409
+    for changes in ({'new_name': '9 invalid'}, {'value': ''}, {'value': {'private': 'do-not-echo'}}, {'value': 'do-not-echo\x00'}):
+        response = client.patch('/project-secrets', json={**body, **changes})
+        assert response.status_code in (409, 422)
+        assert 'do-not-echo' not in response.text
+        assert 'first-private' not in response.text
+    response = client.post('/project-secrets', json={
+        'workspace_path': str(project), 'name': 'FIRST', 'value': {'private': 'do-not-echo'},
+    })
+    assert response.status_code == 422
+    assert 'do-not-echo' not in response.text
+    assert env.read_bytes() == original
+
+
+def test_edit_delete_reject_symlink_and_tracked_file(tmp_path: Path) -> None:
+    project = tmp_path / 'app'
+    project.mkdir()
+    target = tmp_path / 'target.env'
+    target.write_text("TOKEN='keep'\n")
+    env = project / '.env'
+    env.symlink_to(target)
+    client = _client(tmp_path)
+    body = {'workspace_path': str(project), 'name': 'TOKEN', 'new_name': 'NEW'}
+    assert client.patch('/project-secrets', json=body).status_code == 409
+    assert client.delete('/project-secrets', params={'workspace_path': str(project), 'name': 'TOKEN'}).status_code == 409
+    assert target.read_text() == "TOKEN='keep'\n"
+    env.unlink()
+    env.write_text(target.read_text())
+    subprocess.run(['git', 'init', '-q', str(project)], check=True)
+    subprocess.run(['git', '-C', str(project), 'add', '-f', '.env'], check=True)
+    assert client.patch('/project-secrets', json=body).status_code == 409
+    assert client.delete('/project-secrets', params={'workspace_path': str(project), 'name': 'TOKEN'}).status_code == 409
+    assert env.read_text() == "TOKEN='keep'\n"

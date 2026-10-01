@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/project_secrets.dart';
 import '../services/api_client.dart';
@@ -29,6 +30,7 @@ class _ProjectSecretsSheetState extends State<ProjectSecretsSheet> {
   bool _isLoading = true;
   bool _isSaving = false;
   bool _showForm = false;
+  String? _editingName;
   String? _errorText;
   String? _statusText;
 
@@ -77,18 +79,27 @@ class _ProjectSecretsSheetState extends State<ProjectSecretsSheet> {
       _statusText = null;
     });
     try {
-      final secrets = await widget.apiClient.setProjectSecret(
-        workspacePath: widget.workspacePath,
-        name: name,
-        value: _valueController.text,
-      );
+      final secrets = _editingName == null
+          ? await widget.apiClient.setProjectSecret(
+              workspacePath: widget.workspacePath,
+              name: name,
+              value: _valueController.text,
+            )
+          : await widget.apiClient.updateProjectSecret(
+              workspacePath: widget.workspacePath,
+              name: _editingName!,
+              newName: name,
+              value:
+                  _valueController.text.isEmpty ? null : _valueController.text,
+            );
+      if (!mounted) return;
       _valueController.clear();
       _nameController.clear();
-      if (!mounted) return;
       setState(() {
         _secrets = secrets;
         _isSaving = false;
         _showForm = false;
+        _editingName = null;
         _statusText = '$name saved in .env. Its value cannot be viewed here.';
       });
     } catch (error) {
@@ -97,6 +108,83 @@ class _ProjectSecretsSheetState extends State<ProjectSecretsSheet> {
         _isSaving = false;
         _errorText = 'Could not save the secret.\n$error';
       });
+    }
+  }
+
+  void _edit(String name) {
+    if (_isSaving) return;
+    setState(() {
+      _editingName = name;
+      _nameController.text = name;
+      _valueController.clear();
+      _showForm = true;
+      _errorText = null;
+      _statusText = null;
+    });
+  }
+
+  void _cancelEdit() {
+    setState(() {
+      _editingName = null;
+      _nameController.clear();
+      _valueController.clear();
+      _showForm = false;
+      _errorText = null;
+    });
+  }
+
+  Future<void> _copyName(String name) async {
+    try {
+      await Clipboard.setData(ClipboardData(text: name));
+      if (mounted) setState(() => _statusText = 'Secret name copied.');
+    } catch (_) {
+      if (mounted) setState(() => _errorText = 'Could not copy the name.');
+    }
+  }
+
+  Future<void> _delete(String name) async {
+    if (_isSaving) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete secret?'),
+        content: Text('Remove $name from this project? This cannot be undone.'),
+        actions: <Widget>[
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel')),
+          FilledButton(
+            key: const ValueKey<String>('confirm-delete-secret'),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() {
+      _isSaving = true;
+      _errorText = null;
+      _statusText = null;
+    });
+    try {
+      final secrets = await widget.apiClient.deleteProjectSecret(
+        workspacePath: widget.workspacePath,
+        name: name,
+      );
+      if (!mounted) return;
+      if (_editingName == name) _cancelEdit();
+      setState(() {
+        _secrets = secrets;
+        _statusText = '$name deleted.';
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() =>
+            _errorText = 'Could not delete the secret. Refresh and try again.');
+      }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
     }
   }
 
@@ -146,7 +234,7 @@ class _ProjectSecretsSheetState extends State<ProjectSecretsSheet> {
                       ),
                       IconButton(
                         tooltip: 'Refresh',
-                        onPressed: _isLoading ? null : _load,
+                        onPressed: _isLoading || _isSaving ? null : _load,
                         icon: const Icon(Icons.refresh_rounded),
                       ),
                       IconButton(
@@ -204,7 +292,34 @@ class _ProjectSecretsSheetState extends State<ProjectSecretsSheet> {
                               fontWeight: FontWeight.w600,
                             ),
                           ),
-                          trailing: const Text('••••••••'),
+                          subtitle: const Text('••••••••'),
+                          onTap: _isSaving ? null : () => _edit(names[index]),
+                          trailing: PopupMenuButton<String>(
+                            tooltip: 'Actions for ${names[index]}',
+                            enabled: !_isSaving,
+                            onSelected: (action) {
+                              switch (action) {
+                                case 'edit':
+                                  _edit(names[index]);
+                                  break;
+                                case 'copy':
+                                  unawaited(_copyName(names[index]));
+                                  break;
+                                case 'delete':
+                                  unawaited(_delete(names[index]));
+                                  break;
+                              }
+                            },
+                            itemBuilder: (_) => const <PopupMenuEntry<String>>[
+                              PopupMenuItem(
+                                  value: 'edit', child: Text('Edit secret')),
+                              PopupMenuItem(
+                                  value: 'copy', child: Text('Copy name')),
+                              PopupMenuItem(
+                                  value: 'delete',
+                                  child: Text('Delete secret')),
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -227,7 +342,7 @@ class _ProjectSecretsSheetState extends State<ProjectSecretsSheet> {
                   if (!_showForm)
                     FilledButton.icon(
                       key: const ValueKey<String>('add-project-secret'),
-                      onPressed: _isLoading
+                      onPressed: _isLoading || _isSaving
                           ? null
                           : () {
                               setState(() {
@@ -256,7 +371,13 @@ class _ProjectSecretsSheetState extends State<ProjectSecretsSheet> {
                             textInputAction: TextInputAction.next,
                             autocorrect: false,
                             enableSuggestions: false,
-                            decoration: const InputDecoration(
+                            decoration: InputDecoration(
+                              suffixIcon: IconButton(
+                                tooltip: 'Copy name',
+                                onPressed: () =>
+                                    _copyName(_nameController.text.trim()),
+                                icon: const Icon(Icons.copy_rounded),
+                              ),
                               labelText: 'Name',
                               hintText: 'WORDPRESS_PASSWORD',
                               border: OutlineInputBorder(),
@@ -284,17 +405,25 @@ class _ProjectSecretsSheetState extends State<ProjectSecretsSheet> {
                             keyboardType: TextInputType.visiblePassword,
                             textInputAction: TextInputAction.done,
                             onFieldSubmitted: (_) => unawaited(_save()),
-                            decoration: const InputDecoration(
-                              labelText: 'Secret value',
-                              border: OutlineInputBorder(),
+                            decoration: InputDecoration(
+                              labelText: _editingName == null
+                                  ? 'Secret value'
+                                  : 'New secret value (optional)',
+                              hintText: _editingName == null
+                                  ? null
+                                  : 'Leave empty to keep current value',
+                              border: const OutlineInputBorder(),
                             ),
-                            validator: (value) => value == null || value.isEmpty
+                            validator: (value) => _editingName == null &&
+                                    (value == null || value.isEmpty)
                                 ? 'Enter the secret value.'
                                 : null,
                           ),
                           const SizedBox(height: 8),
                           Text(
-                            'Using an existing name replaces its current value.',
+                            _editingName == null
+                                ? 'Using an existing name replaces its current value.'
+                                : 'The current value stays hidden. Leave the value empty to keep it.',
                             style: theme.textTheme.bodySmall?.copyWith(
                               color: theme.colorScheme.onSurfaceVariant,
                             ),
@@ -311,10 +440,16 @@ class _ProjectSecretsSheetState extends State<ProjectSecretsSheet> {
                                     ),
                                   )
                                 : const Icon(Icons.lock_rounded),
-                            label: const Text('Add secret'),
+                            label: Text(_editingName == null
+                                ? 'Add secret'
+                                : 'Save changes'),
                             style: FilledButton.styleFrom(
                               minimumSize: const Size.fromHeight(48),
                             ),
+                          ),
+                          TextButton(
+                            onPressed: _isSaving ? null : _cancelEdit,
+                            child: const Text('Cancel'),
                           ),
                         ],
                       ),

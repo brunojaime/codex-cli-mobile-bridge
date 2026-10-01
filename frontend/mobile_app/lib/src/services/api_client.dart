@@ -87,10 +87,13 @@ class ApiClient {
         jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>);
   }
 
-  Future<Stream<List<int>>> streamSessionFile(String sessionId, String path) async {
-    final response = await _client.send(
-      http.Request('GET', sessionFileUri(sessionId, path, content: true)),
-    ).timeout(const Duration(seconds: 30));
+  Future<Stream<List<int>>> streamSessionFile(
+      String sessionId, String path) async {
+    final response = await _client
+        .send(
+          http.Request('GET', sessionFileUri(sessionId, path, content: true)),
+        )
+        .timeout(const Duration(seconds: 30));
     if (response.statusCode != 200) {
       await response.stream.drain<void>();
       throw Exception('No se pudo descargar el archivo del servidor.');
@@ -1383,11 +1386,56 @@ class ApiClient {
       }),
     );
     if (response.statusCode != 200) {
-      throw Exception('Failed to save project secret: ${response.body}');
+      throw Exception(
+          'Could not save secret (HTTP ${response.statusCode}). Check the name and try again.');
     }
     return ProjectSecrets.fromJson(
       jsonDecode(response.body) as Map<String, dynamic>,
     );
+  }
+
+  Future<ProjectSecrets> updateProjectSecret({
+    required String workspacePath,
+    required String name,
+    required String newName,
+    String? value,
+  }) async {
+    final response = await _client.patch(
+      Uri.parse('$baseUrl/project-secrets'),
+      headers: <String, String>{'Content-Type': 'application/json'},
+      body: jsonEncode(<String, dynamic>{
+        'workspace_path': workspacePath,
+        'name': name,
+        'new_name': newName,
+        if (value != null) 'value': value,
+      }),
+    );
+    if (response.statusCode != 200) {
+      throw Exception(response.statusCode == 409
+          ? 'The secret changed or the name is already in use. Refresh and try again.'
+          : 'Could not update secret (HTTP ${response.statusCode}).');
+    }
+    return ProjectSecrets.fromJson(
+        jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  Future<ProjectSecrets> deleteProjectSecret({
+    required String workspacePath,
+    required String name,
+  }) async {
+    final uri = Uri.parse('$baseUrl/project-secrets').replace(
+      queryParameters: <String, String>{
+        'workspace_path': workspacePath,
+        'name': name
+      },
+    );
+    final response = await _client.delete(uri);
+    if (response.statusCode != 200) {
+      throw Exception(
+          'Could not delete secret (HTTP ${response.statusCode}). Refresh and try again.');
+    }
+    return ProjectSecrets.fromJson(
+        jsonDecode(response.body) as Map<String, dynamic>);
   }
 
   Future<List<AgentProfile>> listAgentProfiles() async {
