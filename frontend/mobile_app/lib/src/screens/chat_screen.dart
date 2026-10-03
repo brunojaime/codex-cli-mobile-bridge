@@ -37,6 +37,7 @@ import '../services/server_profile_store.dart';
 import '../state/chat_controller.dart';
 import '../utils/chat_timestamp_formatter.dart';
 import '../utils/chat_message_visibility.dart';
+import '../utils/internal_chat_link.dart';
 import '../widgets/agent_studio_status_button.dart';
 import '../widgets/chat_bubble.dart';
 import '../widgets/installable_apps_sheet.dart';
@@ -2078,6 +2079,23 @@ When you create the Project Factory draft, link each asset with POST /project-fa
 
   Future<void> _handleMessageLinkTap(String target) async {
     final trimmedTarget = target.trim();
+    if (isInternalChatLink(trimmedTarget)) {
+      final sessionId = internalChatSessionId(trimmedTarget);
+      if (sessionId != null) {
+        await _chatController.selectSession(
+          sessionId,
+          preserveCurrentOnError: true,
+        );
+      }
+      if (mounted &&
+          (sessionId == null ||
+              _chatController.selectedSessionId != sessionId)) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('No se pudo abrir esa conversación en este servidor.'),
+        ));
+      }
+      return;
+    }
     if (isServerFileLink(trimmedTarget)) {
       final session = _chatController.currentSession;
       if (session == null) return;

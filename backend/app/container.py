@@ -132,6 +132,7 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         default_workspace_path=resolved_settings.codex_workdir,
         audio_transcriber=audio_transcriber,
         bridge_environment=resolved_settings.bridge_environment,
+        bridge_api_port=resolved_settings.api_port,
         document_text_char_limit=resolved_settings.document_text_char_limit,
         title_generation_model=resolved_settings.codex_title_generation_model,
         follow_up_reconcile_interval_seconds=(

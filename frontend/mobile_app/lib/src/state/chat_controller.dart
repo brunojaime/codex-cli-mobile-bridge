@@ -493,7 +493,10 @@ class ChatController extends ChangeNotifier {
     }
   }
 
-  Future<void> selectSession(String sessionId) async {
+  Future<void> selectSession(
+    String sessionId, {
+    bool preserveCurrentOnError = false,
+  }) async {
     ChatSessionSummary? sessionSummary;
     for (final session in _sessions) {
       if (session.id == sessionId) {
@@ -501,7 +504,7 @@ class ChatController extends ChangeNotifier {
         break;
       }
     }
-    if (sessionSummary != null) {
+    if (sessionSummary != null && !preserveCurrentOnError) {
       _selectedSessionId = sessionId;
       _currentSession = _placeholderSessionDetail(sessionSummary);
       _errorText = null;

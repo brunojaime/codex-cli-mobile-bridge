@@ -383,6 +383,7 @@ class MessageService:
         default_workspace_path: str,
         audio_transcriber: AudioTranscriber,
         bridge_environment: str = "dev",
+        bridge_api_port: int | None = None,
         document_text_char_limit: int = 20_000,
         title_generation_model: str | None = None,
         follow_up_reconcile_interval_seconds: float | None = None,
@@ -391,6 +392,7 @@ class MessageService:
         self._execution_provider = execution_provider
         self._default_workspace_path = str(Path(default_workspace_path).resolve())
         self._bridge_environment = bridge_environment
+        self._bridge_api_port = bridge_api_port
         self._audio_transcriber = audio_transcriber
         self._document_text_char_limit = document_text_char_limit
         self._title_generation_model = (title_generation_model or "").strip() or None
@@ -434,13 +436,16 @@ class MessageService:
         agent_profile_id: str | None = None,
         turn_summaries_enabled: bool = False,
         title_is_placeholder: bool | None = None,
+        session_id: str | None = None,
     ) -> ChatSession:
+        if session_id is not None and self.get_session(session_id) is not None:
+            raise ValueError("Session identifier already exists")
         workspace = self._resolve_workspace(workspace_path)
         profile = self.get_agent_profile(agent_profile_id or "default")
         configuration = self._profile_configuration_for_session(profile)
         resolved_title = title or "New chat"
         session = ChatSession(
-            id=str(uuid4()),
+            id=session_id or str(uuid4()),
             title=resolved_title,
             workspace_path=workspace.path,
             workspace_name=workspace.name,
@@ -1175,6 +1180,16 @@ class MessageService:
             content=message,
             status=ChatMessageStatus.COMPLETED,
         )
+        if (self._bridge_api_port is not None
+                and author_type == ChatMessageAuthorType.HUMAN
+                and conversation_kind == JobConversationKind.PRIMARY):
+            execution_message += (
+                "\n\nBridge handoff context (metadata, not a launch request): "
+                f"bridge_url=http://127.0.0.1:{self._bridge_api_port}; "
+                f"source_session_id={session.id}; source_message_id={user_message.id}. "
+                "Use only for an explicit request to start a separate Generator/Reviewer chat. "
+                "Never delegate this task again merely because this metadata is present."
+            )
         assistant_message = ChatMessage(
             id=str(uuid4()),
             session_id=session.id,
