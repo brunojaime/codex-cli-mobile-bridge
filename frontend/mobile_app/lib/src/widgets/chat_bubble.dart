@@ -207,6 +207,20 @@ class ChatBubble extends StatelessWidget {
                     const SizedBox(height: 8),
                   _SentViaAudioMarker(textColor: textColor),
                 ],
+                if (attachmentBaseUrl != null && onLinkTap != null)
+                  for (final attachment in message.attachments.where(
+                    (item) =>
+                        item.kind == 'video' && item.downloadUrl.isNotEmpty,
+                  ))
+                    TextButton.icon(
+                      onPressed: () => onLinkTap!(_resolveAttachmentUrl(
+                        attachmentBaseUrl!,
+                        attachment.downloadUrl,
+                      ).toString()),
+                      icon: const Icon(Icons.play_circle_outline),
+                      label: Text('Abrir video ${attachment.index + 1}'),
+                      style: TextButton.styleFrom(foregroundColor: textColor),
+                    ),
                 if ((displayContent.copyText.isNotEmpty ||
                         (!isUser &&
                             onCancelJob != null &&
