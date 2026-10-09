@@ -158,7 +158,214 @@ class RichMessageContent extends StatelessWidget {
           ],
         ),
       _CodeBlock() => _CodeCard(code: block.code, language: block.language),
+      _TableBlock() => _MessageTable(
+          block: block,
+          textColor: textColor,
+          onLinkTap: onLinkTap,
+        ),
     };
+  }
+}
+
+class _MessageTable extends StatefulWidget {
+  const _MessageTable({
+    required this.block,
+    required this.textColor,
+    this.onLinkTap,
+  });
+
+  final _TableBlock block;
+  final Color textColor;
+  final Future<void> Function(String target)? onLinkTap;
+
+  @override
+  State<_MessageTable> createState() => _MessageTableState();
+}
+
+class _MessageTableState extends State<_MessageTable> {
+  final _scroll = ScrollController();
+  bool? _showGrid;
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  Widget _cell(md.Element cell, {bool header = false, bool aligned = false}) {
+    return Semantics(
+      header: header,
+      child: _SelectableInlineText(
+        nodes: cell.children ?? const [],
+        textColor: widget.textColor,
+        onLinkTap: widget.onLinkTap,
+        textAlign: aligned
+            ? switch (cell.attributes['align']) {
+                'right' => TextAlign.right,
+                'center' => TextAlign.center,
+                _ => TextAlign.left,
+              }
+            : TextAlign.start,
+        style: TextStyle(
+          color: widget.textColor.withValues(alpha: header ? 0.78 : 1),
+          fontSize: header ? 12 : 15,
+          height: 1.45,
+          fontWeight: header ? FontWeight.w600 : FontWeight.w400,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final headers = widget.block.headers;
+    final rows = widget.block.rows;
+    final color = widget.textColor;
+    final scale = MediaQuery.textScalerOf(context).scale(15) / 15;
+    return LayoutBuilder(builder: (context, constraints) {
+      final grid = _showGrid ?? constraints.maxWidth / scale >= 600;
+      final minColumnWidth = 200.0 * scale;
+      final gridWidth = (headers.length * minColumnWidth)
+          .clamp(constraints.maxWidth, double.infinity);
+      final overflows = gridWidth > constraints.maxWidth;
+      return Container(
+        width: double.infinity,
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.035),
+          border: Border.all(color: color.withValues(alpha: 0.18)),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              child: Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 8,
+                children: [
+                  Text('${rows.length} ${rows.length == 1 ? 'fila' : 'filas'}',
+                      style: TextStyle(color: color, fontSize: 12)),
+                  Wrap(
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      TextButton.icon(
+                        style: TextButton.styleFrom(
+                          foregroundColor: color,
+                          minimumSize: const Size(48, 48),
+                        ),
+                        onPressed: () => setState(() => _showGrid = !grid),
+                        icon: Icon(
+                            grid
+                                ? Icons.view_agenda_outlined
+                                : Icons.table_chart_outlined,
+                            size: 18),
+                        label: Text(grid ? 'Ver fichas' : 'Ver tabla'),
+                      ),
+                      IconButton(
+                        tooltip: 'Copiar tabla',
+                        color: color,
+                        onPressed: () async {
+                          await Clipboard.setData(
+                              ClipboardData(text: widget.block.source));
+                          if (!context.mounted) return;
+                          ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+                            const SnackBar(content: Text('Tabla copiada')),
+                          );
+                        },
+                        icon: const Icon(Icons.copy_rounded, size: 18),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            if (grid) ...[
+              if (overflows)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+                  child: Text('Deslizá para ver todas las columnas ↔',
+                      style: TextStyle(color: color, fontSize: 12)),
+                ),
+              Scrollbar(
+                controller: _scroll,
+                thumbVisibility: overflows,
+                notificationPredicate: (notification) =>
+                    notification.metrics.axis == Axis.horizontal,
+                child: SingleChildScrollView(
+                  controller: _scroll,
+                  scrollDirection: Axis.horizontal,
+                  padding: EdgeInsets.only(bottom: overflows ? 12 : 0),
+                  child: SizedBox(
+                    width: gridWidth,
+                    child: Table(
+                      defaultColumnWidth: const FlexColumnWidth(),
+                      defaultVerticalAlignment: TableCellVerticalAlignment.top,
+                      border: TableBorder.symmetric(
+                        inside:
+                            BorderSide(color: color.withValues(alpha: 0.12)),
+                      ),
+                      children: [
+                        for (var r = -1; r < rows.length; r++)
+                          TableRow(
+                            decoration: BoxDecoration(
+                                color: color.withValues(
+                                    alpha: r < 0
+                                        ? 0.09
+                                        : r.isEven
+                                            ? 0
+                                            : 0.025)),
+                            children: [
+                              for (final cell in r < 0 ? headers : rows[r])
+                                Padding(
+                                  padding: const EdgeInsets.all(12),
+                                  child:
+                                      _cell(cell, header: r < 0, aligned: true),
+                                ),
+                            ],
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ] else if (rows.isEmpty)
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    for (final header in headers) _cell(header, header: true)
+                  ],
+                ),
+              )
+            else
+              for (var r = 0; r < rows.length; r++)
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    border: Border(
+                        top: BorderSide(color: color.withValues(alpha: 0.16))),
+                    color: color.withValues(alpha: r.isEven ? 0.035 : 0),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (var c = 0; c < headers.length; c++) ...[
+                        if (c > 0) const SizedBox(height: 14),
+                        _cell(headers[c], header: true),
+                        const SizedBox(height: 4),
+                        _cell(rows[r][c]),
+                      ],
+                    ],
+                  ),
+                ),
+          ],
+        ),
+      );
+    });
   }
 }
 
@@ -384,6 +591,25 @@ class _ValidationRow extends StatelessWidget {
 
 sealed class _MessageBlock {}
 
+class _TableBlock extends _MessageBlock {
+  _TableBlock(this.source, md.Element table) {
+    final sections = table.children!.cast<md.Element>();
+    headers = (sections.first.children!.single as md.Element)
+        .children!
+        .cast<md.Element>();
+    rows = sections
+        .skip(1)
+        .expand((section) => section.children!)
+        .cast<md.Element>()
+        .map((row) => row.children!.cast<md.Element>())
+        .toList();
+  }
+
+  final String source;
+  late final List<md.Element> headers;
+  late final List<List<md.Element>> rows;
+}
+
 class _ParagraphBlock extends _MessageBlock {
   _ParagraphBlock(this.text);
   final String text;
@@ -469,13 +695,16 @@ List<_MessageBlock> _parseBlocks(String rawText) {
   while (index < lines.length) {
     final line = lines[index];
     final trimmed = line.trimLeft();
-    if (trimmed.startsWith('```')) {
+    final fence = RegExp(r'^(`{3,}|~{3,})(.*)$').firstMatch(trimmed);
+    if (fence != null) {
       flushParagraphs();
-      final language = trimmed.substring(3).trim();
+      final marker = fence.group(1)!;
+      final closingFence = RegExp('^${marker[0]}{${marker.length},}\\s*\$');
+      final language = fence.group(2)!.trim();
       index += 1;
       final codeLines = <String>[];
-      while (
-          index < lines.length && !lines[index].trimLeft().startsWith('```')) {
+      while (index < lines.length &&
+          !closingFence.hasMatch(lines[index].trimLeft())) {
         codeLines.add(lines[index]);
         index += 1;
       }
@@ -489,6 +718,34 @@ List<_MessageBlock> _parseBlocks(String rawText) {
         index += 1;
       }
       continue;
+    }
+
+    // Recognize GFM tables before the existing paragraph/list heuristics.
+    // Let the Markdown parser handle escapes, empty cells and alignment.
+    if (index + 1 < lines.length &&
+        line.contains('|') &&
+        RegExp(r'^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$')
+            .hasMatch(lines[index + 1])) {
+      var end = index + 2;
+      while (end < lines.length &&
+          lines[end].trim().isNotEmpty &&
+          lines[end].contains('|') &&
+          !RegExp(r'^\s*(`{3,}|~{3,}|#{1,6}\s|[-*+]\s|>)')
+              .hasMatch(lines[end])) {
+        end++;
+      }
+      final source = lines.sublist(index, end).join('\n');
+      final nodes = md.Document(
+              encodeHtml: false, extensionSet: md.ExtensionSet.gitHubFlavored)
+          .parseLines(lines.sublist(index, end));
+      if (nodes.length == 1 &&
+          nodes.single is md.Element &&
+          (nodes.single as md.Element).tag == 'table') {
+        flushParagraphs();
+        blocks.add(_TableBlock(source, nodes.single as md.Element));
+        index = end;
+        continue;
+      }
     }
 
     paragraphBuffer.add(line);
@@ -693,13 +950,17 @@ bool _containsLink(String text) {
 /// contributes U+FFFC (the OBJ placeholder) to Android's selection clipboard.
 class _SelectableInlineText extends StatefulWidget {
   const _SelectableInlineText({
-    required this.text,
+    this.text = '',
+    this.nodes,
+    this.textAlign = TextAlign.start,
     required this.textColor,
     required this.style,
     this.onLinkTap,
   });
 
   final String text;
+  final List<md.Node>? nodes;
+  final TextAlign textAlign;
   final Color textColor;
   final TextStyle style;
   final Future<void> Function(String target)? onLinkTap;
@@ -733,8 +994,9 @@ class _SelectableInlineTextState extends State<_SelectableInlineText> {
 
   void _updateSpans() {
     _disposeRecognizers();
-    _span =
-        TextSpan(children: _inlineNodes(widget.text).map(_spanFor).toList());
+    _span = TextSpan(
+        children:
+            (widget.nodes ?? _inlineNodes(widget.text)).map(_spanFor).toList());
   }
 
   TextSpan _spanFor(md.Node node, [TapGestureRecognizer? link]) {
@@ -791,6 +1053,7 @@ class _SelectableInlineTextState extends State<_SelectableInlineText> {
   Widget build(BuildContext context) => SelectableText.rich(
         _span,
         style: widget.style,
+        textAlign: widget.textAlign,
       );
 
   @override
