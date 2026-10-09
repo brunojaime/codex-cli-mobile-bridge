@@ -143,6 +143,12 @@ class ChatBubble extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
               ],
+              if (isUser && message.status == ChatMessageStatus.sending) ...[
+                Text('Enviando…',
+                    style: TextStyle(color: textColor.withValues(alpha: 0.74),
+                        fontSize: 12)),
+                const SizedBox(height: 6),
+              ],
               if (activityPresentation != null) ...[
                 _ActivityStatusStrip(
                   presentation: activityPresentation,

@@ -1471,13 +1471,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final workspacePathBeforeSend =
         _chatController.currentSession?.workspacePath;
     final codexRunOptions = _currentComposerDraft().codexRunOptions;
+    final submittedText = _textController.text;
+    _updateStickToBottom(true);
     final didSend = await _chatController.sendMessage(
-      _textController.text,
+      submittedText,
       sessionIdOverride: sessionIdBeforeSend,
       workspacePathOverride: workspacePathBeforeSend,
       codexRunOptions: codexRunOptions.isEmpty ? null : codexRunOptions,
     );
     if (didSend &&
+        _textController.text == submittedText &&
         (sessionIdBeforeSend == null ||
             _chatController.selectedSessionId == sessionIdBeforeSend)) {
       _textController.clear();
@@ -2175,7 +2178,7 @@ When you create the Project Factory draft, link each asset with POST /project-fa
   List<ChatMessage> _visibleMessagesForCurrentSession() {
     final currentSession = _chatController.currentSession;
     if (currentSession == null) {
-      return const <ChatMessage>[];
+      return _chatController.messages;
     }
     if (_chatBodyView == _ChatBodyView.agentSummaries) {
       return _chatController.messages

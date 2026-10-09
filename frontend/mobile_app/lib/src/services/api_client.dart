@@ -1,7 +1,7 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:cross_file/cross_file.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
@@ -127,12 +127,12 @@ class ApiClient {
       throw Exception('Failed to list sessions: ${response.body}');
     }
 
-    final payload = jsonDecode(response.body) as List<dynamic>;
-    return payload
-        .map(
-          (item) => ChatSessionSummary.fromJson(item as Map<String, dynamic>),
-        )
-        .toList();
+    // Large histories include agent configurations. Decode off the UI isolate
+    // on mobile so background synchronization does not freeze typing/navigation.
+    if (response.bodyBytes.length > 65536) {
+      return compute(_decodeSessionSummaries, response.bodyBytes);
+    }
+    return _decodeSessionSummaries(response.bodyBytes);
   }
 
   Future<ServerHealth> getHealth() async {
@@ -2363,4 +2363,10 @@ class ApiClient {
     }
     return mimeType;
   }
+}
+
+List<ChatSessionSummary> _decodeSessionSummaries(Uint8List bytes) {
+  final payload = jsonDecode(utf8.decode(bytes)) as List<dynamic>;
+  return payload.map((item) =>
+      ChatSessionSummary.fromJson(item as Map<String, dynamic>)).toList();
 }
