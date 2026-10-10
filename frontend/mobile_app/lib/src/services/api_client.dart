@@ -121,7 +121,7 @@ class ApiClient {
   }
 
   Future<List<ChatSessionSummary>> listSessions() async {
-    final response = await _client.get(Uri.parse('$baseUrl/sessions'));
+    final response = await _client.get(Uri.parse('$baseUrl/sessions?compact=true'));
 
     if (response.statusCode != 200) {
       throw Exception('Failed to list sessions: ${response.body}');
@@ -1559,9 +1559,10 @@ class ApiClient {
       throw Exception('Failed to fetch session: ${response.body}');
     }
 
-    return SessionDetail.fromJson(
-      jsonDecode(response.body) as Map<String, dynamic>,
-    );
+    if (response.bodyBytes.length > 65536) {
+      return compute(_decodeSessionDetail, response.bodyBytes);
+    }
+    return _decodeSessionDetail(response.bodyBytes);
   }
 
   Future<SessionDetail> updateAutoMode(
@@ -2364,6 +2365,9 @@ class ApiClient {
     return mimeType;
   }
 }
+
+SessionDetail _decodeSessionDetail(Uint8List bytes) =>
+    SessionDetail.fromJson(jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>);
 
 List<ChatSessionSummary> _decodeSessionSummaries(Uint8List bytes) {
   final payload = jsonDecode(utf8.decode(bytes)) as List<dynamic>;

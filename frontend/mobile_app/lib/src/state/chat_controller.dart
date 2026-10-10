@@ -39,6 +39,8 @@ class ChatController extends ChangeNotifier {
   int _sessionReadRevision = 0;
   int _nextTextToken = 0;
   bool _disposed = false;
+  Future<void>? _sessionsRefresh;
+  bool _sessionsRefreshAgain = false;
 
   final ApiClient _apiClient;
   final ChatNotificationService _notificationService;
@@ -251,7 +253,31 @@ class ChatController extends ChangeNotifier {
     }
   }
 
-  Future<void> refreshSessions() async {
+  Future<void> refreshSessions() {
+    final pending = _sessionsRefresh;
+    if (pending != null) {
+      // An overlapping refresh may follow a mutation accepted after the read
+      // started. Coalesce the burst, then make one trailing read for freshness.
+      _sessionsRefreshAgain = true;
+      return pending;
+    }
+    final future = _drainSessionRefreshes();
+    _sessionsRefresh = future;
+    return future;
+  }
+
+  Future<void> _drainSessionRefreshes() async {
+    try {
+      do {
+        _sessionsRefreshAgain = false;
+        await _fetchSessionSummaries();
+      } while (_sessionsRefreshAgain && !_disposed);
+    } finally {
+      _sessionsRefresh = null;
+    }
+  }
+
+  Future<void> _fetchSessionSummaries() async {
     final sessions = await _apiClient.listSessions();
     if (_disposed) return;
     sessions.sort(_compareSessionsByRecentActivity);
@@ -518,7 +544,9 @@ class ChatController extends ChangeNotifier {
     if (!preserveCurrentOnError) {
       _selectedSessionId = sessionId;
       _currentSession = cached == null
-          ? (summary == null ? null : _placeholderSessionDetail(summary))
+          ? (summary == null || !summary.hasFullAgentConfiguration
+              ? null
+              : _placeholderSessionDetail(summary))
           : _overlaySessionWithJobSnapshots(cached);
     }
     _errorText = null;
@@ -1435,10 +1463,12 @@ class ChatController extends ChangeNotifier {
   }
 
   void _applyJobSnapshot(JobStatusResponse snapshot) {
+    final previous = _jobSnapshots[snapshot.jobId];
+    if (previous != null && previous.sameUpdateAs(snapshot)) return;
     _jobSnapshots[snapshot.jobId] = snapshot;
     _maybeNotifyForTerminalJob(snapshot);
 
-    if (_currentSession == null) {
+    if (_currentSession == null || _currentSession!.id != snapshot.sessionId) {
       notifyListeners();
       return;
     }

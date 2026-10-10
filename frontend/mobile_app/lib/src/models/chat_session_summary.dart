@@ -31,6 +31,7 @@ class ChatSessionSummary {
     this.lastMessageAt,
     this.lastMessagePreview,
     this.hasPendingMessages = false,
+    this.hasFullAgentConfiguration = true,
   });
 
   final String id;
@@ -60,6 +61,7 @@ class ChatSessionSummary {
   final DateTime? lastMessageAt;
   final String? lastMessagePreview;
   final bool hasPendingMessages;
+  final bool hasFullAgentConfiguration;
   bool get isArchived => archivedAt != null;
   DateTime get latestActivityAt => lastMessageAt ?? createdAt;
 
@@ -106,6 +108,8 @@ class ChatSessionSummary {
           : null,
       lastMessagePreview: json['last_message_preview'] as String?,
       hasPendingMessages: json['has_pending_messages'] as bool? ?? false,
+      hasFullAgentConfiguration:
+          json['has_full_agent_configuration'] as bool? ?? true,
     );
   }
 }

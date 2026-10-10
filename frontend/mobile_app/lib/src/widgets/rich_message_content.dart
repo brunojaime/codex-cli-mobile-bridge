@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:flutter/services.dart';
 
-class RichMessageContent extends StatelessWidget {
+class RichMessageContent extends StatefulWidget {
   const RichMessageContent({
     super.key,
     required this.text,
@@ -18,8 +18,32 @@ class RichMessageContent extends StatelessWidget {
   final Future<void> Function(String target)? onLinkTap;
 
   @override
+  State<RichMessageContent> createState() => _RichMessageContentState();
+}
+
+class _RichMessageContentState extends State<RichMessageContent> {
+  late List<_MessageBlock> _blocks;
+  Color get textColor => widget.textColor;
+  ValueChanged<String>? get onOptionSelected => widget.onOptionSelected;
+  Future<void> Function(String target)? get onLinkTap => widget.onLinkTap;
+
+  @override
+  void initState() {
+    super.initState();
+    _blocks = _parseBlocks(widget.text);
+  }
+
+  @override
+  void didUpdateWidget(RichMessageContent oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.text != oldWidget.text) {
+      _blocks = _parseBlocks(widget.text);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final blocks = _parseBlocks(text);
+    final blocks = _blocks;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -982,7 +1006,13 @@ class _SelectableInlineTextState extends State<_SelectableInlineText> {
   @override
   void didUpdateWidget(_SelectableInlineText oldWidget) {
     super.didUpdateWidget(oldWidget);
-    _updateSpans();
+    // Recognizers read widget.onLinkTap when tapped, so a new callback does not
+    // require parsing the text again. Style/alignment are applied in build.
+    if (widget.text != oldWidget.text ||
+        widget.nodes != oldWidget.nodes ||
+        widget.textColor != oldWidget.textColor) {
+      _updateSpans();
+    }
   }
 
   void _disposeRecognizers() {

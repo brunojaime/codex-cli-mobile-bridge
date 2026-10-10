@@ -30,6 +30,7 @@ class _ProjectSecretsSheetState extends State<ProjectSecretsSheet> {
   bool _isLoading = true;
   bool _isSaving = false;
   bool _showForm = false;
+  bool _showValue = false;
   String? _editingName;
   String? _errorText;
   String? _statusText;
@@ -75,6 +76,7 @@ class _ProjectSecretsSheetState extends State<ProjectSecretsSheet> {
     final name = _nameController.text.trim();
     setState(() {
       _isSaving = true;
+      _showValue = false;
       _errorText = null;
       _statusText = null;
     });
@@ -118,6 +120,7 @@ class _ProjectSecretsSheetState extends State<ProjectSecretsSheet> {
       _nameController.text = name;
       _valueController.clear();
       _showForm = true;
+      _showValue = false;
       _errorText = null;
       _statusText = null;
     });
@@ -129,6 +132,7 @@ class _ProjectSecretsSheetState extends State<ProjectSecretsSheet> {
       _nameController.clear();
       _valueController.clear();
       _showForm = false;
+      _showValue = false;
       _errorText = null;
     });
   }
@@ -399,13 +403,27 @@ class _ProjectSecretsSheetState extends State<ProjectSecretsSheet> {
                             key: const ValueKey<String>('project-secret-value'),
                             controller: _valueController,
                             enabled: !_isSaving,
-                            obscureText: true,
+                            obscureText: !_showValue,
                             enableSuggestions: false,
                             autocorrect: false,
                             keyboardType: TextInputType.visiblePassword,
                             textInputAction: TextInputAction.done,
                             onFieldSubmitted: (_) => unawaited(_save()),
                             decoration: InputDecoration(
+                              suffixIcon: IconButton(
+                                key: const ValueKey<String>(
+                                    'toggle-project-secret-visibility'),
+                                tooltip: _showValue
+                                    ? 'Hide secret value'
+                                    : 'Show secret value',
+                                onPressed: _isSaving
+                                    ? null
+                                    : () => setState(
+                                        () => _showValue = !_showValue),
+                                icon: Icon(_showValue
+                                    ? Icons.visibility_off_rounded
+                                    : Icons.visibility_rounded),
+                              ),
                               labelText: _editingName == null
                                   ? 'Secret value'
                                   : 'New secret value (optional)',
