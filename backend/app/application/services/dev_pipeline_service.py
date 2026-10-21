@@ -18,8 +18,13 @@ from typing import Any, Literal
 
 from backend.app.domain.entities.codex_options import CodexRunOptions
 from backend.app.domain.entities.job import JobStatus
+from backend.app.domain.video_handoff import with_video_handoff
 from backend.app.application.services.message_service import BackendDrainStatus
 from backend.app.infrastructure.execution.base import ExecutionProvider
+from backend.app.application.services.pipeline_quality_service import (
+    PipelineQualityService,
+    QualityError,
+)
 
 
 EnvironmentName = Literal["prod", "dev", "control"]
@@ -164,6 +169,7 @@ class DevPipelineService:
         installable_apps_registration_token: str | None = None,
         prod_update_executor_enabled: bool = False,
         execution_provider: ExecutionProvider | None = None,
+        quality_service: PipelineQualityService | None = None,
     ) -> None:
         self._state_path = Path(state_path)
         self._runtime_root = Path(runtime_root)
@@ -199,6 +205,7 @@ class DevPipelineService:
         )
         self._prod_update_executor_enabled = prod_update_executor_enabled
         self._execution_provider = execution_provider
+        self._quality_service = quality_service
 
     def identity(self) -> EnvironmentIdentity:
         mode = "normal"
@@ -1291,6 +1298,25 @@ class DevPipelineService:
             state=state,
             stage=stage,
         )
+        prompt = with_video_handoff(prompt)
+        if self._quality_service is not None:
+            prompt += (
+                "\n\nQuality evidence is required before merging this stage. Create or update "
+                ".codex/quality.json with version=1, project_id, environment=dev, criteria "
+                "(id, description, check_ids), and checks (id, argv, cwd, timeout_seconds). "
+                "Include every acceptance criterion from the spec; an unmapped criterion stays unverified. "
+                "Register it using POST /pipeline-quality/packets with workspace, work_item_id="
+                + stage["spec_id"]
+                + ", and links.stage_id="
+                + stage_id
+                + ". "
+                "Execute registered checks via POST /pipeline-quality/packets/{id}/execute with a unique attempt_key. "
+                "You can also use the Bridge scripts/pipeline_quality.py CLI with the central database "
+                + str(self._quality_service.database_path)
+                + ". Do not create passing receipts by writing JSON. "
+                "Inspect diagnosis and evidence before repeating a failed repair. "
+                "Do not relax a criterion to make the implementation pass."
+            )
         return {"stage": stage, "binding": binding, "prompt": prompt}
 
     def record_stage_run_start(
@@ -3553,6 +3579,19 @@ class DevPipelineService:
                 hints.append(
                     f"Resolve conflicts on {stage['branch']} against {self._dev_main_branch}."
                 )
+        if self._quality_service is not None:
+            try:
+                gate = self._quality_service.stage_gate(
+                    stage["worktree_path"], stage_id
+                )
+                evidence["quality_gate"] = gate
+                if not gate["verified"]:
+                    blockers.append("quality_evidence_not_verified")
+                    hints.append(
+                        "Register all stage criteria and execute checks for the current source through the quality runner."
+                    )
+            except (QualityError, OSError, subprocess.SubprocessError):
+                blockers.append("quality_evidence_unavailable")
         blockers = list(dict.fromkeys(blockers))
         return {
             "ok": not blockers,

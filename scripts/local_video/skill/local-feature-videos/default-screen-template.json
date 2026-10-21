@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "canvas": [720, 1280],
+  "margin": 12,
+  "header_height": 30,
+  "caption_height": 84,
+  "caption_font": 27,
+  "client": "DEMO",
+  "background": "#102b43",
+  "accent": "#69d4e6"
+}

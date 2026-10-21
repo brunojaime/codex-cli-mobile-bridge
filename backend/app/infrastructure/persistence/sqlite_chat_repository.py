@@ -138,6 +138,23 @@ class SqliteChatRepository(ChatRepository):
                 ).fetchall()
         return [self._job_from_row(row) for row in rows]
 
+    def list_summary_jobs(self) -> list[Job]:
+        # Do not read execution prompts, responses or attachment arrays just to
+        # derive lifecycle states. Keep the same status/date validation as jobs.
+        with self._lock, self._connect() as connection:
+            rows = connection.execute("""
+                SELECT id, session_id, '' AS message, user_message_id,
+                       assistant_message_id, provider_session_id, conversation_kind,
+                       agent_id, agent_type, trigger_source, run_id,
+                       NULL AS submission_token, auto_chain_processed,
+                       NULL AS execution_message, '[]' AS image_paths_json,
+                       '[]' AS video_paths_json, status, NULL AS response,
+                       NULL AS error, phase, latest_activity,
+                       created_at, updated_at, completed_at
+                FROM jobs ORDER BY updated_at DESC, id DESC
+            """).fetchall()
+        return [self._job_from_row(row) for row in rows]
+
     def list_jobs_for_session(self, session_id: str) -> list[Job]:
         with self._lock, self._connect() as connection:
             rows = connection.execute(
@@ -162,6 +179,106 @@ class SqliteChatRepository(ChatRepository):
                 (session_id,),
             ).fetchone()
         return self._session_from_row(row) if row is not None else None
+
+    def list_session_cards(
+        self,
+        *,
+        limit=40,
+        before=None,
+        archived=False,
+        search="",
+        workspace=None,
+        known_ids=(),
+    ):
+        from backend.app.domain.session_listing import CARD_FIELDS, finish_card
+
+        # Existing (session_id, created_at, id) indexes serve the last-message
+        # lookup. Do not decode agent prompts, jobs or whole transcript rows.
+        conditions = [
+            "1 = 1" if archived is None else
+            "s.archived_at IS NOT NULL" if archived else "s.archived_at IS NULL"
+        ]
+        params = []
+        if workspace:
+            conditions.append("s.workspace_path = ?")
+            params.append(workspace)
+        if search:
+            conditions.append(
+                "instr(casefold(s.title || ' ' || s.workspace_name), casefold(?)) > 0"
+            )
+            params.append(search)
+        fields = ", ".join("s." + key for key in CARD_FIELDS)
+        cte = f"""WITH cards AS (
+            SELECT {fields}, m.created_at AS last_message_at,
+                   substr(m.content, 1, 120) AS last_message_preview,
+                   (SELECT json_group_object(key, json_extract(value, '$.label'))
+                    FROM json_each(s.agent_configuration_json, '$.agents')) AS agent_labels,
+                   (json_extract(s.agent_configuration_json, '$.preset') != 'solo' AND
+                    EXISTS(SELECT 1 FROM json_each(s.agent_configuration_json, '$.agents')
+                           WHERE key != 'generator' AND json_extract(value, '$.enabled') = 1
+                             AND json_extract(value, '$.max_turns') > 0)) AS is_multi_agent,
+                   COALESCE(m.created_at, s.created_at) AS activity_at,
+                   EXISTS(SELECT 1 FROM messages p WHERE p.session_id=s.id
+                       AND p.status IN ('reserved','submission_pending','pending')) AS has_pending_messages,
+                   (SELECT count(*) FROM turn_summaries t WHERE t.session_id=s.id) AS turn_summary_count
+            FROM sessions s LEFT JOIN messages m ON m.id = (
+                SELECT id FROM messages WHERE session_id=s.id
+                ORDER BY created_at DESC, id DESC LIMIT 1)
+            WHERE {" AND ".join(conditions)}
+        )"""
+        boundary = ""
+        if before is not None:
+            boundary = "WHERE (activity_at, created_at, id) < (?, ?, ?)"
+            params.extend(before)
+        query = (
+            cte
+            + f""", page AS (
+            SELECT * FROM cards {boundary}
+            ORDER BY activity_at DESC, created_at DESC, id DESC LIMIT ?)
+            SELECT * FROM page"""
+        )
+        params.append(limit)
+        if known_ids:
+            placeholders = ",".join("?" for _ in known_ids)
+            query += f" UNION ALL SELECT * FROM cards WHERE id IN ({placeholders}) AND id NOT IN (SELECT id FROM page)"
+            params.extend(known_ids)
+        with self._lock, self._connect() as connection:
+            if search:
+                connection.create_function(
+                    "casefold",
+                    1,
+                    lambda value: (value or "").casefold(),
+                    deterministic=True,
+                )
+            rows = connection.execute(query, params).fetchall()
+        return [
+            finish_card({k: row[k] for k in row.keys() if k != "activity_at"})
+            for row in rows
+        ]
+
+    def list_session_summary_inputs(self):
+        # Stream legacy transcripts one chat at a time. A dedicated WAL read
+        # snapshot avoids both N connections and an all-history memory spike.
+        from itertools import groupby
+
+        with self._connect() as connection:
+            connection.execute("BEGIN")
+            sessions = {
+                row["id"]: self._session_from_row(row)
+                for row in connection.execute("SELECT * FROM sessions")
+            }
+            counts = dict(connection.execute(
+                "SELECT session_id, count(*) FROM turn_summaries GROUP BY session_id"
+            ))
+            cursor = connection.execute(
+                "SELECT * FROM messages ORDER BY session_id, created_at ASC, id ASC"
+            )
+            for session_id, rows in groupby(cursor, key=lambda row: row["session_id"]):
+                session = sessions.pop(session_id, None)
+                if session is not None:
+                    yield session, [self._message_from_row(row) for row in rows], counts.get(session_id, 0)
+            for session in sessions.values():
+                yield session, [], counts.get(session.id, 0)
 
     def list_sessions(self) -> list[ChatSession]:
         with self._lock, self._connect() as connection:
@@ -584,6 +701,9 @@ class SqliteChatRepository(ChatRepository):
         self._ensure_column(connection, "sessions", "archived_at", "TEXT")
 
         self._ensure_column(connection, "jobs", "execution_message", "TEXT")
+        self._ensure_column(
+            connection, "jobs", "video_paths_json", "TEXT NOT NULL DEFAULT '[]'"
+        )
         self._ensure_column(connection, "jobs", "user_message_id", "TEXT")
         self._ensure_column(connection, "jobs", "assistant_message_id", "TEXT")
         self._ensure_column(connection, "jobs", "provider_session_id", "TEXT")
@@ -1081,6 +1201,7 @@ class SqliteChatRepository(ChatRepository):
             auto_chain_processed=bool(row["auto_chain_processed"]),
             execution_message=row["execution_message"],
             image_paths=json.loads(row["image_paths_json"] or "[]"),
+            video_paths=json.loads(row["video_paths_json"] or "[]"),
             status=self._read_required_enum(
                 row["status"],
                 JobStatus,
@@ -1633,6 +1754,7 @@ class SqliteChatRepository(ChatRepository):
                 auto_chain_processed,
                 execution_message,
                 image_paths_json,
+                video_paths_json,
                 status,
                 response,
                 error,
@@ -1641,7 +1763,7 @@ class SqliteChatRepository(ChatRepository):
                 created_at,
                 updated_at,
                 completed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 session_id = excluded.session_id,
                 message = excluded.message,
@@ -1657,6 +1779,7 @@ class SqliteChatRepository(ChatRepository):
                 auto_chain_processed = excluded.auto_chain_processed,
                 execution_message = excluded.execution_message,
                 image_paths_json = excluded.image_paths_json,
+                video_paths_json = excluded.video_paths_json,
                 status = excluded.status,
                 response = excluded.response,
                 error = excluded.error,
@@ -1682,6 +1805,7 @@ class SqliteChatRepository(ChatRepository):
                 1 if job.auto_chain_processed else 0,
                 job.execution_message,
                 json.dumps(job.image_paths),
+                json.dumps(job.video_paths),
                 job.status.value,
                 job.response,
                 job.error,

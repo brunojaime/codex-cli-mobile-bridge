@@ -1,0 +1,28 @@
+{
+  "app_id": "generator-reviewer",
+  "name": "Generator + Reviewer",
+  "description": "Inicia una conversaci\u00f3n con prompts libres y l\u00edmites independientes por agente.",
+  "recommended_server_id": "generator-reviewer",
+  "transport": "stdio",
+  "command": "uv",
+  "args": [
+    "run",
+    "--project",
+    "{repo_root}",
+    "python",
+    "-m",
+    "mcp_apps.generator_reviewer.server"
+  ],
+  "env": {
+    "PROJECTS_ROOT": "{projects_root}"
+  },
+  "supports_ui_extension": false,
+  "ui_entry_uri": null,
+  "tags": [
+    "agents"
+  ],
+  "preview_tool": {
+    "name": "get_app_manifest",
+    "arguments": {}
+  }
+}

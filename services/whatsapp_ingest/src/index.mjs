@@ -20,7 +20,7 @@ import {
   parseDirectProjectDirective,
 } from './direct-intake.mjs'
 import { loadGroupMappings, loadSettings } from './config.mjs'
-import { parseInboundContent, parseSharedContacts, timestampSeconds } from './message-content.mjs'
+import { downloadInboundMedia, parseInboundContent, parseSharedContacts, timestampSeconds } from './message-content.mjs'
 import { ProjectFactoryClient } from './project-factory-client.mjs'
 import { normalizeIdentity, participantJids, ProjectReconciler } from './project-reconciler.mjs'
 import { IntakeStore } from './store.mjs'
@@ -378,10 +378,7 @@ async function processMessage(socket, message) {
     return
   }
 
-  let mediaBuffer = null
-  if (['audio', 'document', 'image'].includes(parsed.kind)) {
-    mediaBuffer = await downloadMediaMessage(message, 'buffer', {})
-  }
+  const mediaBuffer = await downloadInboundMedia(message, parsed, downloadMediaMessage)
 
   const manifest = {
     schema: 'nienfos.whatsapp-intake.v1',
@@ -401,7 +398,8 @@ async function processMessage(socket, message) {
     text: parsed.text,
     mime_type: parsed.mimeType,
     original_filename: parsed.fileName || null,
-    audio_seconds: parsed.seconds,
+    audio_seconds: parsed.kind === 'audio' ? parsed.seconds : null,
+    video_seconds: parsed.kind === 'video' ? parsed.seconds : null,
     voice_note: parsed.voiceNote,
   }
   const result = await store.persist({ manifest, mediaBuffer, project, receivedAt })
@@ -439,7 +437,7 @@ async function processDirectMessage(message) {
   const directive = parsed?.kind === 'text'
     ? parseDirectProjectDirective(parsed.text)
     : null
-  if (!parsed || !['audio', 'document', 'image', 'text'].includes(parsed.kind)) {
+  if (!parsed || !['audio', 'document', 'image', 'video', 'text'].includes(parsed.kind)) {
     runtime.recordRecent({
       kind: parsed?.kind || 'unknown',
       project: settings.directInboxProject,
@@ -462,9 +460,7 @@ async function processDirectMessage(message) {
     return
   }
 
-  const mediaBuffer = ['audio', 'document', 'image'].includes(parsed.kind)
-    ? await downloadMediaMessage(message, 'buffer', {})
-    : null
+  const mediaBuffer = await downloadInboundMedia(message, parsed, downloadMediaMessage)
   const manifest = {
     schema: 'nienfos.whatsapp-intake.v1',
     source: 'whatsapp-direct',
@@ -483,7 +479,8 @@ async function processDirectMessage(message) {
     text: parsed.text,
     mime_type: parsed.mimeType,
     original_filename: parsed.fileName || null,
-    audio_seconds: parsed.seconds,
+    audio_seconds: parsed.kind === 'audio' ? parsed.seconds : null,
+    video_seconds: parsed.kind === 'video' ? parsed.seconds : null,
     voice_note: parsed.voiceNote,
     project_routing_directive: Boolean(directive),
     direct_cli_directive: parsed.kind === 'text' && isDirectCliDirective(parsed.text),

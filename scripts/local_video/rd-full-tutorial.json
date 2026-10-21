@@ -1,0 +1,26 @@
+{
+ "title":"Firma, plantillas y novedades",
+ "scenes":[
+ {"id":"intro","text":"Tu firma, tus plantillas y tus novedades, en RD."},
+ {"id":"signature-open","text":"Desde el menú de tu usuario, entrá a Firma."},
+ {"id":"signature-fields","text":"Completá tu nombre, cargo y teléfono."},
+ {"id":"signature-links","text":"Agregá tus enlaces y elegí cuándo incluir la firma."},
+ {"id":"signature-preview-a","text":"La vista previa muestra tus datos con el diseño de RD."},
+ {"id":"signature-change","text":"Si cambiás el nombre, la firma se actualiza al instante."},
+ {"id":"signature-preview-b","text":"Revisá cómo queda y guardá los cambios."},
+ {"id":"signature-persist","text":"Al volver a abrirla, tus datos siguen guardados."},
+ {"id":"templates-open","text":"En Plantillas tenés mensajes para novedades y recordatorios."},
+ {"id":"template-edit","text":"Podés modificar el asunto de una plantilla existente."},
+ {"id":"template-save","text":"Guardá la edición para usarla en los próximos correos."},
+ {"id":"template-reminder","text":"El recordatorio tiene su propio asunto y mensaje."},
+ {"id":"template-new","text":"Para otro caso, elegí Nueva plantilla y poné un nombre."},
+ {"id":"template-subject","text":"Escribí el asunto e insertá la variable Cliente."},
+ {"id":"template-message","text":"Armá el mensaje y agregá los datos que querés completar."},
+ {"id":"template-preview","text":"La vista de ejemplo reemplaza las variables con datos demo."},
+ {"id":"template-created","text":"Guardá la nueva plantilla. Queda disponible en la lista."},
+ {"id":"template-switch","text":"Podés alternar entre las plantillas y revisar cada versión."},
+ {"id":"template-use","text":"Al revisar una novedad, elegí la plantilla que creaste."},
+ {"id":"template-result","text":"El correo toma los datos del cliente y conserva tu firma."},
+ {"id":"documents-chapter","text":"Ahora, repasemos la carga completa de una novedad."}
+ ]
+}

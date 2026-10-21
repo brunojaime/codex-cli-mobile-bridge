@@ -1,0 +1,6 @@
+interface:
+  display_name: "Videos locales de funcionalidades"
+  short_description: "Tutoriales con voz local y ritmo decidido por Codex"
+  default_prompt: "Usá $local-feature-videos para crear un tutorial breve de esta funcionalidad, con pausas justificadas y render local."
+policy:
+  allow_implicit_invocation: true

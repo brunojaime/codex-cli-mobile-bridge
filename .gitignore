@@ -41,3 +41,6 @@ backend/app/infrastructure/config/app_updates.json.bak.*
 # Local IDE files
 .idea/
 .vscode/
+
+# Isolated meeting transcription interpreter (recordings live in ignored .data/)
+.venv-relevamientos/

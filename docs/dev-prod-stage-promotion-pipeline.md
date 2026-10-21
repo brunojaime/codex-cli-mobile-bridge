@@ -177,6 +177,12 @@ a reviewer contract blocker.
 
 ## Merge And Promotion
 
+The quality ledger described in [pipeline-quality.md](pipeline-quality.md) adds
+runner-owned evidence for registered criteria. With pipeline quality enabled,
+DEV merge requires current passing receipts linked to the stage. A final summary
+or `tests_executed` supplied in an API request is not a substitute. Existing
+approval, Git, SDD doctor and promotion checks continue to apply.
+
 Queue merge preflight:
 
 ```text

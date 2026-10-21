@@ -1,0 +1,14 @@
+[
+  {
+    "file": "nienfos.png",
+    "source": "/home/batata/Projects/nienfos.com/Nienfos-Brand-Kit/assets/nienfos-logo-primary.png",
+    "sha256": "216711c7016c97b713468f721faeb98e6f7cd1fadc26aca784c57847f15c034d",
+    "transform": "Proportional resize only; original colors"
+  },
+  {
+    "file": "rd.png",
+    "source": "/home/batata/Projects/rd-gestion-hse/tmp/document-renewal-dev/apps/web/static/brand/rd-logo.png",
+    "sha256": "453138ef4a9054ea9c77ba0fd54adf1c1b0506ca2ecd460a6c31a4e55ab61d7f",
+    "transform": "Proportional resize only; original colors"
+  }
+]

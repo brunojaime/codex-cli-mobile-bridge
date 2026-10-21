@@ -20,6 +20,10 @@ class ExecutionSnapshot:
 
 
 class ExecutionProvider(ABC):
+    def resolve_model(self, requested: str | None = None) -> str | None:
+        """Resolve a legacy frontend hint using backend policy before handoff."""
+        return requested
+
     @abstractmethod
     def execute(
         self,

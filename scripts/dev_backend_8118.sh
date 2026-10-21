@@ -92,6 +92,12 @@ write_runtime_env() {
   codex_resume_args="$(codex_env_value CODEX_RESUME_ARGS "--skip-git-repo-check --dangerously-bypass-approvals-and-sandbox")"
   cat >"${ENV_FILE}" <<EOF
 API_PORT=${PORT}
+AI_PROVIDER=${AI_PROVIDER:-claude}
+AI_MODEL=${AI_MODEL:-claude-opus-5-5}
+AI_EFFORT=${AI_EFFORT:-medium}
+AGENT_DEFAULT_MODEL=${AGENT_DEFAULT_MODEL:-claude-opus-5-5}
+CLAUDE_EFFORT=${CLAUDE_EFFORT:-medium}
+CLAUDE_PERMISSION_MODE=${CLAUDE_PERMISSION_MODE:-acceptEdits}
 API_BASE_URL=${BASE_URL}
 CODEX_COMMAND=${codex_command}
 CODEX_USE_EXEC=${codex_use_exec}
@@ -171,6 +177,12 @@ start_backend() {
   cd "${ROOT_DIR}"
   setsid -f env \
     API_PORT="${PORT}" \
+    AI_PROVIDER="${AI_PROVIDER:-claude}" \
+    AI_MODEL="${AI_MODEL:-claude-opus-5-5}" \
+    AI_EFFORT="${AI_EFFORT:-medium}" \
+    AGENT_DEFAULT_MODEL="${AGENT_DEFAULT_MODEL:-claude-opus-5-5}" \
+    CLAUDE_EFFORT="${CLAUDE_EFFORT:-medium}" \
+    CLAUDE_PERMISSION_MODE="${CLAUDE_PERMISSION_MODE:-acceptEdits}" \
     API_BASE_URL="${BASE_URL}" \
     CODEX_COMMAND="${codex_command}" \
     CODEX_USE_EXEC="${codex_use_exec}" \

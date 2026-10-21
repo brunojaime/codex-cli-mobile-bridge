@@ -906,6 +906,7 @@ def build_feedback_queue_client(
     projects_root: Path | str = "..",
     audio_transcription_backend: str = "auto",
     audio_transcription_command: str = "",
+    bridge_environment: str = "prod",
 ) -> TestClient:
     settings = Settings(
         codex_command=(
@@ -922,6 +923,10 @@ def build_feedback_queue_client(
         feedback_image_dir=str(data_dir / "feedback_images"),
         feedback_audio_dir=str(data_dir / "feedback_audio"),
         feedback_source_workspace_aliases=feedback_source_workspace_aliases,
+        bridge_environment=bridge_environment,
+        bridge_stage_worktree_path=None,
+        pipeline_quality_database=str(data_dir / "pipeline_quality.sqlite"),
+        pipeline_quality_jev_enabled=False,
     )
     app = create_app(settings)
     return TestClient(app)
@@ -6523,7 +6528,11 @@ def test_app_server_streaming_exposes_partial_response_before_completion() -> No
 
     payload = wait_for_job(client, job_id)
     assert payload["status"] == "completed"
-    assert payload["response"].endswith(f"User request:\n{message}")
+    # DEV acceptance intake appends instructions after the original message.
+    # Verify the full user body is intact without mistaking those for user text.
+    user_body = payload["response"].split("User request:\n", 1)[1]
+    user_body = user_body.split("\n\nAcceptance intake for this human message.", 1)[0]
+    assert user_body == message
     assert payload["response"].startswith("turn 1: Mobile client context:")
 
 
@@ -7869,6 +7878,105 @@ def test_feedback_queue_item_can_start_codex_image_session(tmp_path: Path) -> No
     assert "Remove this card" in job["message"]
     assert "feedback-start.png" in job["response"]
     assert client.get("/feedback-queue").json()[0]["status"] == "submitted"
+
+
+def test_dev_chat_captures_original_for_requirement_intake(tmp_path):
+    workspace = tmp_path / "projects" / "uat-app"
+    workspace.mkdir(parents=True)
+    client = build_feedback_queue_client(
+        tmp_path, projects_root=workspace.parent, bridge_environment="dev"
+    )
+    accepted = client.post(
+        "/message",
+        json={
+            "message": "Quiero filtrar clientes y mantener el filtro al recargar",
+            "workspace_path": str(workspace),
+        },
+    )
+    assert accepted.status_code == 202, accepted.text
+    job = wait_for_job(client, accepted.json()["job_id"])
+    sources = client.get(
+        "/pipeline-quality/sources", params={"workspace": str(workspace)}
+    ).json()
+    assert len(sources) == 1
+    assert (
+        sources[0]["text"] == "Quiero filtrar clientes y mantener el filtro al recargar"
+    )
+    assert (
+        "requirement-from-source" in job["response"]
+    )  # Fake provider echoes the actual execution prompt.
+    assert (
+        client.get(
+            "/pipeline-quality/requirements", params={"workspace": str(workspace)}
+        ).json()
+        == []
+    )
+    req = client.post(
+        f"/pipeline-quality/sources/{sources[0]['id']}/requirements",
+        json={
+            "requirement_id": "filter",
+            "project_id": "uat-app",
+            "environment": "dev",
+            "criteria": [
+                {"id": "reload", "description": "El filtro persiste al recargar"}
+            ],
+        },
+    )
+    assert req.status_code == 200, req.text
+    assert req.json()["originals"][0]["comment"] == sources[0]["text"]
+
+
+def test_feedback_batch_dev_retains_request_and_displays_pending_validation(tmp_path):
+    workspace = tmp_path / "projects" / "uat-app"
+    workspace.mkdir(parents=True)
+    client = build_feedback_queue_client(
+        tmp_path,
+        projects_root=workspace.parent,
+        feedback_source_workspace_aliases=f"uat-app:{workspace}",
+        audio_transcription_backend="disabled",
+        bridge_environment="dev",
+    )
+    result = client.post(
+        "/feedback-batches/start-session",
+        json={
+            "batchId": "uat-request-batch",
+            "sourceApp": "uat-app",
+            "workflowPresetId": "default",
+            "items": [
+                {
+                    "id": "original-request",
+                    "comment": "El cliente debe aparecer al volver a la cartera",
+                    "contextMetadata": {"traceId": "walk", "frameIndex": 0},
+                },
+                {
+                    "id": "second-frame",
+                    "comment": "Segunda captura",
+                    "contextMetadata": {"traceId": "walk", "frameIndex": 1},
+                },
+                {
+                    "id": "voice-note",
+                    "comment": "Nota adicional",
+                    "contextMetadata": {"parentFeedbackId": "original-request"},
+                },
+            ],
+        },
+    )
+    assert result.status_code == 202, result.text
+    job = wait_for_job(client, result.json()["job_id"])
+    assert "Feedback acceptance work" in job["message"]
+    requests = client.get(
+        "/pipeline-quality/feedback", params={"workspace": str(workspace)}
+    ).json()
+    assert len(requests) == 1
+    assert requests[0]["item_ids"] == ["original-request", "second-frame", "voice-note"]
+    status = client.get("/feedback-batches/uat-request-batch").json()
+    assert status["resolution"]["validation_summary"] == {
+        "total": 1,
+        "fulfilled": 0,
+        "pending": 1,
+    }
+    assert status["finalSummary"].startswith("Validación de mejoras: 0/1 comprobadas.")
+    assert "pendiente de comprobación" in status["finalSummary"]
 
 
 def test_feedback_batch_start_session_accepts_multiple_items_and_release(
@@ -10140,7 +10248,10 @@ def test_reviewer_runs_again_when_multiple_review_turns_are_configured() -> None
     assert payload["active_agent_turn_index"] == 2
 
 
-def test_terminal_reviewer_response_stops_review_loop_even_with_budget() -> None:
+@pytest.mark.parametrize("pending_quality", [False, True, "feedback"])
+def test_terminal_reviewer_response_stops_review_loop_even_with_budget(
+    pending_quality: bool | str,
+) -> None:
     with TemporaryDirectory() as temp_dir:
         workspace = Path(temp_dir) / "repo"
         workspace.mkdir()
@@ -10148,6 +10259,61 @@ def test_terminal_reviewer_response_stops_review_loop_even_with_budget() -> None
             temp_dir,
             barrier_agent_id=AgentId.SUPERVISOR,
         )
+
+        if pending_quality:
+            import subprocess
+            from backend.app.application.services.pipeline_quality_service import (
+                PipelineQualityService,
+            )
+
+            for args in (
+                ["init", "-q"],
+                [
+                    "-c",
+                    "user.name=Test",
+                    "-c",
+                    "user.email=test@example.invalid",
+                    "commit",
+                    "--allow-empty",
+                    "-qm",
+                    "baseline",
+                ],
+            ):
+                subprocess.run(
+                    ["git", "-C", str(workspace), *args],
+                    check=True,
+                    capture_output=True,
+                )
+            quality = PipelineQualityService(
+                database_path=Path(temp_dir) / "quality.sqlite",
+                allowed_roots=[workspace],
+            )
+            if pending_quality == "feedback":
+                quality.capture_feedback(
+                    workspace=workspace,
+                    source_app="app",
+                    items=[
+                        {
+                            "id": "original",
+                            "comment": "Guardá y volvé a encontrar el cliente",
+                        }
+                    ],
+                )
+            else:
+                quality.register(
+                    workspace=str(workspace),
+                    work_item_id="unverified-work",
+                    contract={
+                        "project_id": "app",
+                        "criteria": [
+                            {
+                                "id": "missing",
+                                "description": "Still requires executable evidence",
+                            }
+                        ],
+                    },
+                )
+            service._quality_service = quality
 
         session = service.create_session(workspace_path=str(workspace))
         configuration = session.agent_configuration.normalized()
@@ -10198,9 +10364,14 @@ def test_terminal_reviewer_response_stops_review_loop_even_with_budget() -> None
         ]
 
         assert persisted_session is not None
-        assert persisted_session.active_agent_run_id is None
-        assert generator_follow_ups == []
-        assert len(repository._jobs) == 2
+        if pending_quality:
+            assert persisted_session.active_agent_run_id == initial_job.run_id
+            assert generator_follow_ups
+            assert len(repository._jobs) == 3
+        else:
+            assert persisted_session.active_agent_run_id is None
+            assert generator_follow_ups == []
+            assert len(repository._jobs) == 2
 
 
 def test_structured_reviewer_continue_sends_prompt_only_to_generator() -> None:

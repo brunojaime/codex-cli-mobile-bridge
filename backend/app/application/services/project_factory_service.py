@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from backend.app.infrastructure.execution.agent_cli import AgentCli
+
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 import json
@@ -25,6 +27,7 @@ from backend.app.application.services.project_factory_job_runner import (
     ProjectFactoryRemotePreflight,
     ProjectFactoryRunnerContext,
 )
+from backend.app.application.services.pipeline_quality_service import PipelineQualityService
 from backend.app.application.services.project_factory_manifest_service import (
     DEFAULT_BACKEND,
     DEFAULT_CREATION_GENERATOR_RUNS,
@@ -233,6 +236,8 @@ class ProjectFactoryGenerationConflictError(RuntimeError):
     pass
 
 
+
+
 class ProjectFactoryService:
     def __init__(
         self,
@@ -243,6 +248,7 @@ class ProjectFactoryService:
         max_reference_asset_bytes: int,
         state_root: str | Path | None = None,
         codex_command: str = "codex",
+        agent_cli: AgentCli | None = None,
         timeout_seconds: int = 0,
         generator_runs_override: int | None = None,
         reviewer_runs_override: int | None = None,
@@ -251,6 +257,7 @@ class ProjectFactoryService:
         runner: ProjectFactoryJobRunner | None = None,
         remote_publication_preflight: ProjectFactoryRemotePreflight | None = None,
         async_jobs: bool = True,
+        quality_service: PipelineQualityService | None = None,
     ) -> None:
         self._projects_root = Path(projects_root).expanduser().resolve()
         self._state_root = (
@@ -279,8 +286,10 @@ class ProjectFactoryService:
         self._runner = runner or ProjectFactoryJobRunner(
             generator_service=self._generator_service,
             remote_preflight=remote_publication_preflight,
+            quality_service=quality_service,
         )
         self._codex_command = codex_command
+        self._agent_cli = agent_cli
         self._timeout_seconds = timeout_seconds
         self._generator_runs_override = generator_runs_override
         self._reviewer_runs_override = reviewer_runs_override
@@ -426,7 +435,7 @@ class ProjectFactoryService:
             "status": "ready" if ok else "blocked",
             "projects_root": str(self._projects_root),
             "checks": checks,
-            "toolchain": _toolchain_report(self._codex_command),
+            "toolchain": _toolchain_report(self._agent_cli.command if self._agent_cli else self._codex_command),
         }
 
     def create_draft(
@@ -1014,6 +1023,7 @@ class ProjectFactoryService:
             generator_runs=generator_runs,
             reviewer_runs=reviewer_runs,
             codex_command=self._codex_command,
+            agent_cli=self._agent_cli,
             timeout_seconds=self._timeout_seconds,
             run_generated_validation=self._run_generated_validation,
             publication_validation_mode=self._publication_validation_mode,
