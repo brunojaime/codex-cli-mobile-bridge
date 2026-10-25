@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "mode": "light-keys",
+  "level_db_below_voice": 18,
+  "duck_db": 4,
+  "fade_in_seconds": 1.2,
+  "fade_out_seconds": 1.8,
+  "duck_attack_seconds": 0.18
+}

@@ -16,7 +16,10 @@ from typing import IO, Literal
 from uuid import uuid4
 
 from backend.app.domain.entities.codex_options import CodexRunOptions
+from backend.app.domain.engine import is_claude_model, session_matches_model
+from backend.app.domain.ai_runtime import AiRuntimePolicy
 from backend.app.domain.entities.job import JobStatus
+from backend.app.domain.video_handoff import VIDEO_HANDOFF_HINT, with_video_handoff
 from backend.app.infrastructure.codex_tooling import sync_repo_skills
 from backend.app.infrastructure.execution.base import (
     ExecutionProvider,
@@ -39,7 +42,10 @@ _MOBILE_FILE_CONTEXT = (
 
 
 def _message_with_mobile_file_context(message: str) -> str:
-    return f"{_MOBILE_FILE_CONTEXT}\n\nUser request:\n{message}"
+    context = _MOBILE_FILE_CONTEXT
+    if VIDEO_HANDOFF_HINT not in message:
+        context = with_video_handoff(context)
+    return f"{context}\n\nUser request:\n{message}"
 
 
 def _skill_path(skill_id: str, workdir: str | None) -> Path | None:
@@ -123,6 +129,10 @@ class LocalExecutionProvider(ExecutionProvider):
         self,
         *,
         command: str,
+        claude_command: str = "claude",
+        claude_effort: str = "medium",
+        claude_permission_mode: str = "default",
+        ai_policy: AiRuntimePolicy | None = None,
         use_exec_mode: bool = True,
         streaming_mode: Literal["auto", "exec", "app_server"] = "auto",
         exec_args: str = "--skip-git-repo-check --color never",
@@ -132,13 +142,16 @@ class LocalExecutionProvider(ExecutionProvider):
         timeout_seconds: int | None = None,
     ) -> None:
         self._command = command
+        self._claude_command = claude_command
+        self._claude_permission_mode = claude_permission_mode
+        self._claude_effort = claude_effort
+        self._ai_policy = ai_policy or AiRuntimePolicy()
         self._use_exec_mode = use_exec_mode
         self._streaming_mode = streaming_mode
         self._exec_args = exec_args
         self._resume_args = resume_args
-        self._default_reasoning_effort = (
-            default_reasoning_effort or ""
-        ).strip() or None
+        # Batata bridge policy: every execution uses medium, including resumed chats.
+        self._default_reasoning_effort = "medium"
         self._workdir = str(Path(workdir).resolve()) if workdir else None
         self._timeout_seconds = timeout_seconds
         self._states: dict[str, _ExecutionState] = {}
@@ -151,6 +164,9 @@ class LocalExecutionProvider(ExecutionProvider):
         self._job_serial_keys: dict[str, str] = {}
         self._submission_tokens: dict[str, str] = {}
         self._lock = threading.RLock()
+
+    def resolve_model(self, requested: str | None = None) -> str | None:
+        return self._ai_policy.resolve_model(requested)
 
     def execute(
         self,
@@ -165,6 +181,7 @@ class LocalExecutionProvider(ExecutionProvider):
         submission_token: str | None = None,
         workdir: str | None = None,
     ) -> str:
+        model = self.resolve_model(model)
         job_id = str(uuid4())
         execution = _QueuedExecution(
             job_id=job_id,
@@ -346,6 +363,18 @@ class LocalExecutionProvider(ExecutionProvider):
         workdir: str | None = None,
     ) -> None:
         if self._is_cancelled(job_id):
+            return
+        if provider_session_id and not session_matches_model(provider_session_id, model):
+            provider_session_id = None
+        if is_claude_model(model):
+            from backend.app.infrastructure.execution.claude_runner import run_claude
+
+            run_claude(
+                self, job_id, _message_with_mobile_file_context(message),
+                image_paths=image_paths, cleanup_paths=cleanup_paths,
+                provider_session_id=provider_session_id, model=model,
+                codex_options=codex_options, workdir=workdir or self._workdir,
+            )
             return
         self._set_state(
             job_id,
@@ -976,7 +1005,11 @@ class LocalExecutionProvider(ExecutionProvider):
         codex_options: CodexRunOptions | None,
     ) -> list[str]:
         normalized = codex_options.normalized() if codex_options is not None else None
-        overrides = list(normalized.config_overrides) if normalized is not None else []
+        overrides = [
+            override
+            for override in (normalized.config_overrides if normalized else ())
+            if override.partition("=")[0].strip() != "model_reasoning_effort"
+        ]
         has_sandbox_override = any(
             override.partition("=")[0].strip() == "sandbox_mode"
             for override in overrides
@@ -1016,18 +1049,13 @@ class LocalExecutionProvider(ExecutionProvider):
             codex_args.extend(["--profile", normalized.profile])
         if normalized is not None and normalized.search_enabled:
             codex_args.append("--search")
-        overrides = list(normalized.config_overrides) if normalized is not None else []
-        if (
-            include_default_reasoning_effort
-            and self._default_reasoning_effort is not None
-            and not any(
-                override.strip().startswith("model_reasoning_effort")
-                for override in overrides
-            )
-        ):
-            overrides.append(
-                f'model_reasoning_effort="{self._default_reasoning_effort}"'
-            )
+        overrides = [
+            override
+            for override in (normalized.config_overrides if normalized else ())
+            if override.partition("=")[0].strip() != "model_reasoning_effort"
+        ]
+        if include_default_reasoning_effort:
+            overrides.append('model_reasoning_effort="medium"')
         for override in overrides:
             codex_args.extend(["-c", override])
         return codex_args
@@ -1045,13 +1073,7 @@ class LocalExecutionProvider(ExecutionProvider):
         self,
         codex_options: CodexRunOptions | None,
     ) -> str | None:
-        normalized = codex_options.normalized() if codex_options is not None else None
-        overrides = normalized.config_overrides if normalized is not None else ()
-        for override in overrides:
-            key, _, value = override.partition("=")
-            if key.strip() != "model_reasoning_effort":
-                continue
-            return value.strip().strip('"').strip("'") or None
+        # Enforce the same policy for app-server turns and CLI executions.
         return self._default_reasoning_effort
 
     def _approval_policy_for_app_server(self, args: str) -> str | None:

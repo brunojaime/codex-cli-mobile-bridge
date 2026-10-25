@@ -159,10 +159,19 @@ export function extensionForMime(mimeType) {
     'image/jpeg': '.jpg',
     'image/png': '.png',
     'image/webp': '.webp',
+    'video/mp4': '.mp4',
+    'video/quicktime': '.mov',
+    'video/webm': '.webm',
+    'video/x-m4v': '.m4v',
+    'video/x-matroska': '.mkv',
+    'video/x-msvideo': '.avi',
+    'video/3gpp': '.3gp',
+    'video/3gpp2': '.3g2',
   }[normalized] || '.bin'
 }
 
 function mediaBasename(kind) {
+  if (kind === 'video') return 'video-original'
   if (kind === 'image') return 'image-original'
   if (kind === 'document') return 'document-original'
   return 'audio-original'

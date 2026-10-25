@@ -68,6 +68,19 @@ class FasterWhisperAudioTranscriber(AudioTranscriber):
             )
         return transcript
 
+    def transcribe_video(self, path: Path, *, language: str | None = None) -> dict:
+        from backend.app.infrastructure.media.video_transcript import (
+            prepare_video_transcript,
+        )
+
+        return prepare_video_transcript(
+            path,
+            model=self._model_name,
+            device=self._device,
+            compute_type=self._compute_type,
+            language=language,
+        )
+
     def _get_model(self):
         if self._model is not None:
             return self._model

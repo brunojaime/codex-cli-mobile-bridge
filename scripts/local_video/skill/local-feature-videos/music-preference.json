@@ -1,0 +1,12 @@
+{
+  "preferred_delivery": "with-music",
+  "level_db_below_voice": 18,
+  "duck_db": 4,
+  "selected_recurring_style": "light-keys",
+  "selection_status": "user_selected",
+  "candidates": [
+    "soft-pulse",
+    "light-keys"
+  ],
+  "decision_ref": "source-d4f50975c25194451d291fc3"
+}

@@ -290,6 +290,7 @@ name = "codex-cli-mobile-bridge"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "av" },
     { name = "fastapi" },
     { name = "faster-whisper" },
     { name = "httpx" },
@@ -320,6 +321,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "av", specifier = ">=17,<18" },
     { name = "fastapi", specifier = ">=0.115,<1.0" },
     { name = "faster-whisper", specifier = ">=1.2,<2.0" },
     { name = "httpx", specifier = ">=0.28,<1.0" },

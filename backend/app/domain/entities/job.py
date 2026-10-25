@@ -52,6 +52,7 @@ class Job:
     auto_chain_processed: bool = False
     execution_message: str | None = None
     image_paths: list[str] = field(default_factory=list)
+    video_paths: list[str] = field(default_factory=list)
     status: JobStatus = JobStatus.PENDING
     response: str | None = None
     error: str | None = None

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from dataclasses import dataclass
 import sqlite3
 
@@ -16,6 +18,8 @@ from backend.app.application.services.domain_factory_service import (
     DomainFactoryService,
 )
 from backend.app.application.services.dev_pipeline_service import DevPipelineService
+from backend.app.application.services.pipeline_quality_service import PipelineQualityService
+from backend.app.application.services.jev_advisor import JevAdvisor
 from backend.app.application.services.message_service import MessageService
 from backend.app.application.services.project_factory_service import (
     ProjectFactoryService,
@@ -53,6 +57,8 @@ from backend.app.infrastructure.config.settings import Settings
 from backend.app.infrastructure.execution.base import ExecutionProvider
 from backend.app.infrastructure.execution.lambda_provider import LambdaExecutionProvider
 from backend.app.infrastructure.execution.local_provider import LocalExecutionProvider
+from backend.app.domain.ai_runtime import AiRuntimePolicy
+from backend.app.infrastructure.execution.agent_cli import AgentCli
 from backend.app.infrastructure.persistence.in_memory_chat_repository import (
     InMemoryChatRepository,
 )
@@ -113,10 +119,40 @@ class AppContainer:
     audio_transcriber: AudioTranscriber
     speech_synthesizer: SpeechSynthesizer
     persistence_startup_issue: PersistenceDiagnosticIssue | None = None
+    pipeline_quality_service: PipelineQualityService | None = None
 
 
 def build_container(settings: Settings | None = None) -> AppContainer:
     resolved_settings = settings or Settings()
+    quality_service = (
+        PipelineQualityService(
+            database_path=resolved_settings.pipeline_quality_database,
+            allowed_roots=(
+                [resolved_settings.bridge_stage_worktree_path]
+                if resolved_settings.bridge_stage_worktree_path
+                else [
+                    resolved_settings.projects_root,
+                    resolved_settings.dev_pipeline_runtime_root,
+                    str(Path(resolved_settings.codex_workdir).resolve().parent),
+                ]
+            )
+            + [
+                p.strip()
+                for p in resolved_settings.pipeline_quality_project_roots.split(",")
+                if p.strip()
+            ],
+            advisor=JevAdvisor(
+                api_key=resolved_settings.open_router_api_key.get_secret_value()
+                if resolved_settings.open_router_api_key
+                else None,
+                enabled=resolved_settings.pipeline_quality_jev_enabled,
+                model=resolved_settings.pipeline_quality_jev_model,
+                timeout=resolved_settings.pipeline_quality_jev_timeout_seconds,
+            ),
+        )
+        if resolved_settings.pipeline_quality_enabled
+        else None
+    )
     persistence_startup_issue: PersistenceDiagnosticIssue | None = None
     try:
         repository = _build_repository(resolved_settings)
@@ -132,8 +168,11 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         default_workspace_path=resolved_settings.codex_workdir,
         audio_transcriber=audio_transcriber,
         bridge_environment=resolved_settings.bridge_environment,
+        bridge_api_port=resolved_settings.api_port,
         document_text_char_limit=resolved_settings.document_text_char_limit,
         title_generation_model=resolved_settings.codex_title_generation_model,
+        default_agent_model=resolved_settings.agent_default_model,
+        quality_service=quality_service if resolved_settings.bridge_environment == "dev" else None,
         follow_up_reconcile_interval_seconds=(
             float(resolved_settings.poll_interval_seconds)
             if resolved_settings.poll_interval_seconds > 0
@@ -171,6 +210,7 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         projects_root=resolved_settings.projects_root,
         workspace_aliases=resolved_settings.feedback_source_workspace_alias_map,
         codex_command=resolved_settings.codex_command,
+        agent_cli=_agent_cli(resolved_settings),
         timeout_seconds=resolved_settings.execution_timeout_seconds,
     )
     cloudflare_preview_doctor_service = CloudflarePreviewDoctorService(
@@ -185,6 +225,7 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         max_reference_asset_bytes=resolved_settings.image_max_upload_bytes,
         state_root=resolved_settings.project_factory_state_dir,
         codex_command=resolved_settings.codex_command,
+        agent_cli=_agent_cli(resolved_settings),
         timeout_seconds=resolved_settings.project_factory_step_timeout_seconds,
         generator_runs_override=(
             resolved_settings.project_factory_generator_runs_override
@@ -200,6 +241,9 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         ),
         remote_publication_preflight=cloudflare_preview_doctor_service.doctor,
         async_jobs=resolved_settings.project_factory_async_jobs,
+        quality_service=quality_service.scoped([resolved_settings.projects_root])
+        if quality_service
+        else None,
     )
     project_factory_init_service = ProjectFactoryInitService(
         state_root=resolved_settings.project_factory_state_dir,
@@ -269,9 +313,7 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         promotion_enabled=resolved_settings.dev_pipeline_promotion_enabled,
         app_update_registry_path=resolved_settings.app_update_registry_path,
         app_update_public_base_url=resolved_settings.app_update_public_base_url,
-        app_update_github_token_present=bool(
-            resolved_settings.app_update_github_token
-        ),
+        app_update_github_token_present=bool(resolved_settings.app_update_github_token),
         project_factory_github_owner=resolved_settings.project_factory_github_owner,
         project_factory_github_visibility=(
             resolved_settings.project_factory_github_visibility
@@ -286,6 +328,7 @@ def build_container(settings: Settings | None = None) -> AppContainer:
             resolved_settings.dev_pipeline_prod_update_executor_enabled
         ),
         execution_provider=provider,
+        quality_service=quality_service,
     )
     message_service.set_domain_factory_service(domain_factory_service)
     return AppContainer(
@@ -312,6 +355,7 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         audio_transcriber=audio_transcriber,
         speech_synthesizer=speech_synthesizer,
         persistence_startup_issue=persistence_startup_issue,
+        pipeline_quality_service=quality_service,
     )
 
 
@@ -345,8 +389,23 @@ def _persistence_startup_issue_from_exception(
     )
 
 
+def _ai_policy(settings: Settings) -> AiRuntimePolicy:
+    return AiRuntimePolicy(
+        provider=settings.ai_provider,
+        model=settings.ai_model or settings.agent_default_model,
+        effort=settings.ai_effort if settings.ai_provider != "auto" else settings.claude_effort,
+    )
+
+
+def _agent_cli(settings: Settings) -> AgentCli:
+    return AgentCli(_ai_policy(settings), settings.codex_command, settings.claude_command, settings.claude_permission_mode)
+
+
 def _build_execution_provider(settings: Settings) -> ExecutionProvider:
+    policy = _ai_policy(settings)
     if settings.effective_backend_mode == "lambda":
+        if policy.engine == "claude":
+            raise ValueError("Claude routing requires the local backend; Lambda has no verified Claude adapter.")
         return LambdaExecutionProvider(
             endpoint=settings.lambda_endpoint,
             timeout_seconds=settings.execution_timeout_seconds,
@@ -354,11 +413,15 @@ def _build_execution_provider(settings: Settings) -> ExecutionProvider:
 
     return LocalExecutionProvider(
         command=settings.codex_command,
+        claude_command=settings.claude_command,
+        claude_effort=policy.effort,
+        claude_permission_mode=settings.claude_permission_mode,
+        ai_policy=policy,
         use_exec_mode=settings.codex_use_exec,
         streaming_mode=settings.codex_streaming_mode,
         exec_args=settings.codex_exec_args,
         resume_args=settings.codex_resume_args,
-        default_reasoning_effort=settings.codex_reasoning_effort,
+        default_reasoning_effort=(policy.effort if settings.ai_provider != "auto" else settings.codex_reasoning_effort),
         workdir=settings.codex_workdir,
         timeout_seconds=settings.execution_timeout_seconds,
     )

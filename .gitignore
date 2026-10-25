@@ -41,3 +41,26 @@ backend/app/infrastructure/config/app_updates.json.bak.*
 # Local IDE files
 .idea/
 .vscode/
+
+# Isolated meeting transcription interpreter (recordings live in ignored .data/)
+.venv-relevamientos/
+
+# Host secrets, local backups and generated recordings
+.env.*
+!.env.example
+!.env.dev.example
+*.bridge.lock
+.claude/
+.local-videos/
+.playwright-mcp/
+test-results/
+reports/
+notes/
+drafts/
+extraordinary/
+prototypes/
+feedback-*.png
+SHA256SUMS
+*.bak.*
+docs/relevamientos/drive-ids.json
+tests/fixtures/video-transcript-v1-*/

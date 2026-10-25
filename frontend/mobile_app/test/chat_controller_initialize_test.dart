@@ -10,6 +10,17 @@ import 'package:codex_mobile_frontend/src/state/chat_controller.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('refresh preserves a selected chat outside the loaded page', () async {
+    final api = _EmptyPageApiClient();
+    final controller = ChatController(apiClient: api);
+    addTearDown(controller.dispose);
+    await controller.selectSession('older-chat');
+    await controller.refreshAppState();
+    expect(controller.sessions, isEmpty);
+    expect(controller.selectedSessionId, 'older-chat');
+    expect(controller.currentSession?.id, 'older-chat');
+  });
+
   test(
     'initialize keeps sessions and workspaces usable when agent profiles fail',
     () async {
@@ -309,4 +320,9 @@ AgentProfile _testAgentProfile({
     configuration: kDefaultAgentConfiguration,
     isBuiltin: true,
   );
+}
+
+class _EmptyPageApiClient extends _MutableRefreshApiClient {
+  @override
+  Future<List<ChatSessionSummary>> listSessions() async => [];
 }

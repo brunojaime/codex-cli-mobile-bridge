@@ -1,7 +1,7 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:cross_file/cross_file.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
@@ -120,19 +120,126 @@ class ApiClient {
     );
   }
 
-  Future<List<ChatSessionSummary>> listSessions() async {
-    final response = await _client.get(Uri.parse('$baseUrl/sessions'));
+  Set<String> _trackedSessionIds = {};
+  final Map<String, ChatSessionSummary> _activityCards = {};
+  void trackSessionCards(Set<String> ids) { _trackedSessionIds = ids; }
+  ChatSessionSummary? activityCard(String id) => _activityCards[id];
 
-    if (response.statusCode != 200) {
-      throw Exception('Failed to list sessions: ${response.body}');
-    }
+  final Map<String, ChatSessionSummary> _historyCards = {};
+  final Map<String, String> _historyRevisions = {};
+  String? _historyCursor;
+  bool _historyInitialized = false;
+  bool _legacyHistory = false;
+  bool _historyArchived = false;
+  String _historySearch = '';
+  int _historyGeneration = 0;
+  Future<void> _historyQueue = Future<void>.value();
 
-    final payload = jsonDecode(response.body) as List<dynamic>;
-    return payload
-        .map(
-          (item) => ChatSessionSummary.fromJson(item as Map<String, dynamic>),
-        )
-        .toList();
+  bool get hasMoreSessions => _historyCursor != null;
+
+  void setSessionFilter({required bool archived, String search = ''}) {
+    _historyGeneration++;
+    _historyArchived = archived;
+    _historySearch = search.trim();
+    _historyInitialized = false;
+    _historyCursor = null;
+    _historyCards.clear();
+    _historyRevisions.clear();
+  }
+
+  Future<List<ChatSessionSummary>> listSessions() => _readHistory(more: false);
+  Future<List<ChatSessionSummary>> loadMoreSessions() => _readHistory(more: true);
+
+  Future<List<ChatSessionSummary>> _readHistory({required bool more}) {
+    final generation = _historyGeneration;
+    final operation = _historyQueue.then((_) async {
+      if (generation != _historyGeneration) return _historyCards.values.toList();
+      if (more && _historyCursor == null) return _historyCards.values.toList();
+      final isPage = !_historyInitialized || more;
+      http.Response response;
+      if (_legacyHistory) {
+        response = await _client.get(Uri.parse('$baseUrl/sessions?compact=true'));
+      } else if (isPage) {
+        response = await _client.get(Uri.parse('$baseUrl/sessions/page').replace(
+          queryParameters: {
+            'limit': '40', 'archived': '$_historyArchived',
+            if (_historySearch.isNotEmpty) 'search': _historySearch,
+            if (more) 'before': _historyCursor!,
+          },
+        ));
+        if (response.statusCode == 404 || response.statusCode == 405) {
+          _legacyHistory = true;
+          response = await _client.get(Uri.parse('$baseUrl/sessions?compact=true'));
+        }
+      } else {
+        response = await _client.post(Uri.parse('$baseUrl/sessions/changes'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'known': _historyRevisions,
+            'archived': _historyArchived, 'search': _historySearch, 'limit': 40}));
+      }
+      if (response.statusCode != 200) {
+        throw Exception('Failed to list sessions: ${response.statusCode}');
+      }
+      if (generation != _historyGeneration) return _historyCards.values.toList();
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      if (decoded is List) {
+        // Compatibility with servers that have not activated the new API yet.
+        _legacyHistory = true;
+        final cards = response.bodyBytes.length > 65536
+            ? await compute(_decodeSessionSummaries, response.bodyBytes)
+            : _decodeSessionSummaries(response.bodyBytes);
+        if (generation != _historyGeneration) return _historyCards.values.toList();
+        _historyCards.clear();
+        _activityCards.clear();
+        for (final card in cards) {
+          if (_trackedSessionIds.contains(card.id)) _activityCards[card.id] = card;
+          if (card.isArchived == _historyArchived &&
+              '${card.title} ${card.workspaceName}'.toLowerCase().contains(_historySearch.toLowerCase())) {
+            _historyCards[card.id] = card;
+          }
+        }
+        _historyCursor = null;
+      } else {
+        final data = decoded as Map<String, dynamic>;
+        for (final id in (data['removed_ids'] as List? ?? const [])) {
+          _historyCards.remove(id);
+          _historyRevisions.remove(id);
+        }
+        for (final item in data['items'] as List) {
+          final json = item as Map<String, dynamic>;
+          final card = ChatSessionSummary.fromJson(json);
+          _historyCards[card.id] = card;
+          _historyRevisions[card.id] = json['revision'] as String;
+        }
+        if (isPage) {
+          _historyCursor = data['next_cursor'] as String?;
+        } else if (data['gap_cursor'] != null) {
+          _historyCursor = data['gap_cursor'] as String;
+        }
+      }
+      if (!_legacyHistory) {
+        final missing = _trackedSessionIds.where((id) => !_historyCards.containsKey(id)).toList();
+        if (missing.isNotEmpty) {
+          final tracked = await _client.post(Uri.parse('$baseUrl/sessions/cards'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'ids': missing}));
+          if (tracked.statusCode != 200) throw Exception('Failed to refresh running chats');
+          if (generation != _historyGeneration) return _historyCards.values.toList();
+          final items = (jsonDecode(tracked.body) as Map<String, dynamic>)['items'] as List;
+          _activityCards.clear();
+          for (final item in items) {
+            final card = ChatSessionSummary.fromJson(item as Map<String, dynamic>);
+            _activityCards[card.id] = card;
+          }
+        } else {
+          _activityCards.clear();
+        }
+      }
+      _historyInitialized = true;
+      return _historyCards.values.toList();
+    });
+    _historyQueue = operation.then<void>((_) {}, onError: (Object _, StackTrace __) {});
+    return operation;
   }
 
   Future<ServerHealth> getHealth() async {
@@ -1559,9 +1666,10 @@ class ApiClient {
       throw Exception('Failed to fetch session: ${response.body}');
     }
 
-    return SessionDetail.fromJson(
-      jsonDecode(response.body) as Map<String, dynamic>,
-    );
+    if (response.bodyBytes.length > 65536) {
+      return compute(_decodeSessionDetail, response.bodyBytes);
+    }
+    return _decodeSessionDetail(response.bodyBytes);
   }
 
   Future<SessionDetail> updateAutoMode(
@@ -2363,4 +2471,13 @@ class ApiClient {
     }
     return mimeType;
   }
+}
+
+SessionDetail _decodeSessionDetail(Uint8List bytes) =>
+    SessionDetail.fromJson(jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>);
+
+List<ChatSessionSummary> _decodeSessionSummaries(Uint8List bytes) {
+  final payload = jsonDecode(utf8.decode(bytes)) as List<dynamic>;
+  return payload.map((item) =>
+      ChatSessionSummary.fromJson(item as Map<String, dynamic>)).toList();
 }

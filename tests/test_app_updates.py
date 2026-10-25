@@ -532,7 +532,10 @@ def test_enabled_default_update_configs_include_release_asset_metadata() -> None
         if not config.enabled:
             continue
         assert "/" in config.repo
-        assert config.release_tag_pattern.endswith("*")
+        assert config.release_tag_pattern
+        if not any(char in config.release_tag_pattern for char in "*?["):
+            # Exact tags intentionally pin a verified release.
+            assert config.release_metadata.get("tag") == config.release_tag_pattern
         assert config.apk_asset_pattern.endswith(".apk")
         assert config.latest_asset_name is not None
         assert config.latest_asset_name.endswith(".apk")

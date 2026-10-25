@@ -1,0 +1,22 @@
+[Unit]
+Description=Bridge DEV explicitly requested meeting folder
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/batata/Projects/codex-cli-mobile-bridge
+EnvironmentFile=/home/batata/Projects/codex-cli-mobile-bridge/.env
+Environment=PYTHONUNBUFFERED=1
+Environment=RELEVAMIENTOS_FFMPEG=/home/batata/Projects/codex-cli-mobile-bridge/.data/relevamientos-tools/ffmpeg
+ExecStart=/home/batata/Projects/codex-cli-mobile-bridge/.venv/bin/python -m services.relevamientos.cli run --folder ${RELEVAMIENTOS_REQUEST_FOLDER} --source-ref ${RELEVAMIENTOS_REQUEST_SOURCE}
+Restart=no
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/home/batata/Projects/codex-cli-mobile-bridge/.data/relevamientos /home/batata/.codex
+MemoryMax=4G
+CPUQuota=150%
+
+# Deliberately no Install target: start only for an explicit folder request.

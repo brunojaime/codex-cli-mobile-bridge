@@ -64,6 +64,68 @@ class PersistenceUnavailableError(RuntimeError):
 
 
 class ChatRepository(ABC):
+    def list_summary_jobs(self) -> list[Job]:
+        """Status metadata for the sidebar; implementations may avoid large bodies."""
+        return self.list_jobs()
+
+    def list_session_cards(
+        self,
+        *,
+        limit=40,
+        before=None,
+        archived=False,
+        search="",
+        workspace=None,
+        known_ids=(),
+    ):
+        # Fallback for memory/testing adapters. SQLite projects directly in SQL.
+        from backend.app.domain.session_listing import (
+            CARD_FIELDS,
+            finish_card,
+            card_key,
+        )
+
+        cards = []
+        for session in self.list_sessions():
+            if archived is not None and bool(session.archived_at) != archived:
+                continue
+            if workspace and session.workspace_path != workspace:
+                continue
+            if (
+                search.casefold()
+                not in (session.title + " " + session.workspace_name).casefold()
+            ):
+                continue
+            messages = self.list_messages(session.id)
+            last = max(messages, key=lambda m: (m.created_at, m.id), default=None)
+            card = {key: getattr(session, key) for key in CARD_FIELDS}
+            configuration = session.agent_configuration.normalized()
+            card["agent_labels"] = {
+                key.value: agent.label for key, agent in configuration.agents.items()
+            }
+            card["is_multi_agent"] = configuration.preset.value != "solo" and any(
+                key.value != "generator" and agent.enabled and agent.max_turns > 0
+                for key, agent in configuration.agents.items()
+            )
+            card.update(
+                last_message_at=last.created_at if last else None,
+                last_message_preview=last.content[:120] if last else None,
+                has_pending_messages=any(
+                    m.status.value in {"reserved", "submission_pending", "pending"}
+                    for m in messages
+                ),
+                turn_summary_count=len(self.list_turn_summaries(session.id)),
+            )
+            cards.append(finish_card(card))
+        cards.sort(key=card_key, reverse=True)
+        page = [c for c in cards if before is None or card_key(c) < before][:limit]
+        ids = {c["id"] for c in page}
+        return page + [c for c in cards if c["id"] in known_ids and c["id"] not in ids]
+
+    def list_session_summary_inputs(self):
+        for session in self.list_sessions():
+            yield session, self.list_messages(session.id), len(self.list_turn_summaries(session.id))
+
     def is_available(self) -> bool:
         return True
 

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from backend.app.infrastructure.execution.agent_cli import AgentCli, run_process
+
 import difflib
 import json
 import os
-import shlex
 import shutil
 import subprocess
 import time
@@ -39,6 +40,8 @@ RETRYABLE_STATUSES = frozenset({"failed", "timed_out", "cancelled"})
 ALLOWED_ENV_KEYS = frozenset(
     {
         "ANTHROPIC_API_KEY",
+        "CLAUDE_CONFIG_DIR",
+        "CLAUDE_CODE_OAUTH_TOKEN",
         "CODEX_HOME",
         "HOME",
         "LANG",
@@ -70,6 +73,8 @@ class SddCodexProcessRunner(Protocol):
     ) -> SddCodexProcessResult: ...
 
 
+
+
 class SubprocessCodexRunner:
     def run(
         self,
@@ -79,16 +84,7 @@ class SubprocessCodexRunner:
         env: dict[str, str],
         timeout_seconds: int,
     ) -> SddCodexProcessResult:
-        completed = subprocess.run(
-            list(argv),
-            cwd=cwd,
-            env=env,
-            timeout=timeout_seconds if timeout_seconds > 0 else None,
-            text=True,
-            capture_output=True,
-            check=False,
-            shell=False,
-        )
+        completed = run_process(argv=argv, cwd=cwd, env=env, timeout_seconds=timeout_seconds)
         return SddCodexProcessResult(
             returncode=completed.returncode,
             stdout=completed.stdout,
@@ -311,6 +307,7 @@ class SddCodexJobService:
         *,
         projects_root: str | Path,
         codex_command: str = "codex",
+        agent_cli: AgentCli | None = None,
         timeout_seconds: int = 0,
         workspace_aliases: dict[str, str] | None = None,
         standard_service: SddStandardService | None = None,
@@ -324,6 +321,7 @@ class SddCodexJobService:
     ) -> None:
         self._projects_root = Path(projects_root).expanduser().resolve()
         self._codex_command = codex_command
+        self._agent_cli = agent_cli
         self._timeout_seconds = timeout_seconds
         self._workspace_aliases = {
             key: Path(value).expanduser().resolve()
@@ -423,7 +421,7 @@ class SddCodexJobService:
         retry_job_root = workspace / ".codex-bridge" / "sdd-jobs" / retry_job_id
         retry_sandbox_root = retry_job_root / "sandbox"
         prompt_path = retry_sandbox_root / ".codex-job" / "prompt.md"
-        argv = _codex_argv(self._codex_command, prompt_path)
+        argv = self._agent_cli.argv(prompt_path=prompt_path) if self._agent_cli else _codex_argv(self._codex_command, prompt_path)
         copied_references = _write_retry_handoff(
             workspace=workspace,
             original=original,
@@ -717,7 +715,7 @@ class SddCodexJobService:
         job_root = workspace / ".codex-bridge" / "sdd-jobs" / job_id
         sandbox_root = job_root / "sandbox"
         prompt_path = sandbox_root / ".codex-job" / "prompt.md"
-        argv = _codex_argv(self._codex_command, prompt_path)
+        argv = self._agent_cli.argv(prompt_path=prompt_path) if self._agent_cli else _codex_argv(self._codex_command, prompt_path)
         env = _filtered_env(self._env_source)
         media_persistence = None
         if persist:
@@ -1522,18 +1520,8 @@ def _blocked_job(
 
 
 def _codex_argv(codex_command: str, prompt_path: Path) -> tuple[str, ...]:
-    parts = tuple(part for part in shlex.split(codex_command) if part)
-    if not parts:
-        raise ValueError("codex_command is required.")
-    return (
-        *parts,
-        "exec",
-        "--skip-git-repo-check",
-        "--color",
-        "never",
-        "--input",
-        str(prompt_path),
-    )
+    from backend.app.domain.ai_runtime import AiRuntimePolicy
+    return AgentCli(AiRuntimePolicy(), codex_command=codex_command).argv(prompt_path=prompt_path)
 
 
 def _filtered_env(source: dict[str, str]) -> dict[str, str]:

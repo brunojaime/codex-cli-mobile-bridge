@@ -37,6 +37,7 @@ import '../services/server_profile_store.dart';
 import '../state/chat_controller.dart';
 import '../utils/chat_timestamp_formatter.dart';
 import '../utils/chat_message_visibility.dart';
+import '../utils/internal_chat_link.dart';
 import '../widgets/agent_studio_status_button.dart';
 import '../widgets/chat_bubble.dart';
 import '../widgets/installable_apps_sheet.dart';
@@ -490,6 +491,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   String? _codexToolingErrorText;
   bool _sidebarExpanded = false;
   bool _showArchivedChatsInSidebar = false;
+  String _sessionSearch = '';
+  Timer? _sessionSearchDebounce;
+
+  void _filterSidebarSessions() {
+    _sessionSearchDebounce?.cancel();
+    unawaited(_chatController.filterSessions(
+      archived: _showArchivedChatsInSidebar, search: _sessionSearch));
+  }
+
   bool _stickToBottom = true;
   bool _audioRepliesEnabled = false;
   double _audioReplyPlaybackSpeed = 1.0;
@@ -564,6 +574,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       timer.cancel();
     }
     _projectFactoryInitPollTimers.clear();
+    _sessionSearchDebounce?.cancel();
     _chatController.removeListener(_handleChatControllerChanged);
     if (widget.controllerOverride == null) {
       _chatController.dispose();
@@ -724,6 +735,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                               setState(() {
                                 _showArchivedChatsInSidebar = false;
                               });
+                              _filterSidebarSessions();
                             },
                             selectedColor: const Color(0xFF55D6BE),
                             backgroundColor: const Color(0xFF16213C),
@@ -748,6 +760,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                               setState(() {
                                 _showArchivedChatsInSidebar = true;
                               });
+                              _filterSidebarSessions();
                             },
                             selectedColor: const Color(0xFF8CA8FF),
                             backgroundColor: const Color(0xFF16213C),
@@ -763,13 +776,32 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       ],
                     ),
                   ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                    child: TextField(
+                      key: const ValueKey('session-search'),
+                      decoration: const InputDecoration(
+                        hintText: 'Search chats by title or project',
+                        prefixIcon: Icon(Icons.search), isDense: true),
+                      onChanged: (value) {
+                        _sessionSearch = value;
+                        _sessionSearchDebounce?.cancel();
+                        _sessionSearchDebounce = Timer(
+                          const Duration(milliseconds: 300), _filterSidebarSessions);
+                      },
+                    ),
+                  ),
+                  if (_chatController.isLoadingSessionList)
+                    const LinearProgressIndicator(),
                   Expanded(
                     child: sessionGroups.isEmpty
                         ? Center(
                             child: Text(
                               _sidebarWorkspaces.isEmpty
                                   ? 'No projects pinned yet'
-                                  : _showArchivedChatsInSidebar
+                                  : _sessionSearch.trim().isNotEmpty
+                                      ? 'No matching chats'
+                                      : _showArchivedChatsInSidebar
                                       ? 'No archived chats yet'
                                       : 'No chats yet',
                               style: const TextStyle(color: Color(0xFF8B97B5)),
@@ -1470,13 +1502,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final workspacePathBeforeSend =
         _chatController.currentSession?.workspacePath;
     final codexRunOptions = _currentComposerDraft().codexRunOptions;
+    final submittedText = _textController.text;
+    _updateStickToBottom(true);
     final didSend = await _chatController.sendMessage(
-      _textController.text,
+      submittedText,
       sessionIdOverride: sessionIdBeforeSend,
       workspacePathOverride: workspacePathBeforeSend,
       codexRunOptions: codexRunOptions.isEmpty ? null : codexRunOptions,
     );
     if (didSend &&
+        _textController.text == submittedText &&
         (sessionIdBeforeSend == null ||
             _chatController.selectedSessionId == sessionIdBeforeSend)) {
       _textController.clear();
@@ -2078,6 +2113,23 @@ When you create the Project Factory draft, link each asset with POST /project-fa
 
   Future<void> _handleMessageLinkTap(String target) async {
     final trimmedTarget = target.trim();
+    if (isInternalChatLink(trimmedTarget)) {
+      final sessionId = internalChatSessionId(trimmedTarget);
+      if (sessionId != null) {
+        await _chatController.selectSession(
+          sessionId,
+          preserveCurrentOnError: true,
+        );
+      }
+      if (mounted &&
+          (sessionId == null ||
+              _chatController.selectedSessionId != sessionId)) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('No se pudo abrir esa conversación en este servidor.'),
+        ));
+      }
+      return;
+    }
     if (isServerFileLink(trimmedTarget)) {
       final session = _chatController.currentSession;
       if (session == null) return;
@@ -2157,7 +2209,7 @@ When you create the Project Factory draft, link each asset with POST /project-fa
   List<ChatMessage> _visibleMessagesForCurrentSession() {
     final currentSession = _chatController.currentSession;
     if (currentSession == null) {
-      return const <ChatMessage>[];
+      return _chatController.messages;
     }
     if (_chatBodyView == _ChatBodyView.agentSummaries) {
       return _chatController.messages
@@ -3569,6 +3621,8 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     await _replyPlaybackService.setServer(client);
     await _replyPlaybackService.setPlaybackSpeed(audioReplyPlaybackSpeed);
     setState(() {
+      _sessionSearchDebounce?.cancel();
+      client.setSessionFilter(archived: _showArchivedChatsInSidebar, search: _sessionSearch);
       _chatController = nextController;
       _activeServer = profile;
       _activeServerHealth = null;
@@ -4746,7 +4800,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
         0,
         visibleSessions.length - displayedSessions.length,
       );
-      if (archivedOnly && visibleSessions.isEmpty) {
+      if ((archivedOnly || _sessionSearch.trim().isNotEmpty) && visibleSessions.isEmpty) {
         continue;
       }
       final hasSelected = visibleSessions.any(
@@ -5017,6 +5071,18 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
       );
     }
 
+    if (_chatController.hasMoreSessions) {
+      sessionGroups.add(Padding(
+        padding: const EdgeInsets.all(16),
+        child: OutlinedButton.icon(
+          key: const ValueKey('load-more-sessions'),
+          onPressed: _chatController.isLoadingSessionList
+              ? null : _chatController.loadMoreSessions,
+          icon: const Icon(Icons.expand_more),
+          label: const Text('Load older chats'),
+        ),
+      ));
+    }
     return sessionGroups;
   }
 
@@ -11842,7 +11908,7 @@ class _NewChatSheet extends StatefulWidget {
 
 class _NewChatSheetState extends State<_NewChatSheet> {
   late AgentProfile _selectedProfile;
-  bool _turnSummariesEnabled = true;
+  bool _turnSummariesEnabled = false;
 
   @override
   void initState() {
@@ -12334,6 +12400,10 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
   }
 
   Widget _buildAgentCard(BuildContext context, AgentId agentId) {
+    final modelText = _modelControllers[agentId]!.text.trim();
+    final engine = modelText.startsWith('claude:') || modelText.startsWith('claude-')
+        ? 'claude'
+        : 'codex';
     final title = switch (agentId) {
       AgentId.generator => 'Generator',
       AgentId.reviewer => 'Reviewer',
@@ -12462,11 +12532,33 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
           TextField(
             key: ValueKey<String>('agent-model-${agentIdToJson(agentId)}'),
             controller: _modelControllers[agentId],
+            onChanged: (_) => setState(() {}),
             decoration: const InputDecoration(
               labelText: 'Model override',
               helperText:
-                  'Optional. Leave blank to use the backend default Codex model.',
+                  'Codex: empty uses the default. Claude: claude-opus-5-5, claude:sonnet or claude:haiku.',
             ),
+          ),
+          const SizedBox(height: 8),
+          DropdownButtonFormField<String>(
+            key: ValueKey<String>('agent-engine-${agentIdToJson(agentId)}-$engine'),
+            initialValue: engine,
+            decoration: const InputDecoration(
+              labelText: 'Engine',
+              helperText: 'Switch after the current run finishes. The chat and workspace stay here; recent history is transferred.',
+              helperMaxLines: 3,
+            ),
+            items: const [
+              DropdownMenuItem(value: 'codex', child: Text('Codex')),
+              DropdownMenuItem(value: 'claude', child: Text('Claude Code')),
+            ],
+            onChanged: (engine) {
+              if (engine == null) return;
+              setState(() {
+                _modelControllers[agentId]!.text =
+                    engine == 'claude' ? 'claude-opus-5-5' : '';
+              });
+            },
           ),
           const SizedBox(height: 8),
           DropdownButtonFormField<AgentVisibilityMode>(

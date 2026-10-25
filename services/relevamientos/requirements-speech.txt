@@ -1,0 +1,2 @@
+# Optional isolated interpreter; do not install over the Bridge environment.
+whisperx>=3.7,<4

@@ -4,7 +4,7 @@ from pathlib import Path
 import socket
 from typing import Literal
 
-from pydantic import Field, computed_field
+from pydantic import AliasChoices, Field, SecretStr, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -34,11 +34,18 @@ class Settings(BaseSettings):
     api_base_url: str = "http://localhost:8000"
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
     codex_command: str = "codex"
+    claude_command: str = "claude"
+    claude_permission_mode: Literal["default", "acceptEdits", "auto", "dontAsk"] = "default"
+    claude_effort: Literal["low", "medium", "high", "xhigh", "max"] = "medium"
+    agent_default_model: str | None = None
+    ai_provider: Literal["auto", "codex", "claude"] = "auto"
+    ai_model: str | None = None
+    ai_effort: Literal["low", "medium", "high", "xhigh", "max"] = "medium"
     codex_use_exec: bool = True
     codex_streaming_mode: Literal["auto", "exec", "app_server"] = "auto"
     codex_exec_args: str = "--skip-git-repo-check --color never"
     codex_resume_args: str = "--skip-git-repo-check"
-    codex_reasoning_effort: str | None = "high"
+    codex_reasoning_effort: str | None = "medium"
     codex_title_generation_model: str | None = None
     codex_workdir: str = str(Path.cwd())
     projects_root: str = str(Path.cwd().parent)
@@ -128,6 +135,15 @@ class Settings(BaseSettings):
     dev_pipeline_auto_runner_reconcile_existing: bool = False
     dev_pipeline_state_path: str = str(Path.cwd() / ".data" / "dev_pipeline_state.json")
     dev_pipeline_runtime_root: str = str(Path.home() / ".codex-bridge")
+    pipeline_quality_enabled: bool = True
+    pipeline_quality_project_roots: str = ""
+    pipeline_quality_database: str = str(Path.cwd() / ".data" / "pipeline_quality.sqlite3")
+    pipeline_quality_jev_enabled: bool = False
+    pipeline_quality_jev_timeout_seconds: float = Field(default=3, ge=0.1, le=15)
+    pipeline_quality_jev_model: str = "typesafe/jev-1.13"
+    open_router_api_key: SecretStr | None = Field(
+        default=None, validation_alias=AliasChoices("OPEN_ROUTER_API_KEY", "OPENROUTER_API_KEY", "open_router_api_key")
+    )
     installable_apps_registration_token: str | None = None
     cloudflare_api_token: str | None = None
     cloudflare_dns_api_token: str | None = None

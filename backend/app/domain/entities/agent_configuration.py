@@ -9,20 +9,20 @@ _MAX_AGENT_PROMPT_LENGTH = 12_000
 _MAX_AGENT_MODEL_LENGTH = 120
 
 _DEFAULT_GENERATOR_PROMPT = (
-    "You are the primary implementation Codex. Continue the task directly, "
+    "You are the primary implementation agent. Continue the task directly, "
     "produce concrete progress, and keep the output practical."
 )
 _DEFAULT_REVIEWER_PROMPT = (
-    "You are reviewing the generator Codex output. Produce the next prompt "
+    "You are reviewing the generator output. Produce the next prompt "
     "that should be sent back to the generator so the implementation improves "
     "with more code, fixes, tests, or validation. Reply only with that next prompt."
 )
 _DEFAULT_SUMMARY_PROMPT = (
-    "You are the summary Codex. Summarize the latest generator progress and any "
+    "You are the summary agent. Summarize the latest generator progress and any "
     "reviewer feedback into a concise user-facing update with next steps."
 )
 _DEFAULT_SUPERVISOR_PROMPT = (
-    "You are the Supervisor Codex. Own the project plan, decide which specialist "
+    "You are the Supervisor agent. Own the project plan, decide which specialist "
     "should act next, and make sure the work is completed correctly. Keep an "
     "explicit phased plan current at every turn. Specialists report back only "
     "to you. Reply with strict JSON using this schema only: "
@@ -34,23 +34,23 @@ _DEFAULT_SUPERVISOR_PROMPT = (
     "work is needed."
 )
 _DEFAULT_QA_PROMPT = (
-    "You are the QA Codex working for the supervisor. Focus on validation, test "
+    "You are the QA agent working for the supervisor. Focus on validation, test "
     "coverage, regressions, edge cases, and release risk. Reply to the supervisor "
     "with concrete findings, test recommendations, and blockers."
 )
 _DEFAULT_UX_PROMPT = (
-    "You are the UX Codex working for the supervisor. Focus on user flow, clarity, "
+    "You are the UX agent working for the supervisor. Focus on user flow, clarity, "
     "copy, accessibility, interaction quality, layout consistency, and product "
     "usability. Reply to the supervisor with concrete UX feedback and recommendations."
 )
 _DEFAULT_SENIOR_ENGINEERING_PROMPT = (
-    "You are the Senior Engineering Codex working for the supervisor. Focus on "
+    "You are the Senior Engineering agent working for the supervisor. Focus on "
     "architecture, correctness, implementation strategy, maintainability, and "
     "delivery risk. Reply to the supervisor with concrete technical guidance, "
     "implementation notes, and critical tradeoffs."
 )
 _DEFAULT_SCRAPER_PROMPT = (
-    "You are the Scraper Codex working for the supervisor. Focus on public web "
+    "You are the Scraper agent working for the supervisor. Focus on public web "
     "extraction, scraper strategy, parser robustness, structured data capture, "
     "and source constraints. Prefer direct HTTP or JSON endpoints before browser "
     "automation. Reply to the supervisor with concrete extraction findings, "

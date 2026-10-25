@@ -6,6 +6,29 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('ejecutar inserts an editable request without sending or navigation', (tester) async {
+    final controller = TextEditingController();
+    final executed = <String>[];
+    await tester.pumpWidget(_harness(
+      controller: controller,
+      onSlashCommand: (commandId, payload) async {
+        executed.add(commandId);
+        return true;
+      },
+    ));
+    await tester.enterText(find.byType(TextField), '/eje');
+    await tester.pump();
+    await tester.tap(find.text('/ejecutar  Generator + Reviewer'));
+    await tester.pump();
+    expect(controller.text, contains('generator-reviewer'));
+    expect(controller.text, contains('25 turnos'));
+    expect(controller.text, endsWith('Tarea: '));
+    expect(executed, isEmpty);
+    await tester.enterText(find.byType(TextField), '${controller.text}Corregir filtro; 4 y 3 turnos.');
+    expect(controller.text, contains('4 y 3 turnos'));
+    expect(executed, isEmpty);
+  });
+
   testWidgets('typing slash opens and filters command palette', (tester) async {
     final controller = TextEditingController();
     await tester.pumpWidget(_harness(controller: controller));

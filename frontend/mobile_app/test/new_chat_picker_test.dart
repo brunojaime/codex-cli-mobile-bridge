@@ -140,7 +140,7 @@ void main() {
   );
 
   testWidgets(
-    'new chat picker can disable turn summaries for the created session',
+    'new chat summaries default off and can be enabled explicitly',
     (tester) async {
       SharedPreferences.setMockInitialValues(<String, Object>{});
 
@@ -168,13 +168,14 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Enable chat summary'), findsOneWidget);
+      expect(tester.widget<Switch>(find.byType(Switch).first).value, isFalse);
 
       await tester.tap(find.byType(Switch).first);
       await tester.pumpAndSettle();
       await tester.tap(find.text('Project Gamma'));
       await tester.pumpAndSettle();
 
-      expect(apiClient.createdSessionTurnSummariesEnabled, isFalse);
+      expect(apiClient.createdSessionTurnSummariesEnabled, isTrue);
     },
   );
 }

@@ -119,22 +119,24 @@ def derive_recent_run_executions(
     if active_run is not None:
         runs.append(active_run)
         seen_run_ids.add(active_run.run_id)
+        if len(runs) >= limit:
+            return runs
 
-    historical_run_ids = {
-        message.run_id
-        for message in messages
-        if message.run_id and message.run_id not in seen_run_ids
-    }
+    # Group once instead of scanning the complete transcript for every run.
+    historical_messages: dict[str, list[ChatMessage]] = {}
+    for message in messages:
+        if message.run_id and message.run_id not in seen_run_ids:
+            historical_messages.setdefault(message.run_id, []).append(message)
     historical_runs = [
         _derive_run_execution(
             session,
             run_id=run_id,
-            messages=messages,
+            messages=run_messages,
             jobs_by_id=jobs_by_id,
             run_configurations_by_id=run_configurations_by_id,
             is_active=False,
         )
-        for run_id in historical_run_ids
+        for run_id, run_messages in historical_messages.items()
     ]
     historical_runs.sort(
         key=lambda run: (

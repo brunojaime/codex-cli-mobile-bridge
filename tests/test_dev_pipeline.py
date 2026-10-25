@@ -1404,6 +1404,7 @@ def test_merge_queue_applies_stage_branch_to_dev_main(tmp_path: Path) -> None:
     _checkout_integration_branch(repo_root)
     target_before = _git(repo_root, "rev-parse", "dev/main").stdout.strip()
     source_sha = _git(repo_root, "rev-parse", stage["branch"]).stdout.strip()
+    _record_quality_evidence(dev_client, stage)
 
     queued = dev_client.post(
         "/dev-pipeline/merge-queue",
@@ -1440,6 +1441,7 @@ def test_merge_apply_records_inline_sdd_doctor_success(tmp_path: Path) -> None:
     )
     _commit_stage_changes(Path(stage["worktree_path"]), "stage ready")
     _checkout_integration_branch(repo_root)
+    _record_quality_evidence(dev_client, stage)
 
     merge = dev_client.post(
         "/dev-pipeline/merge-queue",
@@ -1469,6 +1471,7 @@ def test_merge_apply_blocks_failed_inline_sdd_doctor_without_partial_integration
     )
     _commit_stage_changes(Path(stage["worktree_path"]), "stage ready")
     _checkout_integration_branch(repo_root)
+    _record_quality_evidence(dev_client, stage)
     target_before = _git(repo_root, "rev-parse", "dev/main").stdout.strip()
 
     merge = dev_client.post(
@@ -2305,6 +2308,7 @@ def test_dev_pipeline_end_to_end_handoff_to_update_gate_is_deterministic(
 
     _commit_stage_changes(Path(stage["worktree_path"]), "e2e stage changes")
     _checkout_integration_branch(repo_root)
+    _record_quality_evidence(dev_client, stage)
     merge = dev_client.post(
         "/dev-pipeline/merge-queue",
         json=_merge_request(stage["stage_id"]),
@@ -2430,6 +2434,8 @@ def _client(
         speech_synthesis_backend="disabled",
         feedback_source_workspace_aliases="",
         dev_pipeline_state_path=str(tmp_path / "state.json"),
+        pipeline_quality_database=str(tmp_path / "quality.sqlite3"),
+        bridge_stage_worktree_path=None,
         dev_pipeline_runtime_root=str(tmp_path / "runtime"),
         dev_pipeline_enabled=pipeline_enabled,
         bridge_environment=environment,
@@ -2452,6 +2458,33 @@ def _client(
         installable_apps_registration_token=installable_apps_registration_token,
     )
     return TestClient(create_app(settings))
+
+
+def test_declared_success_cannot_bypass_current_quality_evidence(tmp_path: Path) -> None:
+    repo_root = _init_git_repo(tmp_path)
+    stage, client = _materialized_stage(tmp_path, repo_root=repo_root, key="quality-gate")
+    _commit_stage_changes(Path(stage["worktree_path"]), "candidate")
+    _checkout_integration_branch(repo_root)
+    blocked = client.post("/dev-pipeline/merge-queue", json=_merge_request(stage["stage_id"])).json()["data"]
+    assert "quality_evidence_not_verified" in blocked["blockers"]
+    _record_quality_evidence(client, stage)
+    _commit_stage_changes(Path(stage["worktree_path"]), "changed after validation")
+    stale = client.post("/dev-pipeline/merge-queue", json=_merge_request(stage["stage_id"])).json()["data"]
+    assert "quality_evidence_not_verified" in stale["blockers"]
+
+
+def _record_quality_evidence(client: TestClient, stage: dict) -> None:
+    registered = client.post("/pipeline-quality/packets", json={
+        "workspace": stage["worktree_path"], "work_item_id": stage["spec_id"],
+        "links": {"stage_id": stage["stage_id"]},
+        "contract": {"version": 1, "project_id": "bridge-test", "environment": "dev",
+                     "criteria": [{"id": "spec-present", "description": "Stage spec exists", "check_ids": ["spec-present"]}],
+                     "checks": [{"id": "spec-present", "argv": ["python3", "-c",
+                         "from pathlib import Path; assert list(Path('specs').glob('*/spec.md'))"]}]}})
+    assert registered.status_code == 200, registered.text
+    checked = client.post(f"/pipeline-quality/packets/{registered.json()['id']}/execute", json={"attempt_key": "candidate"})
+    assert checked.status_code == 200, checked.text
+    assert checked.json()["quality"]["verified"], checked.text
 
 
 def _init_git_repo(tmp_path: Path) -> Path:

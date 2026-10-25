@@ -2716,6 +2716,7 @@ class FeedbackBatchStatusResponse(BaseModel):
     notificationUnread: bool | None = None
     created_at: str
     submitted_at: str
+    resolution: dict[str, Any] = Field(default_factory=dict)
 
 
 class DocumentMessageAcceptedResponse(MessageAcceptedResponse):
@@ -2849,14 +2850,14 @@ class ChatMessageResponse(BaseModel):
 
 class ChatMessageAttachmentResponse(BaseModel):
     id: str
-    kind: Literal["image"]
+    kind: Literal["image", "video"]
     job_id: str
     index: int
     download_url: str
 
     @classmethod
     def from_job(cls, job: Job | None) -> list["ChatMessageAttachmentResponse"]:
-        if job is None or not job.image_paths:
+        if job is None:
             return []
         return [
             cls(
@@ -2867,6 +2868,15 @@ class ChatMessageAttachmentResponse(BaseModel):
                 download_url=f"/jobs/{job.id}/attachments/{index}",
             )
             for index, _path in enumerate(job.image_paths)
+        ] + [
+            cls(
+                id=f"{job.id}:video:{index}",
+                kind="video",
+                job_id=job.id,
+                index=len(job.image_paths) + index,
+                download_url=f"/jobs/{job.id}/attachments/{len(job.image_paths) + index}",
+            )
+            for index, _path in enumerate(job.video_paths)
         ]
 
 
@@ -3111,6 +3121,7 @@ class SessionSummaryResponse(BaseModel):
         *,
         messages: list[ChatMessage],
         turn_summaries: list[ChatTurnSummary] | None = None,
+        turn_summary_count: int | None = None,
         jobs_by_id: dict[str, Job] | None = None,
     ) -> "SessionSummaryResponse":
         last_message = (
@@ -3145,7 +3156,10 @@ class SessionSummaryResponse(BaseModel):
             workspace_path=session.workspace_path,
             workspace_name=session.workspace_name,
             turn_summaries_enabled=session.turn_summaries_enabled,
-            turn_summary_count=len(turn_summaries or []),
+            turn_summary_count=(
+                turn_summary_count if turn_summary_count is not None
+                else len(turn_summaries or [])
+            ),
             agent_profile_id=session.agent_profile_id,
             agent_profile_name=session.agent_profile_name,
             agent_profile_color=session.agent_profile_color,

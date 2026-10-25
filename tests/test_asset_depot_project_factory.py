@@ -106,7 +106,7 @@ def test_project_factory_promotes_asset_roles_and_preserves_bytes(
     generated = client.post(f"/project-factory/drafts/{draft_id}/generate")
     assert generated.status_code == 200
     project = tmp_path / "asset-depot-demo"
-    assert project.is_dir()
+    assert project.is_dir(), generated.json()
 
     expected_paths = {
         "visual_reference": (
@@ -186,6 +186,11 @@ def _client(tmp_path: Path, *, asset_max_bytes: int = 25_000_000) -> TestClient:
         project_factory_reference_asset_dir=str(tmp_path / ".reference-assets"),
         project_factory_state_dir=str(tmp_path / ".factory-state"),
         project_factory_async_jobs=False,
+        project_factory_publication_validation_mode="local",
+        cloudflare_api_token=None,
+        cloudflare_dns_api_token=None,
+        cloudflare_account_id=None,
+        cloudflare_zone_id=None,
         project_factory_generator_runs_override=0,
         project_factory_reviewer_runs_override=0,
     )

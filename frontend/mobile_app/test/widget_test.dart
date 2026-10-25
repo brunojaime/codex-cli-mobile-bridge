@@ -3225,7 +3225,18 @@ Built the draft.
     );
 
     await controller.refreshAgentProfiles();
+    final imported = Completer<void>();
+    void observeImport() {
+      if (!imported.isCompleted &&
+          controller.agentProfiles.any((profile) => profile.id == 'api_guardian')) {
+        imported.complete();
+      }
+    }
+    controller.addListener(observeImport);
     await controller.selectSession('session-a');
+    // Profile import runs in the background so switching chats stays responsive.
+    await imported.future.timeout(const Duration(seconds: 2));
+    controller.removeListener(observeImport);
 
     expect(fakeApiClient.importedProfiles, hasLength(1));
     expect(fakeApiClient.importedProfiles.single.id, 'api_guardian');

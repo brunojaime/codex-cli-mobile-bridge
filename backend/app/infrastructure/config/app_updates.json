@@ -96,10 +96,10 @@
     "productionReady": false,
     "releaseChannel": "prerelease",
     "releaseMetadata": {
-      "gitCommit": "40287123c4c0c155710888efb0ce64cf0155329b",
-      "sha256": "1d988f612fe9a16d0e9973451ab5168b8c31bf6e59ed8d6b6d3428e2f3a9a61d",
+      "gitCommit": "84657de2e3ce8a96c267d70821e8c0e23e6e0f54",
+      "sha256": "adc92c9ba6e6459e49819e5b82c0dbe95253bfab5e5ce74a6da490b924858212",
       "signingCertificateSha256": "17d014a96693c6e763e572a8a9261e4733d03f729be8fb390bf3d58303f9f61e",
-      "tag": "android-preview-v0.1.2-build.4",
+      "tag": "android-preview-v0.1.3-build.5",
       "toolkitVersion": "0.1.0"
     },
     "releaseTagPattern": "android-preview-v*",
@@ -107,7 +107,7 @@
     "requiredMinimumBuild": null,
     "runtimeProfile": "preview",
     "verifiedPackageIds": {
-      "android-preview-v0.1.2-build.4": "com.nienfos.gestion.preview",
+      "android-preview-v0.1.3-build.5": "com.nienfos.gestion.preview",
       "nienfos-gestion.apk": "com.nienfos.gestion.preview"
     }
   },
@@ -132,6 +132,87 @@
     "requiredMinimumBuild": null,
     "runtimeProfile": "preview",
     "verifiedPackageIds": {}
+  },
+  "rd-gestion-hse": {
+    "apkAssetPattern": "rd-hse-dev-0.2.17-23-correo.apk",
+    "displayName": "RD HSE \u00b7 Beta dev",
+    "enabled": true,
+    "expectedPackageId": "com.nienfos.rd.dev",
+    "latestAssetName": "rd-hse-dev-0.2.17-23-correo.apk",
+    "mockOrDemo": false,
+    "previewUrl": "https://rd-dev.nienfos.com",
+    "productionReady": false,
+    "releaseChannel": "prerelease",
+    "releaseMetadata": {
+      "authorizationReference": "user:af78db39-1541-4022-9ee3-69973e6dab28",
+      "automaticPush": false,
+      "build": 23,
+      "downloadHashVerified": true,
+      "fullParity": false,
+      "gitCommit": "1589e38bab7b59c0d05904c533ff22090996af14",
+      "globalReleaseAllowed": false,
+      "installLaunch": true,
+      "iosPublished": false,
+      "nativeAcceptance": "physical-and-comprehensive-pending",
+      "realAccountLogin": true,
+      "realMailSent": false,
+      "restoredSession": true,
+      "sha256": "82df07059624f5d9b1272c3b7b313820905a2a1c633c2e10724f693eb988fb5f",
+      "signingCertificateSha256": "47f10ec79c15f95175b2ed4faf04092b27730e2092418b061f441b1680cfa8e4",
+      "status": "dev-mail-office-formats-verified",
+      "syntheticOfficeUploadVerified": true,
+      "systemDocumentPickerVerified": true,
+      "tag": "android-preview-v0.2.17-build.23",
+      "version": "0.2.17"
+    },
+    "releaseTagPattern": "android-preview-v0.2.17-build.23",
+    "repo": "brunojaime/rd-gestion-hse",
+    "requiredMinimumBuild": null,
+    "runtimeProfile": "real",
+    "verifiedPackageIds": {
+      "android-preview-v0.2.17-build.23": "com.nienfos.rd.dev",
+      "rd-hse-dev-0.2.17-23-correo.apk": "com.nienfos.rd.dev"
+    }
+  },
+  "rd-gestion-hse-prod": {
+    "apkAssetPattern": "rd-prod-0.3.7-build9.apk",
+    "displayName": "RD HSE \u00b7 Producci\u00f3n",
+    "enabled": true,
+    "expectedPackageId": "com.nienfos.rd",
+    "latestAssetName": "rd-prod-0.3.7-build9.apk",
+    "mockOrDemo": false,
+    "previewUrl": "https://app.consultorard.com.ar",
+    "productionReady": false,
+    "releaseChannel": "stable",
+    "releaseMetadata": {
+      "authorizationReference": "user:80ded1b0-e332-4af6-b222-8fcdb2888fa2",
+      "automaticPush": false,
+      "build": 9,
+      "fullParity": false,
+      "gitCommit": "6654f5634158c44a59f3b71e8bc0415f63967c87",
+      "globalReleaseAllowed": false,
+      "installLaunch": true,
+      "iosPublished": false,
+      "nativeAcceptance": "physical-and-comprehensive-pending",
+      "realAccountLogin": true,
+      "realMailSent": false,
+      "restoredSession": true,
+      "sha256": "eb28a36e3b8df25069d444ae658c76fca32d182a3d4381d24962a1072d132dd0",
+      "signingCertificateSha256": "47f10ec79c15f95175b2ed4faf04092b27730e2092418b061f441b1680cfa8e4",
+      "status": "prod-mail-count-verified",
+      "tag": "android-production-v0.3.7-build.9",
+      "unreadCountVerified": true,
+      "unreadMailIndicatorVerified": true,
+      "version": "0.3.7"
+    },
+    "releaseTagPattern": "android-production-v0.3.7-build.9",
+    "repo": "brunojaime/rd-gestion-hse",
+    "requiredMinimumBuild": null,
+    "runtimeProfile": "real",
+    "verifiedPackageIds": {
+      "android-production-v0.3.7-build.9": "com.nienfos.rd",
+      "rd-prod-0.3.7-build9.apk": "com.nienfos.rd"
+    }
   },
   "rentid": {
     "apkAssetPattern": "rentid*.apk",

@@ -19,13 +19,14 @@ check_json_endpoint() {
   local label="$2"
   local body
   body="$(curl -fsS --max-time 15 "${url}")"
-  python3 - "$label" "$body" <<'PY'
+  python3 - "$label" 3<<<"$body" <<'PY'
 from __future__ import annotations
 
 import json
+import os
 import sys
 
-label, body = sys.argv[1], sys.argv[2]
+label, body = sys.argv[1], os.fdopen(3).read()
 payload = json.loads(body)
 if label == "health":
     assert payload.get("status") == "ok", payload
@@ -36,12 +37,16 @@ elif label == "project-factory/options":
     assert workflow.get("mode") == "generator_reviewer_pairs", payload
     assert workflow.get("generator_runs") == 20, payload
     assert workflow.get("reviewer_runs") == 20, payload
+elif label in {"feedback-queue", "feedback-batches"}:
+    assert isinstance(payload, list), f"{label} must return a list"
 print(f"{label} ok")
 PY
 }
 
 check_json_endpoint "${LOCAL_BASE_URL}/health" "health"
 check_json_endpoint "${LOCAL_BASE_URL}/project-factory/options" "project-factory/options"
+check_json_endpoint "${LOCAL_BASE_URL}/feedback-queue" "feedback-queue"
+check_json_endpoint "${LOCAL_BASE_URL}/feedback-batches" "feedback-batches"
 
 if [[ -n "${TAILSCALE_SOCKET}" ]]; then
   if ! command -v tailscale >/dev/null 2>&1; then

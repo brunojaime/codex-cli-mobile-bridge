@@ -92,6 +92,13 @@ write_runtime_env() {
   codex_resume_args="$(codex_env_value CODEX_RESUME_ARGS "--skip-git-repo-check --dangerously-bypass-approvals-and-sandbox")"
   cat >"${ENV_FILE}" <<EOF
 API_PORT=${PORT}
+AI_PROVIDER=${AI_PROVIDER:-codex}
+AI_MODEL=${AI_MODEL:-gpt-6.1-sol}
+AI_EFFORT=${AI_EFFORT:-medium}
+WEB_PREVIEW_SMTP_USE_TLS=true
+AGENT_DEFAULT_MODEL=${AGENT_DEFAULT_MODEL:-gpt-6.1-sol}
+CLAUDE_EFFORT=${CLAUDE_EFFORT:-medium}
+CLAUDE_PERMISSION_MODE=${CLAUDE_PERMISSION_MODE:-auto}
 API_BASE_URL=${BASE_URL}
 CODEX_COMMAND=${codex_command}
 CODEX_USE_EXEC=${codex_use_exec}
@@ -171,6 +178,13 @@ start_backend() {
   cd "${ROOT_DIR}"
   setsid -f env \
     API_PORT="${PORT}" \
+    AI_PROVIDER="${AI_PROVIDER:-codex}" \
+    AI_MODEL="${AI_MODEL:-gpt-6.1-sol}" \
+    AI_EFFORT="${AI_EFFORT:-medium}" \
+    WEB_PREVIEW_SMTP_USE_TLS="true" \
+    AGENT_DEFAULT_MODEL="${AGENT_DEFAULT_MODEL:-gpt-6.1-sol}" \
+    CLAUDE_EFFORT="${CLAUDE_EFFORT:-medium}" \
+    CLAUDE_PERMISSION_MODE="${CLAUDE_PERMISSION_MODE:-auto}" \
     API_BASE_URL="${BASE_URL}" \
     CODEX_COMMAND="${codex_command}" \
     CODEX_USE_EXEC="${codex_use_exec}" \

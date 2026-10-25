@@ -235,6 +235,79 @@ void main() {
     expect(generatorPayload.containsKey('model'), isFalse);
   });
 
+  testWidgets('agent studio switches Codex to Claude and back',
+      (WidgetTester tester) async {
+    final apiClient = _ChatScreenOverflowApiClient(
+      _buildSession(
+        messages: <ChatMessage>[
+          _message(
+            id: 'assistant-1',
+            text: 'Assistant update',
+          ),
+        ],
+      ),
+    );
+
+    await _pumpChatScreen(
+      tester,
+      width: 800,
+      height: 760,
+      session: apiClient.session,
+      apiClient: apiClient,
+    );
+
+    await tester.tap(find.byType(AgentStudioStatusButton));
+    await tester.pumpAndSettle();
+
+    final agentStudioSheet = find.byType(BottomSheet);
+    final agentStudioScrollable = find
+        .descendant(
+          of: agentStudioSheet,
+          matching: find.byType(Scrollable),
+        )
+        .last;
+    final saveButton = find.descendant(
+      of: agentStudioSheet,
+      matching: find.widgetWithText(FilledButton, 'Save'),
+    );
+
+    await tester.tap(find.byKey(const ValueKey<String>('agent-engine-generator-codex')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Claude Code').last);
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(saveButton, 120,
+        scrollable: agentStudioScrollable);
+    await tester.tap(saveButton);
+    await tester.pumpAndSettle();
+
+    expect(
+      apiClient.session.agentConfiguration.byId(AgentId.generator)?.model,
+      'claude-opus-5-5',
+    );
+
+    await tester.tap(find.byType(AgentStudioStatusButton));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey<String>('agent-engine-generator-claude')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Codex').last);
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(saveButton, 120,
+        scrollable: agentStudioScrollable);
+    await tester.tap(saveButton);
+    await tester.pumpAndSettle();
+
+    expect(
+      apiClient.session.agentConfiguration.byId(AgentId.generator)?.model,
+      isNull,
+    );
+    final generatorPayload = (apiClient.session.agentConfiguration
+            .toJson()['agents'] as List<dynamic>)
+        .cast<Map<String, dynamic>>()
+        .firstWhere((agent) => agent['agent_id'] == 'generator');
+    expect(generatorPayload.containsKey('model'), isFalse);
+  });
+
   testWidgets('sidebar session tile shows minimal timeline metadata',
       (WidgetTester tester) async {
     final session = _buildSession(

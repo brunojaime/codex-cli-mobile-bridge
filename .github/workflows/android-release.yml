@@ -158,6 +158,14 @@ jobs:
         working-directory: frontend/mobile_app
         run: flutter pub get
 
+      - name: Analyze Flutter source
+        working-directory: frontend/mobile_app
+        run: flutter analyze
+
+      - name: Test Flutter before building a release
+        working-directory: frontend/mobile_app
+        run: flutter test --concurrency=2
+
       - name: Validate Android release networking
         env:
           API_BASE_URL: ${{ steps.release_channel.outputs.api_base_url }}
