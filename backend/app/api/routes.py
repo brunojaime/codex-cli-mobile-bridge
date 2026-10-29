@@ -37,6 +37,7 @@ from fastapi import (
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
+from backend.app.application.services.workspace_execution_order import workspaces_by_execution
 from backend.app.api.session_list_routes import build_session_list_router
 from backend.app.api.project_secret_routes import build_secret_router
 from backend.app.api.schemas import (
@@ -6309,11 +6310,14 @@ async def post_attachment_message(
 @router.get("/workspaces", response_model=list[WorkspaceResponse])
 async def list_workspaces(
     service: MessageService = Depends(get_message_service),
+    order: str = Query(default="name", pattern="^(name|last_execution)$"),
 ) -> list[WorkspaceResponse]:
-    return [
-        WorkspaceResponse(name=workspace.name, path=workspace.path)
-        for workspace in service.list_workspaces()
-    ]
+    workspaces = service.list_workspaces()
+    if order == "last_execution":
+        ordered = workspaces_by_execution(workspaces, service.list_sessions(), service.list_summary_jobs())
+        return [WorkspaceResponse(name=w.name, path=w.path, last_execution_at=stamp)
+                for w, stamp in ordered]
+    return [WorkspaceResponse(name=w.name, path=w.path) for w in workspaces]
 
 
 @router.get("/agent-profiles", response_model=list[AgentProfileResponse])

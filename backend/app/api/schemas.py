@@ -3420,6 +3420,7 @@ class CurrentRunExecutionResponse(BaseModel):
 class WorkspaceResponse(BaseModel):
     name: str
     path: str
+    last_execution_at: datetime | None = None
 
 
 class ProjectSecretUpsertRequest(BaseModel):
