@@ -7982,7 +7982,7 @@ def test_feedback_batch_dev_retains_request_and_displays_pending_validation(tmp_
 def test_feedback_batch_start_session_accepts_multiple_items_and_release(
     tmp_path: Path,
 ) -> None:
-    client = build_feedback_queue_client(tmp_path)
+    client = build_feedback_queue_client(tmp_path, audio_transcription_backend="disabled")
 
     start_response = client.post(
         "/feedback-batches/start-session",
@@ -12260,3 +12260,18 @@ def test_repo_skills_are_discovered_and_synced() -> None:
             home_dir / ".codex" / "skills" / "demo-release-skill" / "SKILL.md"
         )
         assert installed_skill_file.read_text(encoding="utf-8") == skill_body
+
+
+def test_feedback_batch_retry_returns_same_job_and_conflict_does_not_submit(tmp_path):
+    client = build_feedback_queue_client(tmp_path)
+    payload = {'sourceApp': 'fixture-app', 'batchId': 'stable-retry', 'items': [{'id': 'original', 'comment': 'Ajustar el botón'}]}
+    first = client.post('/feedback-batches/start-session', json=payload)
+    assert first.status_code == 202, first.text
+    second = client.post('/feedback-batches/start-session', json=payload)
+    assert second.status_code == 202, second.text
+    assert second.json() == first.json()
+    changed = {**payload, 'items': [{'id': 'original', 'comment': 'Different request'}]}
+    assert client.post('/feedback-batches/start-session', json=changed).status_code == 409
+    state = client.get('/feedback-submissions/stable-retry').json()
+    assert state['state'] == 'accepted'
+    assert state['receipt']['job_id'] == first.json()['job_id']

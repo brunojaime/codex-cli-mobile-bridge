@@ -1,6 +1,6 @@
 {
   "name": "@codex/developer-feedback-web",
-  "version": "0.7.0",
+  "version": "0.8.0-dev.3",
   "type": "module",
   "description": "Reusable browser feedback for Codex Mobile Bridge",
   "exports": {
@@ -8,11 +8,18 @@
       "types": "./src/index.d.ts",
       "import": "./src/index.js"
     },
-    "./core": "./src/core.js"
+    "./core": "./src/core.js",
+    "./native": {
+      "types": "./src/native.d.ts",
+      "import": "./src/native.js"
+    },
+    "./native-ui": "./src/native-ui.tsx",
+    "./server": "./src/server.js"
   },
   "files": [
     "src",
-    "README.md"
+    "README.md",
+    "tools"
   ],
   "scripts": {
     "test": "node --test test/*.test.js",
@@ -26,5 +33,23 @@
   "devDependencies": {
     "esbuild": "0.28.2",
     "playwright": "1.62.1"
+  },
+  "engines": {
+    "node": ">=22.22.2"
+  },
+  "peerDependencies": {
+    "react": ">=19",
+    "react-native": ">=0.81"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "react-native": {
+      "optional": true
+    }
+  },
+  "bin": {
+    "codex-feedback": "tools/cli.mjs"
   }
 }

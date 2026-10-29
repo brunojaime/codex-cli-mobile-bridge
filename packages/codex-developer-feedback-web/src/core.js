@@ -11,7 +11,8 @@ export function bridgeUrl(value) {
 }
 
 export function queueKey(config) {
-  return `codex-feedback:v1:${config.sourceApp}:${config.environment}`;
+  const base = `codex-feedback:v1:${config.sourceApp}:${config.environment}`;
+  return config.queueScope ? `${base}:subject:${encodeURIComponent(config.queueScope)}` : base;
 }
 
 export function saveQueue(storage, key, items) {
@@ -32,8 +33,8 @@ export function loadQueue(storage, key) {
 export function createItem(config, { screenshot, comment, points, strokes = [], width, height, pathname }) {
   const bounds = points.reduce((b, p) => ({ left: Math.min(b.left, p.x), top: Math.min(b.top, p.y), right: Math.max(b.right, p.x), bottom: Math.max(b.bottom, p.y) }), { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity });
   return {
-    kind: 'codex.developerFeedback', version: 1,
-    id: `feedback-${crypto.randomUUID()}`,
+    kind: 'codex.developerFeedback', version: 3,
+    id: `feedback-${config.randomUUID ? config.randomUUID() : crypto.randomUUID()}`,
     sourceApp: config.sourceApp, sourceDisplayName: config.sourceDisplayName,
     queue: 'codexCli', status: 'pending', createdAt: new Date().toISOString(),
     comment: comment.trim(), screenshotMimeType: 'image/png',
@@ -53,8 +54,9 @@ export function createBatch(config, items, preset) {
   if (!items.length) throw new Error('Agregá al menos una captura.');
   if (items.some(item => item.sourceApp !== config.sourceApp)) throw new Error('La cola pertenece a otra app.');
   return {
-    kind: 'codex.developerFeedbackBatch', version: 1,
-    sourceApp: config.sourceApp, sourceDisplayName: config.sourceDisplayName,
+    kind: 'codex.developerFeedbackBatch', version: 3,
+    sourceApp: config.sourceApp, sourceDisplayName: items[0].sourceDisplayName || config.sourceDisplayName,
+    ...(config.workspacePath ? { workspace_path: config.workspacePath } : {}),
     workflowPresetId: preset, releaseWhenComplete: false, items: items.flatMap(expandFeedback).map(item => ({ ...item, contextMetadata: { ...item.contextMetadata, feedbackInstructions: `Feedback del entorno ${config.environment}. Implementar y validar. No desplegar producción. La publicación requiere autorización específica.` } })),
     // Omit message: the Bridge builds the prompt with comments AND audio transcripts.
   };
@@ -94,9 +96,20 @@ export function expandTrace(item) {
 }
 
 export async function submitBatch(config, items, preset, fetcher = fetch) {
+  const batch = createBatch(config, items, preset);
+  const advertised = await fetcher(`${bridgeUrl(config.bridgeUrl)}/feedback-contract`, {credentials:'omit',signal:AbortSignal.timeout(8000)});
+  if (!advertised.ok) throw Error('El Bridge necesita la entrega de Feedback compatible. La cola sigue guardada.');
+  const contract = await advertised.json();
+  if (contract.kind !== 'codex.feedbackContract' || !contract.supportedBatchVersions?.includes(batch.version) || contract.idempotentSubmissions !== true || contract.submissionPath !== '/feedback-batches/start-session') throw Error('El Bridge no confirmó contrato e idempotencia. La cola sigue guardada.');
+  // Content-addressed identity survives retries, reloads and client restarts.
+  // Include annotations, audio and the chosen destination/flow, not just item IDs.
+  const content = JSON.stringify(batch);
+  const hash = config.sha256 ? await config.sha256(content) : Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(content))), b => b.toString(16).padStart(2, '0')).join('');
+  if (!/^[a-f0-9]{64}$/.test(hash)) throw Error('El adaptador debe proveer SHA-256 hexadecimal.');
+  batch.batchId = `feedback-${hash}`;
   const response = await fetcher(`${bridgeUrl(config.bridgeUrl)}/feedback-batches/start-session`, {
     method: 'POST', credentials: 'omit', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(createBatch(config, items, preset)),
+    body: JSON.stringify(batch),
     signal: AbortSignal.timeout(items.some(item => item.hasAudio || item.voiceNotes?.length) ? 600000 : 60000),
   });
   if (!response.ok) throw new Error(`El Bridge no aceptó el envío (${response.status}). La cola sigue guardada.`);

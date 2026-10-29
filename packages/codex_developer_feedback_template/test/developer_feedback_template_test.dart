@@ -13,6 +13,54 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(() {
+    final storage = _MemoryFeedbackStorage();
+    developerFeedbackQueueStorageFactory = () => storage;
+  });
+
+  testWidgets('pending capture survives wrapper destruction and restoration', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const _Harness(enabled: true));
+    await tester.pumpAndSettle();
+    await _saveFeedback(tester, 'Durable pending');
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(const _Harness(enabled: true));
+    await tester.pumpAndSettle();
+    expect(find.byKey(developerFeedbackPendingKey), findsOneWidget);
+    await tester.tap(find.byKey(developerFeedbackPendingKey));
+    await tester.pumpAndSettle();
+    expect(find.text('Durable pending'), findsOneWidget);
+  });
+
+  test('restored audio and unknown nested metadata survive export', () {
+    final item = DeveloperFeedbackItem(
+      id: 'restore',
+      createdAt: DateTime.utc(2026),
+      sourceApp: 'fixture',
+      comment: 'voice',
+      screenshotPngBase64: 'cG5n',
+      selectionPoints: const [Offset(2, 3)],
+      audio: DeveloperFeedbackAudioClip(
+        bytes: base64Decode('dm9pY2U='),
+        mimeType: 'audio/webm',
+        durationMs: 12,
+      ),
+    );
+    final payload = item.toJson();
+    payload['futureMetadata'] = {
+      'preserve': ['original'],
+    };
+    final restored = DeveloperFeedbackItem.fromJson(
+      jsonDecode(jsonEncode(payload)) as Map<String, dynamic>,
+    );
+    expect(restored.toBridgeJson(), payload);
+    expect(
+      restored.copyWith(comment: 'edited').toBridgeJson()['futureMetadata'],
+      payload['futureMetadata'],
+    );
+  });
 
   testWidgets('disabled wrapper is absent and does not intercept app taps', (
     tester,
@@ -4060,5 +4108,15 @@ class _SlowStopRecorder extends _TrackedRecorder {
         durationMs: 20,
       ),
     );
+  }
+}
+
+class _MemoryFeedbackStorage implements DeveloperFeedbackQueueStorage {
+  final Map<String, String> _values = {};
+  @override
+  Future<String?> read(String key) async => _values[key];
+  @override
+  Future<void> write(String key, String value) async {
+    _values[key] = value;
   }
 }

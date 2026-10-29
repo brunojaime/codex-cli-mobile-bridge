@@ -22,6 +22,7 @@ try {
     await context.route('**/*', async route => {
       const url = new URL(route.request().url());
       if (url.hostname === 'bridge.test') {
+        if (url.pathname === '/feedback-contract') return route.fulfill({json:{kind:'codex.feedbackContract',supportedBatchVersions:[1,3],idempotentSubmissions:true,submissionPath:'/feedback-batches/start-session'}});
         if (url.pathname === '/feedback-workflow-presets') return route.fulfill({ json: { default_preset_id: 'default', presets: [{ id: 'default', name: 'Generador' }] } });
         assert.equal(url.pathname, '/feedback-batches/start-session');
         posts.push(route.request().postDataJSON());

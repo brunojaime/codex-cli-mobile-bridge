@@ -1,0 +1,100 @@
+"""Install an exact approved artifact; never edits product UI or publishes."""
+
+import argparse
+import hashlib
+import json
+from pathlib import Path, PurePosixPath
+import re
+import shutil
+import tarfile
+
+
+def adopt(root, release_path):
+    root = root.resolve()
+
+    def inside(relative):
+        path = root / relative
+        if (
+            Path(relative).is_absolute()
+            or ".." in Path(relative).parts
+            or not path.resolve().is_relative_to(root)
+        ):
+            raise ValueError("Consumer path escapes workspace")
+        return path
+
+    manifest = json.loads((root / "feedback.project.json").read_text())
+    release = json.loads(release_path.read_text())
+    if manifest["release"] != release["id"]:
+        raise ValueError("Release identity mismatch")
+    flutter = manifest["platform"] == "flutter"
+    package = release["packages"]["flutter" if flutter else "web"]
+    source = release_path.parent / package["artifact"]
+    if hashlib.sha256(source.read_bytes()).hexdigest() != package["sha256"]:
+        raise ValueError("Artifact hash mismatch")
+    target = inside(manifest["artifact"])
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists() and target.read_bytes() != source.read_bytes():
+        raise ValueError("Refusing to replace different artifact bytes")
+    if source.resolve() != target.resolve():
+        shutil.copyfile(source, target)
+    dependency = inside(manifest["packageManifest"])
+    if flutter:
+        destination = inside(manifest["packageRoot"])
+        destination.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(source) as archive:
+            for member in archive.getmembers():
+                rel = PurePosixPath(member.name)
+                if rel.is_absolute() or ".." in rel.parts or not member.isfile():
+                    raise ValueError("Unsafe package member")
+                expected = package["files"].get(member.name)
+                if expected is None:
+                    raise ValueError("Unapproved package file")
+                data = archive.extractfile(member).read()
+                if hashlib.sha256(data).hexdigest() != expected:
+                    raise ValueError("Snapshot hash mismatch")
+                file = destination / member.name
+                if file.exists() and file.read_bytes() != data:
+                    raise ValueError("Refusing to overwrite a patched package")
+                file.parent.mkdir(parents=True, exist_ok=True)
+                file.write_bytes(data)
+        relative = (destination / "codex_developer_feedback_template").relative_to(root)
+        import os
+
+        path = os.path.relpath(root / relative, dependency.parent)
+        block = re.compile(
+            r"(?m)^  codex_developer_feedback_template:\s*\n(?:    .*(?:\n|$))+"
+        )
+        text = dependency.read_text()
+        replacement = f"  codex_developer_feedback_template:\n    path: {path}\n"
+        if not block.search(text):
+            raise ValueError("Existing dependency block required")
+        text = block.sub(replacement, text)
+        for name in ["codex_app_updater", "codex_bridge_workbench"]:
+            related = re.compile(r"(?m)^  " + name + r":\s*\n(?:    .*(?:\n|$))+")
+            related_path = os.path.relpath(destination / name, dependency.parent)
+            if related.search(text):
+                text = related.sub(f"  {name}:\n    path: {related_path}\n", text)
+        dependency.write_text(text)
+    else:
+        import os
+
+        text = json.loads(dependency.read_text())
+        text.setdefault("dependencies", {})["@codex/developer-feedback-web"] = (
+            "file:" + os.path.relpath(target, dependency.parent)
+        )
+        dependency.write_text(json.dumps(text, indent=2) + "\n")
+    return {
+        "ok": True,
+        "sourceApp": manifest["sourceApp"],
+        "release": release["id"],
+        "dependenciesResolved": False,
+        "deployed": False,
+    }
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--project", type=Path, required=True)
+    parser.add_argument("--release", type=Path, required=True)
+    args = parser.parse_args()
+    print(json.dumps(adopt(args.project, args.release)))

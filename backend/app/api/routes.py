@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from backend.app.application.services.feedback_submission import FeedbackSubmissions, SubmissionConflict
 import binascii
 import json
 import os
@@ -4620,6 +4621,12 @@ def _feedback_workspace_path_for_source(
             container.settings.feedback_source_workspace_alias_map.items()
         )
     }
+    # Product IDs do not have to equal workspace directory names. Keep this
+    # mapping server-owned; consumers must not patch fetch to route a batch.
+    registry = Path(__file__).parents[1] / "infrastructure/config/feedback_consumers.json"
+    registered = json.loads(registry.read_text())["aliases"]
+    for source, folder in registered.items():
+        aliases.setdefault(_normalize_feedback_workspace_key(source), str(Path(container.settings.projects_root) / folder))
     for candidate_key in candidate_keys:
         configured_workspace_path = aliases.get(candidate_key)
         if configured_workspace_path:
@@ -4712,12 +4719,15 @@ def _feedback_release_instruction(*, includes_reviewer: bool) -> str:
         return (
             "\nRelease instruction: when the reviewer finishes and approves the "
             "implementation, publish the required release for the target app. "
-            "Do not publish if review requests changes or validation fails."
+            "Do not publish if review requests changes or validation fails. "
+            "A release request does not expand existing environment permissions; "
+            "verify authorization for the exact target and environment."
         )
     return (
         "\nRelease instruction: after implementation and validation complete, "
         "publish the required release for the target app. Do not publish if "
-        "validation fails."
+        "validation fails. A release request does not expand existing environment "
+        "permissions; verify authorization for the exact target and environment."
     )
 
 
@@ -5280,6 +5290,49 @@ async def start_feedback_queue_session(
 async def start_feedback_batch_session(
     payload: FeedbackBatchStartRequest,
     container: AppContainer = Depends(get_container),
+) -> MessageAcceptedResponse:
+    ledger = FeedbackSubmissions(Path(container.settings.feedback_queue_path).with_suffix(".submissions.sqlite3"))
+    try:
+        reservation = await run_in_threadpool(ledger.reserve, payload.model_dump(mode="json", exclude_none=True))
+    except SubmissionConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if reservation["state"] == "accepted":
+        return MessageAcceptedResponse.model_validate(reservation["receipt"])
+    if reservation["state"] != "new":
+        raise HTTPException(status_code=409, detail={"code": "feedback_submission_uncertain", "batchId": reservation["id"], "statusPath": f"/feedback-submissions/{reservation['id']}"})
+    try:
+        result = await _start_feedback_batch_session(payload, container)
+    except BaseException:
+        await run_in_threadpool(ledger.finish, reservation["id"], reservation["owner"], None)
+        raise
+    await run_in_threadpool(ledger.finish, reservation["id"], reservation["owner"], result.model_dump(mode="json"))
+    return result
+
+
+@router.get("/feedback-contract")
+async def feedback_contract():
+    return {
+        "kind": "codex.feedbackContract", "version": 1,
+        "supportedBatchVersions": [1, 3], "canonicalBatchVersion": 3,
+        "submissionPath": "/feedback-batches/start-session",
+        "idempotentSubmissions": True,
+        "submissionStatusPath": "/feedback-submissions/{batchId}",
+        "releaseRequestExpandsAuthority": False,
+    }
+
+
+@router.get("/feedback-submissions/{batch_id}")
+async def feedback_submission_status(batch_id: str, container: AppContainer = Depends(get_container)):
+    ledger = FeedbackSubmissions(Path(container.settings.feedback_queue_path).with_suffix(".submissions.sqlite3"))
+    result = await run_in_threadpool(ledger.status, batch_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Feedback submission not found")
+    return result
+
+
+async def _start_feedback_batch_session(
+    payload: FeedbackBatchStartRequest,
+    container: AppContainer,
 ) -> MessageAcceptedResponse:
     quick_ask_record = None
     if payload.quick_ask_id:

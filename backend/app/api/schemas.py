@@ -806,6 +806,8 @@ class FeedbackPointRequest(BaseModel):
 
 class FeedbackQueueItemRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
+    kind: Literal["codex.developerFeedback"] = "codex.developerFeedback"
+    version: Literal[1, 3] = 3
 
     id: str | None = Field(default=None, max_length=160)
     sourceApp: str = Field(
@@ -1087,6 +1089,10 @@ class InstallableAppRegistrationRequest(BaseModel):
 
 
 class FeedbackBatchStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["codex.developerFeedbackBatch"] = "codex.developerFeedbackBatch"
+    # Both are deployed contracts. Unknown versions must fail, not disappear.
+    version: Literal[1, 3] = 3
     batch_id: str | None = Field(
         default=None,
         max_length=160,
@@ -1119,12 +1125,26 @@ class FeedbackBatchStartRequest(BaseModel):
     )
     message: str | None = Field(default=None, max_length=10000)
     session_id: str | None = None
-    workspace_path: str | None = None
+    workspace_path: str | None = Field(
+        default=None, validation_alias=AliasChoices("workspace_path", "workspacePath")
+    )
     release_target: dict[str, Any] = Field(
         default_factory=dict,
         validation_alias=AliasChoices("release_target", "releaseTarget"),
     )
     codex_options: "CodexRunOptionsRequest | None" = None
+
+    @model_validator(mode="after")
+    def coherent_sources(self):
+        sources = {item.sourceApp.strip().lower() for item in self.items if item.sourceApp.strip().lower() not in ("", "unknown")}
+        if self.sourceApp.strip().lower() not in ("", "unknown"):
+            sources.add(self.sourceApp.strip().lower())
+        if len(sources) > 1:
+            raise ValueError("Feedback batch and items must belong to one sourceApp")
+        ids = [item.id for item in self.items if item.id]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Feedback item IDs must be unique")
+        return self
 
 
 class FeedbackQuickAskRequest(BaseModel):

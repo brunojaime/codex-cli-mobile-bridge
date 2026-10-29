@@ -22,7 +22,7 @@ test('queue persistence is local, isolated per source and environment, without a
 });
 test('batch uses the existing Bridge contract and disables automatic release', () => {
   const entry = item(), payload = createBatch(config, [entry], 'default');
-  assert.equal(payload.kind, 'codex.developerFeedbackBatch'); assert.equal(payload.version, 1);
+  assert.equal(payload.kind, 'codex.developerFeedbackBatch'); assert.equal(payload.version, 3);
   assert.equal(payload.workflowPresetId, 'default'); assert.equal(payload.releaseWhenComplete, false);
   assert.deepEqual(entry.selectionBounds, { left: 4, top: 9, width: 0, height: 0 });
   assert.equal(entry.kind, 'codex.developerFeedback'); assert.equal(entry.comment, 'Ajustar');
@@ -34,6 +34,7 @@ test('batch uses the existing Bridge contract and disables automatic release', (
 test('submission does not forward product credentials and accepts Bridge receipt', async () => {
   let calls = 0;
   const result = await submitBatch(config, [item()], 'default', async (url, options) => {
+    if(url.endsWith('/feedback-contract'))return new Response(JSON.stringify({kind:'codex.feedbackContract',supportedBatchVersions:[1,3],idempotentSubmissions:true,submissionPath:'/feedback-batches/start-session'}));
     calls++; assert.equal(url, 'https://bridge.example/feedback-batches/start-session');
     assert.equal(options.credentials, 'omit'); assert.equal(options.method, 'POST');
     assert.equal(JSON.parse(options.body).items.length, 1);
@@ -43,7 +44,7 @@ test('submission does not forward product credentials and accepts Bridge receipt
 });
 test('submission rejects HTTP errors and unconfirmed responses', async () => {
   for (const response of [new Response('{}', { status: 503 }), new Response('{}', { status: 200 })]) {
-    await assert.rejects(submitBatch(config, [item()], 'default', async () => response));
+    await assert.rejects(submitBatch(config, [item()], 'default', async url => url.endsWith('/feedback-contract') ? new Response(JSON.stringify({kind:'codex.feedbackContract',supportedBatchVersions:[1,3],idempotentSubmissions:true,submissionPath:'/feedback-batches/start-session'})) : response));
   }
 });
 test('guided trace sends all chronological frames as image attachments and audio exactly once', () => {
@@ -93,4 +94,18 @@ test('multiple voice comments retain order, parent association and transcription
   const trace = {...entry,audioBase64:'main-audio',audioMimeType:'audio/webm',guidedTrace:{id:'t',frames:[{screenshotPngBase64:'frame0',atMs:0,screen:{route:'/'}}]}};
   const combined = createBatch(config,[trace],'default');assert.equal(combined.items[0].audioBase64,'main-audio');
   assert.equal(combined.items.filter(i=>i.audioBase64).length,13);assert.ok(combined.items.slice(1).every(i=>!i.guidedTrace));
+});
+
+test('negotiation blocks an old Bridge before any POST and keeps batch identity across label changes',async()=>{
+ let posts=0;const entry=item();
+ await assert.rejects(submitBatch(config,[entry],'default',async(url,init)=>{if(init.method==='POST')posts++;return new Response('{}',{status:404});}));
+ assert.equal(posts,0);
+ const ids=[];
+ const transport=async(url,init)=>{
+  if(url.endsWith('/feedback-contract'))return new Response(JSON.stringify({kind:'codex.feedbackContract',supportedBatchVersions:[3],idempotentSubmissions:true,submissionPath:'/feedback-batches/start-session'}));
+  ids.push(JSON.parse(init.body).batchId);return new Response(JSON.stringify({job_id:'one'}));
+ };
+ await submitBatch(config,[entry],'default',transport);
+ await submitBatch({...config,sourceDisplayName:'Translated label'},[entry],'default',transport);
+ assert.equal(ids[0],ids[1]);
 });

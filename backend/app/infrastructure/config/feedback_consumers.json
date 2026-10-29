@@ -1,0 +1,10 @@
+{
+  "schema": "codex.feedback-workspaces/v1",
+  "aliases": {
+    "comandas-web": "alas-bravas",
+    "gestion-ludmilo": "Gestion_ludmilo",
+    "smart-nienfos": "smart_nienfos",
+    "smart-nienfos-moldegon": "smart_nienfos",
+    "smart-nienfos-smart-house": "smart_nienfos"
+  }
+}
