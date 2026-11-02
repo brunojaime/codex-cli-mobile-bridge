@@ -21,6 +21,7 @@ from backend.app.application.services.dev_pipeline_service import DevPipelineSer
 from backend.app.application.services.pipeline_quality_service import PipelineQualityService
 from backend.app.application.services.jev_advisor import JevAdvisor
 from backend.app.application.services.message_service import MessageService
+from backend.app.application.services.message_outbox_service import MessageOutboxService
 from backend.app.application.services.project_factory_service import (
     ProjectFactoryService,
 )
@@ -120,6 +121,7 @@ class AppContainer:
     speech_synthesizer: SpeechSynthesizer
     persistence_startup_issue: PersistenceDiagnosticIssue | None = None
     pipeline_quality_service: PipelineQualityService | None = None
+    message_outbox_service: MessageOutboxService | None = None
 
 
 def build_container(settings: Settings | None = None) -> AppContainer:

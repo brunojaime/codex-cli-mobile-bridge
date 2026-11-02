@@ -46,6 +46,14 @@ class ProjectFactoryUnavailableException implements Exception {
   String toString() => message;
 }
 
+class OutboxApiException implements Exception {
+  OutboxApiException(this.statusCode, this.message);
+  final int statusCode;
+  final String message;
+  @override
+  String toString() => message;
+}
+
 class ApiClient {
   ApiClient({required this.baseUrl, http.Client? client})
       : _client = client ?? http.Client();
@@ -1968,6 +1976,45 @@ class ApiClient {
     return SessionDetail.fromJson(
       jsonDecode(response.body) as Map<String, dynamic>,
     );
+  }
+
+  Future<Map<String, dynamic>?> getOutboxReceipt(String id) async {
+    final response = await _client.get(Uri.parse('$baseUrl/message-outbox/$id'))
+        .timeout(const Duration(seconds: 30));
+    if (response.statusCode == 404) return null;
+    return _outboxResponse(response);
+  }
+
+  Future<Map<String, dynamic>> submitOutbox(String id, Map<String, dynamic> payload,
+      {XFile? audio}) async {
+    final request = http.MultipartRequest('POST', Uri.parse('$baseUrl/message-outbox/$id'));
+    request.fields['payload_json'] = jsonEncode(payload);
+    if (audio != null) request.files.add(await _multipartFileFromXFile('audio', audio));
+    final response = await http.Response.fromStream(await _client.send(request))
+        .timeout(const Duration(minutes: 2));
+    return _outboxResponse(response);
+  }
+
+  Future<Map<String, dynamic>> outboxAction(String id, String action) async {
+    final response = await _client.post(Uri.parse('$baseUrl/message-outbox/$id/$action'))
+        .timeout(const Duration(seconds: 30));
+    return _outboxResponse(response);
+  }
+
+  Map<String, dynamic> _outboxResponse(http.Response response) {
+    if (response.statusCode != 200 && response.statusCode != 202) {
+      var message = 'No se pudo contactar la cola de envíos (${response.statusCode}).';
+      if (response.statusCode == 404 || response.statusCode == 405) {
+        message = 'Este servidor necesita actualizarse para recibir envíos en cola.';
+      } else {
+        try {
+          final detail = (jsonDecode(response.body) as Map<String, dynamic>)['detail'];
+          if (detail is String) message = detail;
+        } catch (_) { /* Keep a safe error for non-JSON proxy responses. */ }
+      }
+      throw OutboxApiException(response.statusCode, message);
+    }
+    return jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
   }
 
   Future<JobStatusResponse> sendMessage(

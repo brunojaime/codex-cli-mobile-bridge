@@ -1,5 +1,10 @@
+import 'package:codex_mobile_frontend/src/models/server_capabilities.dart';
+import 'message_outbox_test.dart' show MemoryStore, QueueApi, until;
+import 'package:codex_mobile_frontend/src/services/message_outbox.dart';
+import 'package:cross_file/cross_file.dart';
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:codex_mobile_frontend/src/models/agent_configuration.dart';
 import 'package:codex_mobile_frontend/src/models/chat_message.dart';
@@ -28,6 +33,55 @@ void main() {
   });
   tearDown(() {
     if (!controllerDisposed) controller.dispose();
+  });
+
+  test('outbox: pending audio frees another chat and late receipt keeps selection', () async {
+    final transport = QueueApi();
+    final queue = MessageOutbox(api: transport, store: MemoryStore(), pollInterval: const Duration(milliseconds: 5));
+    final queuedController = ChatController(apiClient: api, outbox: queue);
+    try {
+      await queuedController.selectSession('a');
+      expect(await queuedController.enqueueAudio(XFile.fromData(Uint8List.fromList([1,2,3]), name: 'note.m4a')), isTrue);
+      await until(() => transport.submissions.isNotEmpty);
+      expect(queuedController.messages.last.text, contains('audio'));
+      await queuedController.selectSession('b');
+      expect(await queuedController.enqueueMessage('from b'), isTrue);
+      await until(() => transport.submissions.length == 2);
+      expect(transport.submissions.last['session_id'], 'b');
+      expect(queuedController.messages.last.text, 'from b');
+      transport.complete(transport.submissions.first['id'] as String);
+      await until(() => queuedController.activeJobCountForSession('a') == 1);
+      expect(queuedController.selectedSessionId, 'b');
+      expect(queuedController.messages.any((m) => m.text.contains('Transcribiendo')), isFalse);
+    } finally {
+      queuedController.dispose(); queue.dispose();
+    }
+  });
+
+  test('rollout: old backend keeps legacy sends, upgrade enables queue without another APK', () async {
+    final legacy = _RolloutApi();
+    final transport = QueueApi();
+    final queue = MessageOutbox(api: transport, store: MemoryStore());
+    final rolling = ChatController(apiClient: legacy, outbox: queue, negotiateOutbox: true);
+    try {
+      await rolling.selectSession('a');
+      final sending = rolling.enqueueMessage('before backend restart');
+      await until(() => legacy.sendCount == 1);
+      expect(queue.entries, isEmpty);
+      legacy.accept.complete(_accepted());
+      expect(await sending, isTrue);
+      expect(await rolling.enqueueAudio(XFile.fromData(Uint8List.fromList([1,2,3]), name: 'note.m4a')), isTrue);
+      expect(legacy.audioCount, 1);
+      expect(transport.submissions, isEmpty);
+      legacy.supportsOutbox = true;
+      await rolling.handleAppResumed();
+      expect(await rolling.enqueueMessage('after backend restart'), isTrue);
+      await until(() => transport.submissions.isNotEmpty);
+      expect(transport.submissions.single['message'], 'after backend restart');
+      expect(legacy.sendCount, 1);
+    } finally {
+      rolling.dispose(); queue.dispose();
+    }
   });
 
   test('switch: cached history is synchronous while network is blocked',
@@ -399,4 +453,19 @@ class _DelayedApi extends ApiClient {
   @override
   Future<JobStatusResponse> getJob(String id) async =>
       throw Exception('test polling unavailable');
+}
+
+class _RolloutApi extends _DelayedApi {
+  bool supportsOutbox = false;
+  int audioCount = 0;
+  @override
+  Future<ServerCapabilities> getCapabilities() async => ServerCapabilities.fromJson({
+    'features': {'message_outbox': supportsOutbox},
+  });
+  @override
+  Future<JobStatusResponse> sendAudioMessage(XFile audioFile, {String? message,
+    String? language, String? sessionId, String? workspacePath, CodexRunOptions? codexRunOptions}) async {
+    audioCount += 1;
+    return accept.future;
+  }
 }
