@@ -366,6 +366,7 @@ _FALLBACK_FEEDBACK_WORKFLOW_PRESETS = (
 )
 _FEEDBACK_WORKSPACE_KEY_PATTERN = re.compile(r"[^a-z0-9]+")
 _BACKEND_FEATURES = {
+    "message_outbox": True,
     "video_preview_v1": True,
     "video_transcription_v1": True,
     "project_factory": True,
@@ -7817,3 +7818,7 @@ async def _validate_codex_options(
             detail=f"Rejected MCP server selections: {joined}",
         )
     return codex_options
+
+
+from backend.app.api.message_outbox_routes import build_message_outbox_router
+router.include_router(build_message_outbox_router(get_container, _validate_codex_options))

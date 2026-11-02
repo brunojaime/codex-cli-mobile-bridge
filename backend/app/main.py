@@ -136,6 +136,17 @@ def _configure_background_workers(app: FastAPI, container: AppContainer) -> None
     runner_task: asyncio.Task[None] | None = None
 
     @app.on_event("startup")
+    async def resume_message_outbox() -> None:
+        from backend.app.api.message_outbox_routes import get_outbox
+        outbox = await asyncio.to_thread(get_outbox, container)
+        await asyncio.to_thread(outbox.wake)
+
+    @app.on_event("shutdown")
+    async def close_message_outbox() -> None:
+        if container.message_outbox_service is not None:
+            await asyncio.to_thread(container.message_outbox_service.close)
+
+    @app.on_event("startup")
     async def start_dev_pipeline_auto_runner() -> None:
         nonlocal runner_task
         settings = container.settings

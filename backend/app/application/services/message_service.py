@@ -14,6 +14,7 @@ import threading
 import time
 from typing import Any, Literal
 from uuid import uuid4
+import hashlib
 import xml.etree.ElementTree as ET
 import zipfile
 
@@ -1127,6 +1128,7 @@ class MessageService:
         trigger_source: AgentTriggerSource = AgentTriggerSource.USER,
         run_id: str | None = None,
         conversation_kind: JobConversationKind = JobConversationKind.PRIMARY,
+        client_submission_id: str | None = None,
     ) -> Job:
         self._ensure_accepting_new_jobs()
         session = self._resolve_session(
@@ -1221,7 +1223,7 @@ class MessageService:
             execution_message = resolved_user_prompt
 
         user_message = ChatMessage(
-            id=str(uuid4()),
+            id=self._client_submission_message_id(client_submission_id) if client_submission_id else str(uuid4()),
             session_id=session.id,
             role=ChatMessageRole.USER,
             author_type=author_type,
@@ -2100,6 +2102,17 @@ class MessageService:
                 run_id=message.run_id or "",
             )
         return self._repository.get_session(session_id) or session
+
+    @staticmethod
+    def _client_submission_message_id(submission_id: str) -> str:
+        return "client-intake-" + hashlib.sha256(submission_id.encode()).hexdigest()
+
+    def find_client_submission(self, submission_id: str) -> Job | None:
+        message = self._repository.get_message(self._client_submission_message_id(submission_id))
+        if message is None:
+            return None
+        return next((job for job in self._repository.list_jobs_for_session(message.session_id)
+                     if job.user_message_id == message.id), None)
 
     def get_job(self, job_id: str) -> Job | None:
         job = self._repository.get_job(job_id)

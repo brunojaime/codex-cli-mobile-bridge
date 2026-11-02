@@ -27,6 +27,8 @@ import '../models/session_file.dart';
 import '../models/slash_command.dart';
 import '../models/workspace.dart';
 import '../services/api_client.dart';
+import '../services/message_outbox.dart';
+import '../widgets/outbox_panel.dart';
 import '../services/attachment_type.dart';
 import '../services/audio_note_recorder.dart';
 import '../services/chat_notification_service.dart';
@@ -1439,14 +1441,27 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           ],
                         ),
                 ),
+                OutboxPanel(
+                  entries: _chatController.pendingOutbox,
+                  storageError: _chatController.outboxStorageError,
+                  sessionTitle: (id) {
+                    for (final session in _chatController.sessions) {
+                      if (session.id == id) return session.title;
+                    }
+                    return 'Chat';
+                  },
+                  onRetry: _chatController.retryOutbox,
+                  onDiscard: _chatController.discardOutbox,
+                ),
                 _Composer(
                   sessionId: _chatController.selectedSessionId,
                   controller: _textController,
                   draft: _currentComposerDraft(),
-                  onDraftChanged: _updateCurrentComposerDraft,
+                  onDraftChanged: _draftUpdaterForCurrentSession(),
+                  onBackgroundDraftChanged: _draftUpdaterForCurrentSession(onlyIfUnchanged: true),
                   onSend: _handleSend,
-                  onSendAudio: _handleSendAudio,
-                  onSendAttachments: _handleSendAttachments,
+                  onSendAudio: _audioSenderForCurrentSession(),
+                  onSendAttachments: _attachmentSenderForCurrentSession(),
                   onBeginRecording: _handleBeginRecording,
                   onSlashCommand: _handleSlashCommand,
                   slashCommandContext: SlashCommandContext(
@@ -1492,19 +1507,23 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 
   Future<bool> _handleSend() async {
-    if (await _maybeHandleOpenMcpAppCommand(_textController.text)) {
-      return true;
-    }
-    if (!await _maybeActivateProjectFactoryBuildMode(_textController.text)) {
-      return false;
-    }
-    final sessionIdBeforeSend = _chatController.selectedSessionId;
-    final workspacePathBeforeSend =
-        _chatController.currentSession?.workspacePath;
+    final originController = _chatController;
+    final sessionIdBeforeSend = originController.selectedSessionId;
+    final workspacePathBeforeSend = originController.currentSession?.workspacePath;
     final codexRunOptions = _currentComposerDraft().codexRunOptions;
     final submittedText = _textController.text;
+    if (await _maybeHandleOpenMcpAppCommand(submittedText)) {
+      return true;
+    }
+    if (originController != _chatController ||
+        sessionIdBeforeSend != originController.selectedSessionId) {
+      return false;
+    }
+    if (!await _maybeActivateProjectFactoryBuildMode(submittedText)) {
+      return false;
+    }
     _updateStickToBottom(true);
-    final didSend = await _chatController.sendMessage(
+    final didSend = await originController.enqueueMessage(
       submittedText,
       sessionIdOverride: sessionIdBeforeSend,
       workspacePathOverride: workspacePathBeforeSend,
@@ -1908,17 +1927,36 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
 
+  Future<bool> Function(List<_PendingAttachmentDraft>, {String? prompt}) _attachmentSenderForCurrentSession() {
+    final controller = _chatController;
+    final sessionId = controller.selectedSessionId;
+    final workspace = controller.currentSession?.workspacePath;
+    final options = _currentComposerDraft().codexRunOptions;
+    return (attachments, {prompt}) => _handleSendAttachments(attachments, prompt: prompt,
+        originController: controller, originSessionId: sessionId,
+        originWorkspace: workspace, originOptions: options);
+  }
+
   Future<bool> _handleSendAttachments(
     List<_PendingAttachmentDraft> attachments, {
     String? prompt,
+    ChatController? originController, String? originSessionId,
+    String? originWorkspace, CodexRunOptions? originOptions,
   }) async {
-    if (!await _maybeActivateProjectFactoryBuildMode(prompt)) {
+    final controller = originController ?? _chatController;
+    final sessionIdBeforeSend = originSessionId ?? controller.selectedSessionId;
+    final workspacePathBeforeSend = originWorkspace ?? controller.currentSession?.workspacePath;
+    final codexRunOptions = originOptions ?? _currentComposerDraft().codexRunOptions;
+    if (controller == _chatController && sessionIdBeforeSend == controller.selectedSessionId &&
+        !await _maybeActivateProjectFactoryBuildMode(prompt)) {
       return false;
     }
-    final sessionIdBeforeSend = _chatController.selectedSessionId;
-    final workspacePathBeforeSend =
-        _chatController.currentSession?.workspacePath;
-    final codexRunOptions = _currentComposerDraft().codexRunOptions;
+    if (attachments.length == 1 && attachments.first.isAudio) {
+      return controller.enqueueAudio(attachments.first.file,
+        message: prompt, sessionIdOverride: sessionIdBeforeSend,
+        workspacePathOverride: workspacePathBeforeSend,
+        codexRunOptions: codexRunOptions.isEmpty ? null : codexRunOptions);
+    }
     final enrichedPrompt = await _promptWithPromotedProjectAssets(
       attachments,
       prompt,
@@ -1926,7 +1964,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (enrichedPrompt == null) {
       return false;
     }
-    final didSend = await _chatController.sendAttachmentsMessage(
+    final didSend = await controller.sendAttachmentsMessage(
       attachments.map((attachment) => attachment.file).toList(),
       message: enrichedPrompt,
       sessionIdOverride: sessionIdBeforeSend,
@@ -1995,15 +2033,31 @@ When you create the Project Factory draft, link each asset with POST /project-fa
     return '$trimmedPrompt\n\n${assetBlock.trim()}';
   }
 
-  Future<bool> _handleSendAudio(XFile audioFile, {String? message}) async {
-    if (!await _maybeActivateProjectFactoryBuildMode(message)) {
+  Future<bool> Function(XFile, {String? message}) _audioSenderForCurrentSession() {
+    final controller = _chatController;
+    final sessionId = controller.selectedSessionId;
+    final workspace = controller.currentSession?.workspacePath;
+    final options = _currentComposerDraft().codexRunOptions;
+    return (file, {message}) => _handleSendAudio(file, message: message,
+      originController: controller, originSessionId: sessionId,
+      originWorkspace: workspace, originOptions: options);
+  }
+
+  Future<bool> _handleSendAudio(XFile audioFile, {String? message,
+    ChatController? originController, String? originSessionId,
+    String? originWorkspace, CodexRunOptions? originOptions,
+  }) async {
+    final controller = originController ?? _chatController;
+    if (controller == _chatController &&
+        originSessionId == controller.selectedSessionId &&
+        !await _maybeActivateProjectFactoryBuildMode(message)) {
       return false;
     }
-    final sessionIdBeforeSend = _chatController.selectedSessionId;
+    final sessionIdBeforeSend = originSessionId ?? controller.selectedSessionId;
     final workspacePathBeforeSend =
-        _chatController.currentSession?.workspacePath;
-    final codexRunOptions = _currentComposerDraft().codexRunOptions;
-    final didSend = await _chatController.sendAudioMessage(
+        originWorkspace ?? controller.currentSession?.workspacePath;
+    final codexRunOptions = originOptions ?? _currentComposerDraft().codexRunOptions;
+    final didSend = await controller.enqueueAudio(
       audioFile,
       message: message,
       sessionIdOverride: sessionIdBeforeSend,
@@ -3603,6 +3657,8 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     final client = ApiClient(baseUrl: profile.baseUrl);
     final nextController = ChatController(
       apiClient: client,
+      outbox: MessageOutbox.forServer(client),
+      negotiateOutbox: true,
       notificationService: widget.notificationService,
     );
     final sidebarWorkspaces = await _serverProfileStore.loadSidebarWorkspaces(
@@ -4624,8 +4680,11 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
   }
 
   ChatController _buildController(String baseUrl) {
+    final client = ApiClient(baseUrl: baseUrl);
     return ChatController(
-      apiClient: ApiClient(baseUrl: baseUrl),
+      apiClient: client,
+      outbox: MessageOutbox.forServer(client),
+      negotiateOutbox: true,
       notificationService: widget.notificationService,
     );
   }
@@ -4668,6 +4727,24 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
   _ComposerDraft _currentComposerDraft() {
     return _sessionDrafts[_draftKeyForSelectedSession()] ??
         const _ComposerDraft();
+  }
+
+  ValueChanged<_ComposerDraft> _draftUpdaterForCurrentSession({bool onlyIfUnchanged = false}) {
+    final key = _draftKeyForSelectedSession();
+    final original = _currentComposerDraft();
+    return (draft) {
+      if (!mounted) return;
+      final current = _sessionDrafts[key] ?? const _ComposerDraft();
+      if (onlyIfUnchanged && (current.text != original.text ||
+          !_sameDraftAttachments(current.attachments, original.attachments) ||
+          !_sameCodexRunOptions(current.codexRunOptions, original.codexRunOptions))) {
+        return;
+      }
+      setState(() {
+        if (draft.isEmpty) { _sessionDrafts.remove(key); }
+        else { _sessionDrafts[key] = draft; }
+      });
+    };
   }
 
   void _updateCurrentComposerDraft(_ComposerDraft draft) {
@@ -7001,6 +7078,7 @@ class _Composer extends StatefulWidget {
     required this.controller,
     required this.draft,
     required this.onDraftChanged,
+    this.onBackgroundDraftChanged,
     required this.onSend,
     required this.onSendAudio,
     required this.onSendAttachments,
@@ -7020,6 +7098,7 @@ class _Composer extends StatefulWidget {
   final TextEditingController controller;
   final _ComposerDraft draft;
   final ValueChanged<_ComposerDraft> onDraftChanged;
+  final ValueChanged<_ComposerDraft>? onBackgroundDraftChanged;
   final Future<bool> Function() onSend;
   final Future<bool> Function(XFile audioFile, {String? message}) onSendAudio;
   final Future<bool> Function(
@@ -7051,6 +7130,7 @@ class _ComposerState extends State<_Composer> {
   bool _hasText = false;
   bool _isRecording = false;
   bool _isSubmittingAttachments = false;
+  int _submissionRevision = 0;
   bool _attachmentsExpanded = true;
   bool _didStartRecordingFromPrimaryDrag = false;
   bool _isApplyingDraft = false;
@@ -7082,6 +7162,8 @@ class _ComposerState extends State<_Composer> {
       widget.controller.addListener(_handleTextChanged);
     }
     if (oldWidget.sessionId != widget.sessionId) {
+      _submissionRevision += 1;
+      _isSubmittingAttachments = false;
       _resetRecorderForSessionChange();
     }
     final draftChanged = oldWidget.draft.text != widget.draft.text ||
@@ -7788,6 +7870,12 @@ class _ComposerState extends State<_Composer> {
       return;
     }
 
+    final revision = ++_submissionRevision;
+    final prompt = widget.controller.text.trim();
+    final sendAudio = widget.onSendAudio;
+    final sendAttachments = widget.onSendAttachments;
+    final updateOriginDraft = widget.onBackgroundDraftChanged;
+    final originOptions = widget.draft.codexRunOptions;
     final stagedAttachments = List<_PendingAttachmentDraft>.from(
       _pendingAttachments,
     );
@@ -7795,20 +7883,35 @@ class _ComposerState extends State<_Composer> {
     _audioRecorder = widget.audioRecorderFactory();
     _recordingTicker?.cancel();
     _recordingStopwatch?.stop();
-    final audioFile = await recorder.stop();
     _recordingStopwatch = null;
+    setState(() { _isRecording = false; _isSubmittingAttachments = true; });
+    XFile? stoppedFile;
+    try {
+      stoppedFile = await recorder.stop();
+    } catch (error) {
+      if (mounted && revision == _submissionRevision) {
+        setState(() { _isSubmittingAttachments = false; });
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo finalizar el audio: $error')));
+      }
+      return;
+    } finally {
+      // Release this recorder before saving can overlap a new recording.
+      try { await recorder.dispose(); } catch (_) { /* Keep a successfully stopped audio available for saving. */ }
+    }
 
-    setState(() {
-      _isRecording = false;
-    });
+    final audioFile = stoppedFile;
+    if (mounted && revision == _submissionRevision) {
+      setState(() { _isRecording = false; });
+    }
 
     if (audioFile == null) {
-      await recorder.dispose();
+      if (mounted && revision == _submissionRevision) {
+        setState(() { _isSubmittingAttachments = false; });
+      }
       return;
     }
 
-    final prompt = widget.controller.text.trim();
-    if (mounted) {
+    if (mounted && revision == _submissionRevision) {
       setState(() {
         _isSubmittingAttachments = true;
       });
@@ -7837,12 +7940,12 @@ class _ComposerState extends State<_Composer> {
           ...stagedAttachments,
           audioAttachment,
         ];
-        didSend = await _sendPendingAttachments(
+        didSend = await sendAttachments(
           attachments,
           prompt: prompt.isEmpty ? null : prompt,
         );
       } else {
-        didSend = await widget.onSendAudio(
+        didSend = await sendAudio(
           audioFile,
           message: prompt.isEmpty ? null : prompt,
         );
@@ -7850,10 +7953,16 @@ class _ComposerState extends State<_Composer> {
     } catch (_) {
       didSend = false;
     } finally {
-      await recorder.cleanup(audioFile);
-      await recorder.dispose();
+      if (didSend) await recorder.cleanup(audioFile);
     }
-    if (!mounted) {
+    if (!mounted || revision != _submissionRevision) {
+      updateOriginDraft?.call(_ComposerDraft(
+        text: didSend ? '' : prompt, codexRunOptions: originOptions,
+        attachments: didSend ? const [] : [
+          ...stagedAttachments,
+          _PendingAttachmentDraft(file: audioFile, name: audioFile.name, kind: _AttachmentDraftKind.audio),
+        ],
+      ));
       return;
     }
     setState(() {
@@ -7864,13 +7973,16 @@ class _ComposerState extends State<_Composer> {
         _pendingAttachments.clear();
         _attachmentsExpanded = true;
       });
-      widget.controller.clear();
+      if (widget.controller.text.trim() == prompt) widget.controller.clear();
       _emitDraftChanged();
       return;
     }
-    if (usedAttachmentsFlow) {
-      return;
-    }
+    setState(() {
+      _pendingAttachments.add(_PendingAttachmentDraft(
+        file: audioFile, name: audioFile.name, kind: _AttachmentDraftKind.audio));
+    });
+    _emitDraftChanged();
+    if (usedAttachmentsFlow) { return; }
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Voice note send failed.'),
@@ -7892,6 +8004,7 @@ class _ComposerState extends State<_Composer> {
         _pendingAttachments,
       );
       final prompt = widget.controller.text.trim();
+      final revision = ++_submissionRevision;
       if (mounted) {
         setState(() {
           _isSubmittingAttachments = true;
@@ -7901,7 +8014,7 @@ class _ComposerState extends State<_Composer> {
         attachments,
         prompt: prompt.isEmpty ? null : prompt,
       );
-      if (!mounted) {
+      if (!mounted || revision != _submissionRevision) {
         return;
       }
       if (didSend) {
@@ -7909,7 +8022,7 @@ class _ComposerState extends State<_Composer> {
           _pendingAttachments.clear();
           _isSubmittingAttachments = false;
         });
-        widget.controller.clear();
+        if (widget.controller.text.trim() == prompt) widget.controller.clear();
         _emitDraftChanged();
       } else {
         setState(() {
@@ -13468,6 +13581,7 @@ Widget buildImageEditorForTest({
 
 @visibleForTesting
 Widget buildComposerVoiceRecordingHarnessForTest({
+  String sessionId = 'test-session',
   required TextEditingController controller,
   required AudioNoteRecorder Function() audioRecorderFactory,
   required Future<bool> Function(XFile audioFile, {String? message})
@@ -13482,7 +13596,7 @@ Widget buildComposerVoiceRecordingHarnessForTest({
   Future<bool> Function(String commandId, String payload)? onSlashCommand,
 }) {
   return _Composer(
-    sessionId: 'test-session',
+    sessionId: sessionId,
     controller: controller,
     draft: _ComposerDraft(
       text: stagedText,

@@ -15,6 +15,8 @@ import '../models/current_run_execution.dart';
 import '../models/job_status_response.dart';
 import '../models/session_detail.dart';
 import '../models/workspace.dart';
+import '../models/outbox_entry.dart';
+import '../services/message_outbox.dart';
 import '../services/api_client.dart';
 import '../services/attachment_type.dart';
 import '../services/chat_notification_content.dart';
@@ -23,10 +25,16 @@ import '../services/chat_notification_service.dart';
 class ChatController extends ChangeNotifier {
   ChatController({
     required ApiClient apiClient,
+    MessageOutbox? outbox,
+    bool negotiateOutbox = false,
     ChatNotificationService notificationService =
         const NoopChatNotificationService(),
   })  : _apiClient = apiClient,
-        _notificationService = notificationService;
+        _notificationService = notificationService,
+        _outbox = outbox,
+        _negotiateOutbox = negotiateOutbox {
+    _outbox?.addListener(_handleOutboxChanged);
+  }
 
   static const int initialTranscriptMessageLimit = 6;
   static const int olderTranscriptPageLimit = 5;
@@ -42,6 +50,42 @@ class ChatController extends ChangeNotifier {
   Future<void>? _sessionsRefresh;
   bool _sessionsRefreshAgain = false;
 
+  final MessageOutbox? _outbox;
+  final bool _negotiateOutbox;
+  bool _serverSupportsOutbox = false;
+  DateTime? _outboxCapabilityCheckedAt;
+  Future<bool>? _outboxCapabilityCheck;
+
+  Future<bool> _canUseOutbox() async {
+    if (_outbox == null) return false;
+    if (!_negotiateOutbox) return true;
+    // Once a turn is queued, never let a later direct send overtake it.
+    if (_outbox.entries.any((entry) => !entry.isAccepted)) return true;
+    final checked = _outboxCapabilityCheckedAt;
+    if (checked != null && DateTime.now().difference(checked) < const Duration(seconds: 30)) {
+      return _serverSupportsOutbox;
+    }
+    return _outboxCapabilityCheck ??= _checkOutboxCapability();
+  }
+
+  Future<bool> _checkOutboxCapability() async {
+    try {
+      final capabilities = await _apiClient.getCapabilities();
+      _serverSupportsOutbox = capabilities.features['message_outbox'] == true;
+    } catch (_) {
+      // Older servers retain their existing transport until the backend upgrade.
+      _serverSupportsOutbox = false;
+    } finally {
+      _outboxCapabilityCheckedAt = DateTime.now();
+      _outboxCapabilityCheck = null;
+    }
+    return _serverSupportsOutbox;
+  }
+
+  final Set<String> _adoptingOutbox = {};
+  final Set<String> _savingOutgoingText = {};
+  List<OutboxEntry> get pendingOutbox => _outbox?.entries.where((entry) => !entry.isAccepted).toList() ?? const [];
+  String? get outboxStorageError => _outbox?.storageError;
   final ApiClient _apiClient;
   final ChatNotificationService _notificationService;
   final List<AgentProfile> _agentProfiles = <AgentProfile>[];
@@ -97,6 +141,14 @@ class ChatController extends ChangeNotifier {
     final sessionId = currentSession?.id ?? _selectedSessionId;
     final serverMessages = currentSession?.messages ?? const <ChatMessage>[];
     final optimisticMessages = <ChatMessage>[
+      ...pendingOutbox.where((entry) => entry.sessionId == sessionId).map((entry) => ChatMessage(
+        id: 'outbox-${entry.id}',
+        text: entry.isAudio ? '${entry.label}: audio' : entry.payload['message'] as String,
+        isUser: true, authorType: ChatMessageAuthorType.human,
+        agentId: AgentId.user, agentType: AgentType.human,
+        status: entry.needsAttention ? ChatMessageStatus.failed : ChatMessageStatus.sending,
+        createdAt: entry.createdAt, updatedAt: entry.createdAt,
+      )),
       ..._optimisticAudioMessages.values
           .where((message) => message.sessionId == sessionId)
           .map((message) => message.message),
@@ -219,6 +271,10 @@ class ChatController extends ChangeNotifier {
   Future<void> initialize() async {
     _setLoading(true);
     try {
+      if (_outbox != null) {
+        try { await _outbox.initialize(); _handleOutboxChanged(); }
+        catch (_) { /* The outbox exposes a persistent, actionable storage error. */ }
+      }
       await refreshAppState();
     } finally {
       _setLoading(false);
@@ -376,6 +432,7 @@ class ChatController extends ChangeNotifier {
   }
 
   Future<void> handleAppResumed() async {
+    _outboxCapabilityCheckedAt = null;
     await refreshAppState(failurePrefix: 'Failed to reconnect to the backend.');
   }
 
@@ -887,7 +944,107 @@ class ChatController extends ChangeNotifier {
     return true;
   }
 
-  Future<bool> sendMessage(
+  Future<bool> enqueueMessage(String text, {
+    String? sessionIdOverride, String? workspacePathOverride,
+    CodexRunOptions? codexRunOptions,
+  }) async {
+    if (_outbox == null || !await _canUseOutbox()) {
+      return _sendMessageDirect(text, sessionIdOverride: sessionIdOverride, workspacePathOverride: workspacePathOverride, codexRunOptions: codexRunOptions);
+    }
+    if (text.trim().isEmpty) return false;
+    return _enqueueOutgoing('text', text.trim(), sessionIdOverride,
+        workspacePathOverride, codexRunOptions);
+  }
+
+  Future<bool> enqueueAudio(XFile file, {String? message,
+    String? sessionIdOverride, String? workspacePathOverride,
+    CodexRunOptions? codexRunOptions,
+  }) async {
+    if (_outbox == null || !await _canUseOutbox()) {
+      return _sendAudioDirect(file, message: message, sessionIdOverride: sessionIdOverride, workspacePathOverride: workspacePathOverride, codexRunOptions: codexRunOptions);
+    }
+    return _enqueueOutgoing('audio', message?.trim() ?? '', sessionIdOverride,
+        workspacePathOverride, codexRunOptions, audio: file);
+  }
+
+  Future<bool> _enqueueOutgoing(String kind, String text, String? sessionId,
+      String? workspace, CodexRunOptions? options, {XFile? audio, String? language}) async {
+    final destination = sessionId ?? _selectedSessionId;
+    if (destination == null) {
+      _errorText = 'Abrí un chat antes de enviar mensajes.';
+      notifyListeners();
+      return false;
+    }
+    final saveKey = '$destination:$text';
+    if (kind == 'text' && !_savingOutgoingText.add(saveKey)) return false;
+    try {
+      await _outbox!.enqueue({
+        'kind': kind, 'message': text, 'session_id': destination,
+        'workspace_path': workspace ?? _currentSession?.workspacePath,
+        'conversation_key': destination,
+        if (audio != null) 'filename': audio.name,
+        if (audio != null) 'content_type': audio.mimeType,
+        if (language != null) 'language': language,
+        if (options != null && !options.isEmpty) 'codex_options': options.toJson(),
+      }, audio: audio);
+      _errorText = null;
+      notifyListeners();
+      return true;
+    } catch (error) {
+      _errorText = 'No se pudo guardar el envío. El borrador se conserva.\n$error';
+      notifyListeners();
+      return false;
+    } finally {
+      if (kind == 'text') _savingOutgoingText.remove(saveKey);
+    }
+  }
+
+  Future<void> retryOutbox(String id) async {
+    try { await _outbox?.retry(id); }
+    catch (error) { _errorText = 'No se pudo reintentar.\n$error'; notifyListeners(); }
+  }
+
+  Future<void> discardOutbox(String id) async {
+    try { await _outbox?.discard(id); }
+    catch (error) { _errorText = 'No se pudo descartar.\n$error'; notifyListeners(); }
+  }
+
+  void _handleOutboxChanged() {
+    if (_disposed) return;
+    for (final entry in _outbox!.entries) {
+      if (!entry.isAccepted || entry.job == null || !_adoptingOutbox.add(entry.id)) continue;
+      final accepted = JobStatusResponse.fromJson(entry.job!);
+      final token = _nextTextToken++;
+      final known = _currentSession?.id == entry.sessionId ? _currentSession?.messages : _sessionCache[entry.sessionId]?.messages;
+      _optimisticTextMessages[token] = _OptimisticTextMessage(
+        sessionId: accepted.sessionId,
+        knownMessageIds: (known ?? const <ChatMessage>[]).map((message) => message.id).toSet(),
+        message: ChatMessage(id: 'outbox-accepted-${entry.id}',
+          text: entry.job!['user_text'] as String? ?? entry.payload['message'] as String,
+          isUser: true, authorType: ChatMessageAuthorType.human,
+          agentId: AgentId.user, agentType: AgentType.human,
+          status: ChatMessageStatus.completed, createdAt: entry.createdAt, updatedAt: entry.createdAt),
+      )..accepted = true
+       ..runId = accepted.runId;
+      unawaited(_registerAcceptedJob(accepted,
+          originSessionId: entry.sessionId, waitForRefresh: false).then((_) async {
+        await _outbox.acknowledge(entry.id);
+      }).catchError((Object error) {
+        _adoptingOutbox.remove(entry.id);
+        _errorText = 'El envío fue aceptado; falta actualizar el chat.\n$error';
+        notifyListeners();
+      }));
+    }
+    notifyListeners();
+  }
+
+  Future<bool> sendMessage(String rawText, {
+    String? sessionIdOverride, String? workspacePathOverride,
+    CodexRunOptions? codexRunOptions,
+  }) => enqueueMessage(rawText, sessionIdOverride: sessionIdOverride,
+      workspacePathOverride: workspacePathOverride, codexRunOptions: codexRunOptions);
+
+  Future<bool> _sendMessageDirect(
     String rawText, {
     String? sessionIdOverride,
     String? workspacePathOverride,
@@ -952,7 +1109,20 @@ class ChatController extends ChangeNotifier {
     await _registerAcceptedJob(accepted, originSessionId: _selectedSessionId);
   }
 
-  Future<bool> sendAudioMessage(
+  Future<bool> sendAudioMessage(XFile audioFile, {
+    String? message, String? language, String? sessionIdOverride,
+    String? workspacePathOverride, CodexRunOptions? codexRunOptions,
+  }) async {
+    if (_outbox != null && await _canUseOutbox()) {
+      return _enqueueOutgoing('audio', message?.trim() ?? '', sessionIdOverride,
+          workspacePathOverride, codexRunOptions, audio: audioFile, language: language);
+    }
+    return _sendAudioDirect(audioFile, message: message, language: language,
+      sessionIdOverride: sessionIdOverride, workspacePathOverride: workspacePathOverride,
+      codexRunOptions: codexRunOptions);
+  }
+
+  Future<bool> _sendAudioDirect(
     XFile audioFile, {
     String? message,
     String? language,
@@ -1203,6 +1373,7 @@ class ChatController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _outbox?.removeListener(_handleOutboxChanged);
     _sessionCache.clear();
     _optimisticTextMessages.clear();
     _pollTimer?.cancel();
