@@ -1476,7 +1476,13 @@ void main() {
       findsOneWidget,
     );
 
+    await tester.ensureVisible(find.text('Show 2 more'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Show 2 more'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.descendant(of: drawer, matching: find.text('Chat 7')),
+    );
     await tester.pumpAndSettle();
 
     expect(
