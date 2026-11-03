@@ -1,0 +1,19 @@
+Destino obligatorio: https://chatgpt.com/g/g-p-6aea4404bac4819180e6443dc3f2a5d4/project
+Crear un chat NUEVO dentro de ese proyecto. No enviar en el chat general ni en otro proyecto.
+Origen: Codex Bridge DEV. El alcance de implementación posterior es DEV; no ampliar a producción.
+Usar ChatGPT en modo Pro, sin investigación profunda.
+Estrategia: consultation/v1. Objetivo: Prueba sintética del backend DEV: este resultado es un fixture de Codex, no una respuesta de ChatGPT. Ningún cambio de producto.
+Responde al objetivo concreto del usuario usando las fuentes pertinentes y GitHub cuando corresponda. Distingue hechos, hipótesis y límites de acceso; cita las fuentes consultadas. No conviertas una consulta general en auditoría visual ni investigación profunda. No ejecutes comandos, cambies el producto ni despliegues durante la consulta. Devuelve conclusiones y próximos pasos verificables según la tarea.
+Repositorio: brunojaime/codex-cli-mobile-bridge. Commit de entrada: 187c48b05869f45ebf8b7797708b80d5986e2866.
+Solicitud: docs/ai-collaboration/runs/dev-backend-smoke-20261103-01/request.json en la rama collaboration/dev-backend-smoke-20261103-01.
+Lee esa solicitud y la evidencia indicada mediante GitHub; no uses una ficha antigua como sustituto.
+Alcance: Analysis only; no product mutation or deployment. No ejecutes comandos ni cambies el producto.
+Entrega result.md con citas, cobertura y acciones verificables en docs/ai-collaboration/runs/dev-backend-smoke-20261103-01/result.md.
+Si la escritura GitHub está habilitada, escribe allí y publica AL FINAL docs/ai-collaboration/runs/dev-backend-smoke-20261103-01/result.json
+con schema codex-chatgpt/result/v1, run_id dev-backend-smoke-20261103-01, request_digest fd56c227e00714de33095dcae68509708873fe251d8db747841634adf7382d70,
+input_commit 187c48b05869f45ebf8b7797708b80d5986e2866, status completed, producer chatgpt, completed_at ISO8601,
+conversation_url y artifacts [{"path":"docs/ai-collaboration/runs/dev-backend-smoke-20261103-01/result.md","sha256":"HASH_SHA256_REAL_DEL_ARCHIVO"}].
+Escribe únicamente en collaboration/dev-backend-smoke-20261103-01; no modifiques otra rama ni el código del producto.
+No inventes hashes ni acredites lectura de imágenes sólo por ver sus enlaces.
+Si no puedes escribir o verificar un hash, entrega la respuesta completa y declara esa limitación;
+Codex la exportará con producer codex-export. No declares entrega GitHub sin verificarla.

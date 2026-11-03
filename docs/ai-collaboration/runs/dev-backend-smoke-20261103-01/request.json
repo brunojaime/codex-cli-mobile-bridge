@@ -1,0 +1,34 @@
+{
+  "schema": "codex-chatgpt/request/v1",
+  "run_id": "dev-backend-smoke-20261103-01",
+  "strategy": "consultation/v1",
+  "repository": "brunojaime/codex-cli-mobile-bridge",
+  "input_commit": "187c48b05869f45ebf8b7797708b80d5986e2866",
+  "goal": "Prueba sintética del backend DEV: este resultado es un fixture de Codex, no una respuesta de ChatGPT. Ningún cambio de producto.",
+  "acceptance": [],
+  "evidence": [],
+  "scope": "Analysis only; no product mutation or deployment",
+  "max_rounds": 3,
+  "strategy_contract": {
+    "status": "defined",
+    "reference": "protocol.md",
+    "required_inputs": [
+      "task_objective",
+      "relevant_context",
+      "acceptance_criteria"
+    ],
+    "requires_evidence": false,
+    "instructions": "Responde al objetivo concreto del usuario usando las fuentes pertinentes y GitHub cuando corresponda. Distingue hechos, hipótesis y límites de acceso; cita las fuentes consultadas. No conviertas una consulta general en auditoría visual ni investigación profunda. No ejecutes comandos, cambies el producto ni despliegues durante la consulta. Devuelve conclusiones y próximos pasos verificables según la tarea.",
+    "closure": [
+      "requested_question_answered",
+      "sources_and_uncertainty_explicit",
+      "actionable_handoff_when_applicable"
+    ]
+  },
+  "created_at": "2026-11-03T21:36:20.449964+00:00",
+  "bridge_environment": "dev",
+  "project_id": "codex-cli-mobile-bridge",
+  "chatgpt_project_id": "g-p-6aea4404bac4819180e6443dc3f2a5d4",
+  "chatgpt_project_url": "https://chatgpt.com/g/g-p-6aea4404bac4819180e6443dc3f2a5d4/project",
+  "request_digest": "fd56c227e00714de33095dcae68509708873fe251d8db747841634adf7382d70"
+}
