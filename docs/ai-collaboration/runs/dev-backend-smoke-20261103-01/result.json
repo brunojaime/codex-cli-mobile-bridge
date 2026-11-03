@@ -1,0 +1,17 @@
+{
+  "schema": "codex-chatgpt/result/v1",
+  "run_id": "dev-backend-smoke-20261103-01",
+  "request_digest": "fd56c227e00714de33095dcae68509708873fe251d8db747841634adf7382d70",
+  "input_commit": "187c48b05869f45ebf8b7797708b80d5986e2866",
+  "status": "completed",
+  "producer": "codex-export",
+  "synthetic_fixture": true,
+  "provenance": "Codex generated this fixture; no ChatGPT conversation was sent for this test",
+  "completed_at": "2026-11-03T21:37:12.420004+00:00",
+  "artifacts": [
+    {
+      "path": "docs/ai-collaboration/runs/dev-backend-smoke-20261103-01/result.md",
+      "sha256": "64d0f0b8cb4a2f26e4fa06a0567ea60897da923871a76a5c2aba3db7db1a7325"
+    }
+  ]
+}
