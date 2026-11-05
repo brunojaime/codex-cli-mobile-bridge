@@ -4,6 +4,7 @@ import json
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
+from fastapi.middleware.cors import CORSMiddleware
 import pytest
 
 from backend.app.api.work_hub import install_work_hub
@@ -29,6 +30,7 @@ def build(transport, environment="prod"):
         ),
         transport=transport,
     )
+    app.add_middleware(CORSMiddleware, allow_origins=["https://product.example"], allow_methods=["*"], allow_headers=["*"])
     return TestClient(app)
 
 
@@ -50,7 +52,7 @@ def test_all_three_entries_use_same_hub_without_forwarding_credentials():
     assert client.post(
         "/api/v1/work/backlog",
         json=payload,
-        headers={"authorization": "unrelated-product-token"},
+        headers={"authorization": "unrelated-product-token", "origin": "https://product.example"},
     ).json()["backlogId"]
     assert json.loads(requests[0].content) == payload
     assert requests[0].url.path == "/work/backlog"
@@ -93,3 +95,9 @@ def test_hub_cannot_proxy_back_to_itself():
                 api_port=8000,
             ),
         )
+
+
+def test_forwarded_responses_keep_cors_for_feedback_consumers():
+    client = build(httpx.MockTransport(lambda _: httpx.Response(202, json={'backlogId':'one'})))
+    response = client.post('/feedback-batches/start-session',json={'executionMode':'backlog'},headers={'origin':'https://product.example'})
+    assert response.headers['access-control-allow-origin'] == 'https://product.example'

@@ -1,6 +1,6 @@
 # Backlog y supervisor de proyectos
 
-Implementación inicial del 5 de noviembre de 2026. El código está preparado para
+Implementación del 5 de noviembre de 2026. La versión Android/web 157 se preparó por el circuito habitual; el estado operativo actualizado está en [despliegue](../reports/work-coordinator-deploy/index.html). El código está preparado para
 pilotos; esto no certifica que un backend instalado, un APK o aplicaciones
 consumidoras estén ejecutando esta versión. Ningún proyecto se habilita solo.
 
@@ -85,8 +85,6 @@ nocturnas con la aplicación cerrada.
 
 ## Configuración operativa
 
-En instalaciones con dos backends, `WORK_HUB_URL` dirige las entradas del Bridge normal al coordinador DEV. La app y WhatsApp ven la misma cola; los lotes de Feedback en modo backlog llegan completos al mismo receptor. No se reenvían cookies ni credenciales del cliente. Un reinicio devuelve 503 y conserva la identidad del envío para reintentar.
-
 API disponible en raíz y `/api/v1`:
 
 | Método y ruta | Uso |
@@ -126,8 +124,7 @@ no tiene procedimientos de promoción a QA/producción.
 
 No hay configuración inventada para Peluquería ni Cebando Tradición. Para
 habilitarlos se debe registrar su worktree, procedimiento y comprobante DEV reales.
-La cola se conserva aunque falte esa configuración. No hay un despliegue ni APK
-nuevo producido por esta implementación.
+La cola se conserva aunque falte esa configuración. La activación de los backends se realiza después de sus corridas vigentes; el laboratorio real se configura automáticamente al cargar el coordinador DEV. Ver el informe de despliegue para distinguir lo activo de lo pendiente.
 
 ## Primera prueba
 
