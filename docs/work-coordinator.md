@@ -85,6 +85,8 @@ nocturnas con la aplicación cerrada.
 
 ## Configuración operativa
 
+En instalaciones con dos backends, `WORK_HUB_URL` dirige las entradas del Bridge normal al coordinador DEV. La app y WhatsApp ven la misma cola; los lotes de Feedback en modo backlog llegan completos al mismo receptor. No se reenvían cookies ni credenciales del cliente. Un reinicio devuelve 503 y conserva la identidad del envío para reintentar.
+
 API disponible en raíz y `/api/v1`:
 
 | Método y ruta | Uso |

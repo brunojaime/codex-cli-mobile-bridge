@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import time
 
 import httpx
@@ -39,7 +40,7 @@ def activate(name, plan, state, report):
         ]
     )
     with httpx.Client(
-        base_url=f"http://127.0.0.1:{port}", timeout=15, trust_env=False
+        base_url=f"http://127.0.0.1:{port}", timeout=90, trust_env=False
     ) as client:
         status = client.get("/maintenance/drain").raise_for_status().json()
         state[name] = {
@@ -140,6 +141,22 @@ def main():
     parser.add_argument("--report", type=Path, required=True)
     args = parser.parse_args()
     plans = json.loads(args.plan.read_text())
+    guard = Path(__file__).resolve().parent / "environment_guard.py"
+    for target in plans:
+        subprocess.run(
+            [
+                sys.executable,
+                str(guard),
+                "--operation",
+                "work-coordinator-activation",
+                "--target-environment",
+                target,
+                "--action",
+                "deploy",
+            ],
+            check=True,
+            capture_output=True,
+        )
     state = {name: {"state": "prepared_waiting_for_idle"} for name in plans}
     atomic(args.report, state)
     pending = list(plans)
