@@ -36,6 +36,14 @@ class FeedbackSubmissions:
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )""")
 
+        with self._connect() as db:
+            db.execute("""CREATE TABLE IF NOT EXISTS submission_reviews (
+                id TEXT PRIMARY KEY, submission_id TEXT NOT NULL,
+                digest TEXT NOT NULL, previous_state TEXT NOT NULL,
+                next_state TEXT NOT NULL, evidence TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )""")
+
     def _connect(self):
         return sqlite3.connect(self.path, timeout=15)
 
@@ -58,6 +66,12 @@ class FeedbackSubmissions:
             if row:
                 if row[0] != digest:
                     raise SubmissionConflict("batch_id_content_conflict")
+                if row[1] == "retryable":
+                    db.execute(
+                        "UPDATE submissions SET owner=?,state='reserved',updated_at=CURRENT_TIMESTAMP WHERE id=? AND state='retryable'",
+                        (owner, identity),
+                    )
+                    return {"id": identity, "state": "new", "owner": owner}
                 return {
                     "id": identity,
                     "state": row[1],
@@ -82,6 +96,39 @@ class FeedbackSubmissions:
             )
             if result.rowcount != 1:
                 raise SubmissionConflict("submission_ownership_conflict")
+
+    def authorize_reviewed_retry(self, identity: str, evidence: dict) -> dict:
+        """Trusted local operator only; no public HTTP reset or automatic retry.
+
+        Review must establish an empty preliminary session with no run, receipt,
+        or concurrent operation. Preserve identity/digest and append the review.
+        """
+        if (
+            evidence.get("environment") != "dev"
+            or not str(evidence.get("reason") or "").strip()
+            or not str(evidence.get("session_id") or "").strip()
+            or evidence.get("session_messages") != 0
+            or evidence.get("session_runs") != 0
+            or evidence.get("no_active_operations") is not True
+        ):
+            raise SubmissionConflict("reviewed_retry_evidence_required")
+        review_id = uuid4().hex
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT digest,state,receipt FROM submissions WHERE id=?", (identity,)
+            ).fetchone()
+            if row is None or row[1] != "uncertain" or row[2] is not None:
+                raise SubmissionConflict("only_reviewed_uncertain_without_receipt_can_retry")
+            db.execute(
+                "INSERT INTO submission_reviews(id,submission_id,digest,previous_state,next_state,evidence) VALUES(?,?,?,'uncertain','retryable',?)",
+                (review_id, identity, row[0], json.dumps(evidence, sort_keys=True)),
+            )
+            db.execute(
+                "UPDATE submissions SET state='retryable',updated_at=CURRENT_TIMESTAMP WHERE id=? AND state='uncertain'",
+                (identity,),
+            )
+        return {"id": identity, "state": "retryable", "review_id": review_id}
 
     def status(self, identity: str) -> dict | None:
         with self._connect() as db:
