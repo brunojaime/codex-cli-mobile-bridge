@@ -19,7 +19,8 @@
   "files": [
     "src",
     "README.md",
-    "tools"
+    "tools/cli.mjs",
+    "tools/feedback_conformance.py"
   ],
   "scripts": {
     "test": "node --test test/*.test.js",
