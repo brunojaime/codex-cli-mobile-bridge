@@ -29,7 +29,7 @@ def build(root, output, release_id):
   for p in sorted(directory.rglob('*')):
    rel=p.relative_to(directory)
    if not p.is_file() or any(x in ('.dart_tool','build','node_modules','.git','.gradle') for x in rel.parts) or p.name in ('pubspec.lock','.flutter-plugins-dependencies') or p.suffix in ('.pyc',):continue
-   if rel.parts[0] not in ('lib','android','ios','macos') and p.name not in ('pubspec.yaml','README.md','analysis_options.yaml'):continue
+   if rel.parts[0] not in ('lib','android','ios','macos','assets') and p.name not in ('pubspec.yaml','README.md','analysis_options.yaml'):continue
    files[package+'/'+rel.as_posix()]=p.read_bytes()
  files['tools/feedback_conformance.py']=(web/'tools/feedback_conformance.py').read_bytes()
  import gzip
