@@ -34,6 +34,13 @@ chat origen. El menú y esta navegación requieren la versión móvil que los in
 - El contexto del turno humano entrega la URL loopback exacta, ID del chat e ID
   del mensaje origen. No se adivinan por fecha ni se cambia automáticamente entre
   DEV y PROD. La herramienta no acepta hosts externos o redirecciones.
+- El ID del chat es UUID. El ID del mensaje acepta UUID o
+  `client-intake-` seguido de 64 caracteres hexadecimales minúsculos, como los
+  mensajes de la cola móvil. Se conserva el identificador real: no convertirlo
+  ni inventar otro UUID. El backend verifica que pertenezca a un mensaje humano
+  de la conversación de origen antes de reservar o crear un lanzamiento.
+- El kickoff admite hasta 10.000 caracteres. Para tareas extensas, usar un
+  kickoff breve que referencie un handoff completo dentro del mismo proyecto.
 - Registro durable: archivo `*.launches.sqlite3` junto al chat store de cada
   backend. No se comparten los registros entre ambientes. Conservarlo al mover
   o respaldar una instalación junto con su chat store.

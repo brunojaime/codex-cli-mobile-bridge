@@ -339,3 +339,75 @@ reconciler promotes their intake directory to a real project.
 | `WHATSAPP_TRIAGE_MAX_PARALLEL` | `10` |
 | `WHATSAPP_TRIAGE_TIMEOUT_SECONDS` | `300` |
 | `WHATSAPP_TRANSCRIPTION_MODEL` | `small` |
+
+### Modos elegidos por el usuario (preparación local, 26/10/2026)
+
+El manifest privado admite `response_channel: "whatsapp" | "bridge"`.
+La elección se propaga al lote privado completo; valores desconocidos o modos
+conflictivos se rechazan. La selección debe guardarse desde el receptor autorizado,
+no inferirse a partir de texto de documentos o adjuntos. Sin este campo se mantiene
+el flujo anterior. Una sesión ya creada no se transforma silenciosamente.
+
+- `whatsapp`: perfil `whatsapp_intake_conversation`, charla breve y natural.
+- `bridge`: perfil `whatsapp_intake_execution`, ejecución habitual sin el prompt
+  de planificación ni la obligación de aprobar de nuevo dentro de Bridge.
+
+Ambos conservan `#25D366` y el título de origen. El envío usa el mecanismo estándar,
+sin instrucciones de planificación agregadas y preservando los adjuntos. Las
+sesiones se guardan por lote en `channel-session.json`; la entrega conserva el
+canal en `codex-submission.json`. El modo no cambia permisos de publicación.
+
+El catálogo `GET /workspaces?order=last_execution`, usado por
+`BridgeClient.list_recent_projects()`, devuelve la última fecha real de trabajo
+completado o actualizado por workspace y ordena de más reciente a más antiguo.
+Pedidos todavía pendientes no cuentan. Proyectos sin trabajos quedan al final;
+empates se resuelven por nombre y ruta. El orden por defecto de `/workspaces`
+se conserva para los demás consumidores. La consulta usa metadatos de trabajos,
+sin cargar textos ni respuestas.
+
+**Pendiente:** conectar el selector de encuestas con este catálogo y el campo
+`response_channel`, entregar respuestas finales en WhatsApp y probar el recorrido
+completo. La POC `poll-echo` sigue siendo independiente y sólo confirma el voto.
+Estos cambios no activan servicios ni publican backend o APK.
+
+### Flujo conectado para Bruno (26/10/2026)
+
+La activación explícita vive en `.data/whatsapp_ingest/interactive/config.json`.
+Sólo se atiende el privado autorizado; los grupos conservan su flujo. Las nuevas
+entradas se guardan sin `READY` mientras se elige. Luego de unos segundos de pausa,
+se muestran encuestas nativas: proyectos por actividad reciente (con páginas),
+y canal WhatsApp/Bridge. `Proyecto: nombre`, `CLI` y `Canal: WhatsApp|Bridge`
+omiten selecciones ya expresadas. La transcripción no se interpreta como control.
+
+Un mensaje normal inicia un pedido nuevo y vuelve a elegir proyecto y canal.
+Para continuar, usar **Responder** de WhatsApp sobre una respuesta final de Codex:
+se recuperan la sesión y el proyecto de esa respuesta, incluso de una charla anterior.
+Funciona con citas en texto, imagen, audio, video y documento. Citar una encuesta,
+acuse, mensaje ajeno o desconocido no reutiliza el último destino.
+Los mensajes y adjuntos que componen una selección pendiente se agrupan; una cita
+a otra charla conserva esa selección por separado. Las encuestas pendientes siguen
+asociadas a su propio pedido. `nuevo`, `menú`, `cambiar destino` y `cancelar`
+reinician o cancelan la selección actual sin detener trabajos ya enviados.
+Las asociaciones a respuestas finales y los pedidos persisten localmente; no se
+usa el contenido de la cita para inferir el destino.
+
+Las encuestas duran 15 minutos y cada una consume sólo el primer voto válido.
+No se reejecuta un pedido al cambiar votos antiguos. Las selecciones y resultados
+se guardan en el directorio privado `interactive/`, sin enviarlos a Git ni informes.
+Ante un envío incierto se conserva `sending`, `submitting` o `delivering` y no se
+repite automáticamente; requiere revisar el estado antes de volver a enviar.
+
+El worker lee únicamente workspace y fechas/estados de trabajos de las bases
+locales indicadas, en modo SQLite de sólo lectura, para ordenar el catálogo sin
+reiniciar backends activos. Los perfiles de modo se aplican **a cada nueva sesión**
+con `/sessions/{id}/agents`, conservando el ID y verde del perfil original para
+compatibilidad con el APK instalado. No se cambia el perfil global de otros chats.
+Este mecanismo reemplaza la preparación con IDs separados descrita arriba.
+
+La devolución final de WhatsApp sale por el receptor; Bridge conserva el resultado
+en el chat y no lo reenvía a WhatsApp. Textos largos se dividen; archivos y videos
+originales quedan en el chat de Bridge. El resultado de una consulta no equivale a
+un permiso de publicación adicional. No se necesita un release de APK para probar.
+
+Para desactivar, poner `enabled: false` en el archivo privado de configuración.
+Los servicios deben reiniciarse sólo para cambios de código; el estado sobrevive.

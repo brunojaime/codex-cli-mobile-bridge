@@ -62,10 +62,10 @@ export function createNativeFeedback(config, storage, fetcher = fetch) {
       const body = await response.json();
       return {presets: body.presets || [], defaultPresetId: body.default_preset_id || body.defaultPresetId};
     },
-    async send(preset) {
+    async send(preset, executionMode = 'execute') {
       if (await legacyUncertain()) throw Error('Hay un envío anterior sin confirmar. Revisá su recepción en Codex Mobile antes de migrar ese lote.');
       const items = await exclusive(load);
-      const result = await submitBatch(config, items, preset, fetcher);
+      const result = await submitBatch(config, items, preset, fetcher, executionMode);
       const sent = new Set(items.map(item => item.id));
       await exclusive(async () => storage.setItem(key, JSON.stringify((await load()).filter(item => !sent.has(item.id)))));
       return result;

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from backend.app.application.services.work_coordinator import guarded_submission
 
 import base64
 from collections.abc import Callable
@@ -1109,6 +1110,7 @@ class MessageService:
                 "Cannot change the session agent profile or configuration while work is in flight."
             )
 
+    @guarded_submission
     def submit_message(
         self,
         message: str,

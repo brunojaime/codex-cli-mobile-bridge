@@ -109,3 +109,30 @@ test('negotiation blocks an old Bridge before any POST and keeps batch identity 
  await submitBatch({...config,sourceDisplayName:'Translated label'},[entry],'default',transport);
  assert.equal(ids[0],ids[1]);
 });
+test('backlog receipt is durable and retries reuse the same batch identity', async () => {
+  const entry = item();
+  const first = createBatch(config, [entry], 'default', 'backlog');
+  assert.equal(first.executionMode, 'backlog');
+  assert.equal(first.batchId, createBatch(config, [entry], 'default', 'backlog').batchId);
+  const receipt = await submitBatch(config, [entry], 'default', async (url, options) => {
+    if(url.endsWith('/feedback-contract'))return new Response(JSON.stringify({kind:'codex.feedbackContract',supportedBatchVersions:[3],idempotentSubmissions:true,submissionPath:'/feedback-batches/start-session',supportedExecutionModes:['execute','backlog']}));
+    assert.equal(JSON.parse(options.body).executionMode, 'backlog');
+    return new Response(JSON.stringify({backlogId: 'durable-task', status: 'queued'}), {status: 202});
+  }, 'backlog');
+  assert.equal(receipt.backlogId, 'durable-task');
+});
+
+ test('backlog negotiates capability and hashes complete immutable content', async()=>{
+  const entry={...item(),audioBase64:'YQ==',hasAudio:true,audioMimeType:'audio/webm'};
+  const requests=[];const transport=async(url,options)=>{
+   if(url.endsWith('/feedback-contract'))return new Response(JSON.stringify({kind:'codex.feedbackContract',supportedBatchVersions:[3],idempotentSubmissions:true,submissionPath:'/feedback-batches/start-session',supportedExecutionModes:['execute','backlog']}));
+   requests.push(JSON.parse(options.body));return new Response(JSON.stringify({backlogId:'one'}));
+  };
+  await submitBatch(config,[entry],'default',transport,'backlog');
+  await submitBatch(config,[JSON.parse(JSON.stringify(entry))],'default',transport,'backlog');
+  assert.deepEqual(requests[0],requests[1]);assert.match(requests[0].batchId,/^feedback-[a-f0-9]{64}$/);
+  await submitBatch(config,[{...entry,audioBase64:'Yg=='}],'default',transport,'backlog');
+  assert.notEqual(requests[0].batchId,requests[2].batchId);
+  let posts=0;await assert.rejects(submitBatch(config,[entry],'default',async(url,opts)=>{if(opts.method==='POST')posts++;return new Response(JSON.stringify({kind:'codex.feedbackContract',supportedBatchVersions:[3],idempotentSubmissions:true,submissionPath:'/feedback-batches/start-session'}));},'backlog'));
+  assert.equal(posts,0);
+ });

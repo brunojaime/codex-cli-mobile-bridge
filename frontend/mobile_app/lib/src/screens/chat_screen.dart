@@ -29,6 +29,9 @@ import '../models/workspace.dart';
 import '../services/api_client.dart';
 import '../services/message_outbox.dart';
 import '../widgets/outbox_panel.dart';
+import '../widgets/agent_proposals.dart';
+import 'work_screen.dart';
+import '../services/work_client.dart';
 import '../services/attachment_type.dart';
 import '../services/audio_note_recorder.dart';
 import '../services/chat_notification_service.dart';
@@ -407,6 +410,7 @@ const Key kChatScreenBodyScrollViewKey = ValueKey<String>(
 );
 
 enum _AppBarOverflowAction {
+  work,
   apps,
   secrets,
   conversationContext,
@@ -1512,6 +1516,23 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     final workspacePathBeforeSend = originController.currentSession?.workspacePath;
     final codexRunOptions = _currentComposerDraft().codexRunOptions;
     final submittedText = _textController.text;
+    final backlogPrefix = RegExp(r'^(?:/backlog\s+|agreg[aá]\s+al\s+backlog\s*:?\s*)',caseSensitive:false).firstMatch(submittedText.trim());
+    if(backlogPrefix != null) {
+      final instruction=submittedText.trim().substring(backlogPrefix.end).trim();
+      if(workspacePathBeforeSend==null || instruction.isEmpty) return false;
+      final client=WorkClient(_activeServer?.baseUrl ?? widget.initialApiBaseUrl);
+      try {
+        await client.enqueue(workspacePathBeforeSend,instruction);
+        if(mounted) {
+          if(_textController.text==submittedText)_textController.clear();
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Agregado al backlog; se ejecutará al completar el trabajo anterior.')));
+        }
+        return true;
+      } catch(e) {
+        if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('No se confirmó el ingreso al backlog: $e')));
+        return false;
+      } finally { client.close(); }
+    }
     if (await _maybeHandleOpenMcpAppCommand(submittedText)) {
       return true;
     }
@@ -1943,6 +1964,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     ChatController? originController, String? originSessionId,
     String? originWorkspace, CodexRunOptions? originOptions,
   }) async {
+    if (RegExp(r'^(?:/backlog\s+|agreg[aá]\s+al\s+backlog\s*:?\s*)', caseSensitive: false).hasMatch((prompt ?? '').trim())) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Para guardar capturas o audio en backlog, usá Feedback. El adjunto sigue en el borrador.')));
+      return false;
+    }
     final controller = originController ?? _chatController;
     final sessionIdBeforeSend = originSessionId ?? controller.selectedSessionId;
     final workspacePathBeforeSend = originWorkspace ?? controller.currentSession?.workspacePath;
@@ -4217,6 +4242,13 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
         (_chatController.currentSession?.turnSummariesEnabled ?? false);
     final showingSummaryView = _chatBodyView != _ChatBodyView.conversation;
     final primaryActions = <Widget>[
+      AgentProposalsButton(
+        key: ValueKey('proposals:${_activeServer?.baseUrl ?? widget.initialApiBaseUrl}'),
+        baseUrl: _activeServer?.baseUrl ?? widget.initialApiBaseUrl,
+        autoStart: widget.enableServerBootstrap && _activeServer != null,
+        notificationService: widget.notificationService,
+        onOpenChat: (id) => _chatController.selectSession(id),
+      ),
       AgentStudioStatusButton(
         session: _chatController.currentSession,
         onPressed: () async {
@@ -4250,6 +4282,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
             unawaited(_handleAppBarOverflowAction(action));
           },
           itemBuilder: (context) => <PopupMenuEntry<_AppBarOverflowAction>>[
+            _buildAppBarOverflowMenuItem(action:_AppBarOverflowAction.work,icon:Icons.playlist_play_rounded,label:'Backlog y Tu noche'),
             _buildAppBarOverflowMenuItem(
               action: _AppBarOverflowAction.apps,
               icon: Icons.apps_rounded,
@@ -4326,6 +4359,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     }
     return <Widget>[
       ...primaryActions,
+      IconButton(onPressed:_openWork,icon:const Icon(Icons.playlist_play_rounded),tooltip:'Backlog y Tu noche'),
       IconButton(
         onPressed: () async {
           await _openInstallableAppsSheet();
@@ -4457,8 +4491,19 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     );
   }
 
+  Future<void> _openWork() async {
+    await Navigator.of(context).push(MaterialPageRoute<void>(builder:(_)=>WorkScreen(
+      baseUrl:_activeServer?.baseUrl ?? widget.initialApiBaseUrl,
+      workspacePath:_chatController.currentSession?.workspacePath,
+      onOpenChat:(id)=>_chatController.selectSession(id),
+    )));
+  }
+
   Future<void> _handleAppBarOverflowAction(_AppBarOverflowAction action) async {
     switch (action) {
+      case _AppBarOverflowAction.work:
+        await _openWork();
+        break;
       case _AppBarOverflowAction.apps:
         await _openInstallableAppsSheet();
         return;
@@ -5508,7 +5553,11 @@ class _SessionTile extends StatelessWidget {
                 ? const Color(0xFFEAF0FF)
                 : null;
     final isWhatsAppIntake =
-        session.agentProfileId == 'whatsapp_intake_planner';
+        const {
+          'whatsapp_intake_planner',
+          'whatsapp_intake_conversation',
+          'whatsapp_intake_execution',
+        }.contains(session.agentProfileId);
     final timelineColor = isActive || isUploading
         ? const Color(0xFFA8C7C0)
         : const Color(0xFF8B97B5);

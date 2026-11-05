@@ -50,14 +50,16 @@ export function createItem(config, { screenshot, comment, points, strokes = [], 
   };
 }
 
-export function createBatch(config, items, preset) {
+export function createBatch(config, items, preset, executionMode = 'execute') {
+  if (!['execute', 'backlog'].includes(executionMode)) throw Error('Modo de ejecución inválido.');
   if (!items.length) throw new Error('Agregá al menos una captura.');
   if (items.some(item => item.sourceApp !== config.sourceApp)) throw new Error('La cola pertenece a otra app.');
   return {
     kind: 'codex.developerFeedbackBatch', version: 3,
     sourceApp: config.sourceApp, sourceDisplayName: items[0].sourceDisplayName || config.sourceDisplayName,
     ...(config.workspacePath ? { workspace_path: config.workspacePath } : {}),
-    workflowPresetId: preset, releaseWhenComplete: false, items: items.flatMap(expandFeedback).map(item => ({ ...item, contextMetadata: { ...item.contextMetadata, feedbackInstructions: `Feedback del entorno ${config.environment}. Implementar y validar. No desplegar producción. La publicación requiere autorización específica.` } })),
+    workflowPresetId: preset, releaseWhenComplete: false,
+    ...(executionMode === 'backlog' ? {executionMode} : {}), items: items.flatMap(expandFeedback).map(item => ({ ...item, contextMetadata: { ...item.contextMetadata, feedbackInstructions: `Feedback del entorno ${config.environment}. Implementar y validar. No desplegar producción. La publicación requiere autorización específica.` } })),
     // Omit message: the Bridge builds the prompt with comments AND audio transcripts.
   };
 }
@@ -95,12 +97,13 @@ export function expandTrace(item) {
   });
 }
 
-export async function submitBatch(config, items, preset, fetcher = fetch) {
-  const batch = createBatch(config, items, preset);
+export async function submitBatch(config, items, preset, fetcher = fetch, executionMode = 'execute') {
+  const batch = createBatch(config, items, preset, executionMode);
   const advertised = await fetcher(`${bridgeUrl(config.bridgeUrl)}/feedback-contract`, {credentials:'omit',signal:AbortSignal.timeout(8000)});
   if (!advertised.ok) throw Error('El Bridge necesita la entrega de Feedback compatible. La cola sigue guardada.');
   const contract = await advertised.json();
   if (contract.kind !== 'codex.feedbackContract' || !contract.supportedBatchVersions?.includes(batch.version) || contract.idempotentSubmissions !== true || contract.submissionPath !== '/feedback-batches/start-session') throw Error('El Bridge no confirmó contrato e idempotencia. La cola sigue guardada.');
+  if (executionMode === 'backlog' && !contract.supportedExecutionModes?.includes('backlog')) throw Error('El Bridge todavía no admite backlog. La cola sigue guardada.');
   // Content-addressed identity survives retries, reloads and client restarts.
   // Include annotations, audio and the chosen destination/flow, not just item IDs.
   const content = JSON.stringify(batch);
@@ -114,7 +117,7 @@ export async function submitBatch(config, items, preset, fetcher = fetch) {
   });
   if (!response.ok) throw new Error(`El Bridge no aceptó el envío (${response.status}). La cola sigue guardada.`);
   const result = await response.json();
-  if (!result.job_id && !result.jobId && !result.batchId && !result.feedback_batch_id) {
+  if (!result.backlogId && !result.job_id && !result.jobId && !result.batchId && !result.feedback_batch_id) {
     throw new Error('El Bridge no confirmó el envío. Revisá Codex Mobile antes de volver a enviarlo.');
   }
   return result;

@@ -131,7 +131,7 @@ export function mountFeedback(config) {
       <label id="legacy-review" hidden><input type="checkbox" id="legacy-reviewed">Revisé estos pendientes antiguos en Codex Mobile y confirmé que todavía deben enviarse.</label>
       <label for="preset">Flujo de trabajo</label><select id="preset"><option value="generator_only">Generador</option><option value="generator_reviewer">Generador + revisor</option></select>
       <p class="muted">Conectá Tailscale para enviar. Sólo se envía al tocar «Enviar a Codex».</p>
-      <div class="actions"><button id="send" class="primary" type="button">Enviar a Codex</button></div>
+      <label>Cuándo ejecutar<select id="execution-mode"><option value="execute">Ejecutar ahora</option><option value="backlog">Añadir al backlog</option></select></label><div class="actions"><button id="send" class="primary" type="button">Enviar a Codex</button></div>
       <p id="status" class="status" role="status" aria-live="polite"></p>
     </div></dialog>`;
   document.body.append(host);
@@ -169,7 +169,7 @@ export function mountFeedback(config) {
   const key = queueKey(config);
   const queueStore = createQueueStore(key);
   let items = [], snapshot = null, strokes = [], active = null, pointerId = null, tool = 'pen';
-  let busy = false, disposed = false, frame = 0, presetLoaded = false;
+  let busy = false, disposed = false, frame = 0, presetLoaded = false, presetsPromise = null;
   let traceDraft = null, reviewItem = null, audioUrl = null;
   let pathname = '', width = 0, height = 0, queueError = false;
   const status = (message, error = false) => {
@@ -290,6 +290,8 @@ export function mountFeedback(config) {
   dialog.addEventListener('close', () => { void captureNotes.stop(); captureNotes.pause(); if (!editor.open) launch.focus(); });
   const loadPresets = async () => {
     if (presetLoaded) return;
+    if (presetsPromise) return presetsPromise;
+    presetsPromise = (async () => {
     try {
       const response = await fetch(`${bridgeUrl(config.bridgeUrl)}/feedback-workflow-presets`, { credentials: 'omit', signal: AbortSignal.timeout(8000) });
       if (!response.ok) throw new Error();
@@ -298,6 +300,8 @@ export function mountFeedback(config) {
       el('preset').replaceChildren(...data.presets.map(p => new Option(p.name, p.id)));
       el('preset').value = data.default_preset_id || data.defaultPresetId || data.presets[0].id; presetLoaded = true;
     } catch { if (!disposed && !queueError) status('Podés guardar sin conexión. Para enviar, conectá Tailscale y verificá el Bridge.', true); }
+    })();
+    try { await presetsPromise; } finally { presetsPromise = null; }
   };
   launch.onclick = () => { dock(el('dock').hidden); void loadPresets(); };
   el('pending').onclick = () => { dock(false); showComment(); void loadPresets(); };
@@ -333,10 +337,11 @@ export function mountFeedback(config) {
     if (snapshot || traceDraft) { status('Guardá o descartá la captura o recorrido actual antes de enviar.', true); return; }
     setBusy(true); status('Enviando a Codex…');
     try {
-      const result = await submitBatch(config, items, el('preset').value);
+      await loadPresets();
+      const result = await submitBatch(config, items, el('preset').value, fetch, el('execution-mode').value);
       items = [];
       try { await queueStore.save([]); } catch { queueError = true; }
-      if (!disposed) status(`Enviado a Codex. Seguí el trabajo en Codex Mobile.\nReferencia: ${result.batchId || result.feedback_batch_id || result.job_id || result.jobId}${queueError ? '\nNo se pudo limpiar el almacenamiento: no reenvíes estas capturas al recargar.' : ''}`);
+      if (!disposed) status(`${result.backlogId ? 'Guardado en backlog; se ejecutará después del trabajo anterior.' : 'Enviado a Codex. Seguí el trabajo en Codex Mobile.'}\nReferencia: ${result.backlogId || result.batchId || result.feedback_batch_id || result.job_id || result.jobId}${queueError ? '\nNo se pudo limpiar el almacenamiento: no reenvíes estas capturas al recargar.' : ''}`);
     } catch (error) {
       if (!disposed) status(error.name === 'TimeoutError' || error instanceof TypeError
         ? 'No se pudo confirmar el envío. La cola sigue guardada. Revisá en Codex Mobile si llegó antes de reintentar; verificá Tailscale y el Bridge.' : error.message, true);

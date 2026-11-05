@@ -109,6 +109,16 @@ class GlobalSlashCommandProvider extends SlashCommandProvider {
             : null;
     return <SlashCommand>[
       SlashCommand(
+          id: 'backlog',
+          slash: '/backlog',
+          title: 'Añadir al backlog',
+          description:
+              'Guardar un encargo para ejecutar al terminar el anterior.',
+          scope: 'workspace',
+          actionKind: SlashCommandActionKind.insertText,
+          disabledReason: uxDisabledReason,
+          payload: '/backlog '),
+      SlashCommand(
         id: 'ejecutar',
         slash: '/ejecutar',
         title: 'Generator + Reviewer',

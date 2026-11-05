@@ -34,3 +34,16 @@ test('legacy migration keeps originals and never resends an uncertain legacy bat
  assert.equal((await client.pending()).length,1);assert.equal((await client.pending())[0].comment,'new');
  assert.equal(JSON.parse(await storage.getItem('legacy'))[0].id,'old');
 });
+
+test('native backlog lost response retains audio and retries one identity after recreation',async()=>{
+ const storage=memory(),sent=[];let lose=true;
+ const transport=async(url,request)=>{
+  if(url.endsWith('/feedback-contract'))return new Response(JSON.stringify({kind:'codex.feedbackContract',supportedBatchVersions:[3],idempotentSubmissions:true,submissionPath:'/feedback-batches/start-session',supportedExecutionModes:['execute','backlog']}));
+  sent.push(JSON.parse(request.body));if(lose)throw new TypeError('lost response');return new Response(JSON.stringify({backlogId:'durable-native'}));
+ };
+ const client=createNativeFeedback(config,storage,transport);
+ await client.capture({screenshot:'cG5n',comment:'audio fixture',width:1,height:1,audio:{base64:'dm9pY2U=',mimeType:'audio/webm',durationMs:20,byteLength:5}});
+ await assert.rejects(client.send('default','backlog'));assert.equal((await client.pending())[0].audioBase64,'dm9pY2U=');
+ lose=false;const recreated=createNativeFeedback(config,storage,transport);
+ assert.equal((await recreated.send('default','backlog')).backlogId,'durable-native');assert.deepEqual(sent[0],sent[1]);assert.equal((await recreated.pending()).length,0);
+});

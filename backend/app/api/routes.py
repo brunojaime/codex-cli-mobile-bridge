@@ -5292,6 +5292,9 @@ async def start_feedback_batch_session(
     payload: FeedbackBatchStartRequest,
     container: AppContainer = Depends(get_container),
 ) -> MessageAcceptedResponse:
+    if payload.execution_mode == "backlog":
+        from backend.app.api.work_routes import enqueue_feedback
+        return await enqueue_feedback(payload, container)
     ledger = FeedbackSubmissions(Path(container.settings.feedback_queue_path).with_suffix(".submissions.sqlite3"))
     try:
         reservation = await run_in_threadpool(ledger.reserve, payload.model_dump(mode="json", exclude_none=True))
@@ -5319,6 +5322,8 @@ async def feedback_contract():
         "idempotentSubmissions": True,
         "submissionStatusPath": "/feedback-submissions/{batchId}",
         "releaseRequestExpandsAuthority": False,
+        "supportedExecutionModes": ["execute", "backlog"],
+        "backlogReceiptField": "backlogId",
     }
 
 

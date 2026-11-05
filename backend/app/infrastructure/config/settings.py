@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     use_lambda: bool = False
     api_host: str = "0.0.0.0"
     api_port: int = 8000
+    work_hub_url: str = ""
     api_base_url: str = "http://localhost:8000"
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
     codex_command: str = "codex"

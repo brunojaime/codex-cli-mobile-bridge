@@ -13,6 +13,7 @@ export function FeedbackPanel({client,title,capture}:FeedbackPanelProps) {
  const [open,setOpen]=useState(false),[shot,setShot]=useState<Awaited<ReturnType<typeof capture>>|null>(null);
  const [comment,setComment]=useState(''),[items,setItems]=useState<NativeFeedbackItem[]>([]);
  const [choices,setChoices]=useState<{id:string;name:string}[]>([]),[preset,setPreset]=useState('');
+ const [executionMode,setExecutionMode]=useState<'execute'|'backlog'>('execute');
  const [busy,setBusy]=useState(false),[message,setMessage]=useState('');
  const [uncertain,setUncertain]=useState(false);
  const action=async(fn:()=>Promise<void>)=>{if(busy)return;setBusy(true);setMessage('');try{await fn();}catch(e){setMessage(e instanceof Error?e.message:'No pudimos completar la operación. La cola se conserva.');}finally{setBusy(false);}};
@@ -23,7 +24,7 @@ export function FeedbackPanel({client,title,capture}:FeedbackPanelProps) {
  });
  const send=()=>Alert.alert('Enviar a Codex',`Se enviarán ${items.length} capturas y comentarios. No publica la app.`,[{text:'Cancelar',style:'cancel'},{text:'Enviar',onPress:()=>action(async()=>{
   if(shot)throw Error('Guardá o descartá la captura abierta antes de enviar.');
-  await client.send(preset);setItems(await client.pending());setMessage('Codex Bridge confirmó la recepción.');
+  const receipt=await client.send(preset,executionMode);setItems(await client.pending());setMessage(receipt.backlogId?`Guardado en backlog. Referencia: ${receipt.backlogId}`:'Codex Bridge confirmó la recepción.');
  })}]);
  return <><Pressable accessibilityRole="button" accessibilityLabel="Comentar esta pantalla" onPress={start} disabled={busy} style={{minHeight:44,padding:10,justifyContent:'center'}}><Text style={{color:'#163c61',fontWeight:'600'}}>Feedback</Text></Pressable>
  <Modal visible={open} animationType="slide" onRequestClose={()=>setOpen(false)}><View style={{flex:1,paddingTop:48,backgroundColor:'#eef3f8'}}><ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{padding:22,gap:12}}>
@@ -34,6 +35,7 @@ export function FeedbackPanel({client,title,capture}:FeedbackPanelProps) {
  {button('Descartar captura',()=>{setShot(null);setComment('');},busy)}</>}
  <Text style={{fontWeight:'700'}}>Pendientes: {items.length}</Text>{items.map((item,index)=><View key={item.id} style={{backgroundColor:'white',padding:12,borderRadius:12}}><Text>{index+1}. {item.comment}</Text>{button('Eliminar comentario '+(index+1),()=>action(async()=>{await client.remove(item.id);setItems(await client.pending());}),busy)}</View>)}
  {choices.map(p=><Pressable key={p.id} accessibilityRole="radio" accessibilityState={{checked:preset===p.id}} onPress={()=>setPreset(p.id)} style={{padding:12,minHeight:48}}><Text>{preset===p.id?'●':'○'} {p.name}</Text></Pressable>)}
+ {(['execute','backlog'] as const).map(mode=><Pressable key={mode} accessibilityRole="radio" accessibilityState={{checked:executionMode===mode,disabled:busy}} disabled={busy} onPress={()=>setExecutionMode(mode)} style={{padding:12,minHeight:48}}><Text>{executionMode===mode?'●':'○'} {mode==='execute'?'Ejecutar ahora':'Añadir al backlog'}</Text></Pressable>)}
  {uncertain&&button('Resolver envío anterior',()=>Alert.alert('Revisar en Codex Mobile','Confirmá el resultado del lote anterior antes de reintentar.',[{text:'Cancelar'},{text:'Ya fue recibido',onPress:()=>action(async()=>{await client.reconcileLegacy('received');setItems(await client.pending());setUncertain(false);})},{text:'No fue recibido',onPress:()=>action(async()=>{await client.reconcileLegacy('not-received');setUncertain(false);})}]),busy)}
  {button('Enviar lote a Codex',send,busy||!items.length||!preset||!!shot||uncertain)}
  {button('Volver a la aplicación',()=>setOpen(false),busy)}

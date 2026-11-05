@@ -62,6 +62,42 @@ void main() {
     );
   });
 
+  testWidgets('backlog mode transfers one durable batch and preserves pending on failure', (tester) async {
+    final payloads = <Map<String, dynamic>>[];
+    var fail = true;
+    final client = MockClient((request) async {
+      if (request.url.path == '/feedback-batches/start-session') {
+        payloads.add(jsonDecode(request.body) as Map<String, dynamic>);
+        return fail ? http.Response('{}', 503) : http.Response('{"backlogId":"durable-task","status":"queued"}', 202);
+      }
+      if (request.url.path == '/feedback-workflow-presets') {
+        return http.Response('{"default_preset_id":"generator_only","presets":[{"id":"generator_only","name":"Generator"}]}', 200);
+      }
+      return http.Response('[]', 200);
+    });
+    await tester.pumpWidget(_Harness(enabled: true, bridgeUrl: 'http://bridge.local', httpClient: client));
+    await _saveFeedback(tester, 'Guardar en backlog');
+    await tester.tap(find.byKey(developerFeedbackPendingKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('feedback-execution-mode')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Añadir al backlog').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackSendBatchKey));
+    await tester.pumpAndSettle();
+    expect(payloads.single['executionMode'], 'backlog');
+    expect(find.textContaining('Guardar en backlog'), findsWidgets);
+    fail = false;
+    await tester.tap(find.byKey(developerFeedbackSendBatchKey));
+    await tester.pumpAndSettle();
+    expect(payloads.length, 2);
+    expect(payloads[0]['batchId'], payloads[1]['batchId']);
+    await tester.tap(find.byKey(developerFeedbackRunsKey));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('En backlog'), findsWidgets);
+  });
+
+
   testWidgets('disabled wrapper is absent and does not intercept app taps', (
     tester,
   ) async {

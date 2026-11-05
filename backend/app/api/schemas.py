@@ -1093,6 +1093,7 @@ class FeedbackBatchStartRequest(BaseModel):
     kind: Literal["codex.developerFeedbackBatch"] = "codex.developerFeedbackBatch"
     # Both are deployed contracts. Unknown versions must fail, not disappear.
     version: Literal[1, 3] = 3
+    execution_mode: Literal['execute','backlog'] = Field(default='execute', validation_alias=AliasChoices('execution_mode','executionMode'))
     batch_id: str | None = Field(
         default=None,
         max_length=160,
