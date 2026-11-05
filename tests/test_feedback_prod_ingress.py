@@ -94,3 +94,42 @@ def test_unknown_protocol_rejected_before_prod_dispatch(tmp_path):
     client,calls=setup(tmp_path)
     assert client.post('/feedback-batches/start-session',json={**payload(),'version':999}).status_code==422
     assert calls==[]
+
+@pytest.mark.parametrize('advertised',[False,True])
+def test_backlog_capability_and_durable_receipt(tmp_path,advertised):
+    fake=FastAPI();calls=[]
+    @fake.get('/health')
+    def health():return {'environment_identity':{'environment':'prod'}}
+    @fake.get('/feedback-contract')
+    def capabilities():return {'supportedBatchVersions':[1,3], 'supportedExecutionModes':['execute','backlog'] if advertised else ['execute'], 'idempotentSubmissions':True,'backlogReceiptField':'backlogId'}
+    @fake.post('/feedback-batches/start-session',status_code=202)
+    def submit(body:dict):
+        calls.append(body);return {'backlogId':'one-stable-backlog','status':'queued'}
+    app=create_app(backend_url='http://127.0.0.1:8000',ledger_path=tmp_path/'ledger.sqlite3',consumers={'fixture':{'origin':'https://fixture.invalid','workspace':'/fixtures/fixture'}},transport=httpx.ASGITransport(app=fake))
+    client=TestClient(app);body={**payload(),'executionMode':'backlog'}
+    contract=client.get('/feedback-contract').json()
+    assert ('backlog' in contract['supportedExecutionModes']) is advertised
+    first=client.post('/feedback-batches/start-session',json=body)
+    if not advertised:
+        assert first.status_code==409;assert calls==[];return
+    assert first.status_code==202
+    assert first.json()['backlogId']=='one-stable-backlog'
+    assert client.post('/bridge-feedback-prod/feedback-batches/start-session',json=body).json()==first.json()
+    assert len(calls)==1
+    assert client.get('/feedback-submissions/stable').json()['state']=='accepted'
+
+
+def test_backlog_cannot_accept_job_receipt_and_blindly_retry(tmp_path):
+    fake=FastAPI();calls=[]
+    @fake.get('/health')
+    def health():return {'environment_identity':{'environment':'prod'}}
+    @fake.get('/feedback-contract')
+    def capabilities():return {'supportedBatchVersions':[3],'supportedExecutionModes':['backlog'],'idempotentSubmissions':True,'backlogReceiptField':'backlogId'}
+    @fake.post('/feedback-batches/start-session',status_code=202)
+    def submit(body:dict):calls.append(body);return {'job_id':'unexpected','session_id':'unexpected'}
+    app=create_app(backend_url='http://127.0.0.1:8000',ledger_path=tmp_path/'ledger.sqlite3',consumers={'fixture':{'origin':'https://fixture.invalid','workspace':'/fixtures/fixture'}},transport=httpx.ASGITransport(app=fake))
+    client=TestClient(app);body={**payload(),'executionMode':'backlog'}
+    assert client.post('/feedback-batches/start-session',json=body).status_code==502
+    assert client.get('/feedback-submissions/stable').json()['state']=='uncertain'
+    assert client.post('/feedback-batches/start-session',json=body).status_code==409
+    assert len(calls)==1
