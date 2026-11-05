@@ -144,3 +144,20 @@ La primera prueba con agentes reales debe repetir esos dos cambios en un DEV
 público descartable, cargando el segundo mientras el primero trabaja. Después se
 puede habilitar un proyecto real y calibrar una noche completa. Aún no se certifican
 recepción push física, duración nocturna real ni despliegues de consumidores.
+
+
+## Configuración por proyecto
+
+En Backlog y Tu noche → Automatización se listan todos los proyectos, incluso sin encargos.
+El único ajuste público inicial es `automatic_execution` (booleano). GET /work/settings
+y PUT /work/settings guardan preferencias durables compartidas por ambos canales mediante Work Hub.
+
+`ProjectSettings` registra estrategias por clave; `AutomaticExecutionStrategy` transforma
+la política efectiva del coordinador sin acoplar la pantalla al procedimiento de publicación.
+Los proyectos existentes heredan su valor anterior hasta el primer cambio explícito.
+Desactivar frena nuevas admisiones, conserva la cola y permite terminar la tarea activa.
+Activar con un procedimiento DEV preparado permite procesar la cola de día y noche.
+Si no existe un procedimiento DEV aislado, la elección queda guardada con estado `needs_setup`;
+no fabrica destinos ni comandos de despliegue. Esto no habilita publicación en QA o PROD.
+Los objetivos de supervisión proactiva y presupuestos permanecen en la política operativa;
+este switch sólo controla la ejecución automática de encargos.

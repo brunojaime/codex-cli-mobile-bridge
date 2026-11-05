@@ -580,3 +580,68 @@ def test_corrupt_claim_never_admits_another_writer(work):
             "Should not start", session_id=work.rig.source.id
         )
     assert not work.rig.provider.requests
+
+
+def test_project_switch_is_durable_and_controls_next_task(work):
+    service = work.service
+    path = str(work.rig.workspace)
+    first = service.enqueue(request(work))
+    service.enqueue(request(work, 'next'))
+    service.project_settings.update(path, {'automatic_execution': False})
+    service.tick()
+    assert service.overview()['projects'][0]['active'] is None
+    assert service.project_settings.overview()['projects'][0]['execution_status'] == 'disabled'
+    service.project_settings.update(path, {'automatic_execution': True})
+    service.tick()
+    active = service.overview()['projects'][0]['active']
+    assert active['id'] == first['id']
+    service.project_settings.update(path, {'automatic_execution': False})
+    complete_cycle(work, active)
+    service.tick()
+    service.tick()
+    assert len(work.receipts) == 1
+    assert service.overview()['projects'][0]['queue'][0]['status'] == 'queued'
+    restarted = WorkCoordinator(work.rig.messages, service.database, delivery=service.delivery)
+    assert restarted.project_settings.overview()['projects'][0]['settings']['automatic_execution'] is False
+
+
+def test_settings_lists_empty_projects_and_explains_missing_delivery(work):
+    service = work.service
+    path = str(work.rig.workspace)
+    with service.ledger() as db:
+        db.execute('DELETE FROM work_policies')
+        db.commit()
+    assert service.project_settings.overview()['projects'][0]['settings'] == {'automatic_execution': False}
+    service.project_settings.update(path, {'automatic_execution': True})
+    project = service.project_settings.overview()['projects'][0]
+    assert project['execution_status'] == 'needs_setup'
+    service.tick()
+    assert service.project_settings.overview()['projects'][0]['settings']['automatic_execution'] is True
+
+
+def test_project_settings_api_validates_keys_values_and_workspace(work):
+    app = FastAPI()
+    from backend.app.api.work_routes import get_work
+    app.include_router(router)
+    app.dependency_overrides[get_work] = lambda: work.service
+    client = TestClient(app)
+    path = str(work.rig.workspace)
+    assert client.get('/work/settings').status_code == 200
+    payload = {'workspace_path': path, 'settings': {'automatic_execution': False}}
+    assert client.put('/work/settings', json=payload).json()['settings']['automatic_execution'] is False
+    for settings in [{'unknown': True}, {'automatic_execution':'false'}, {}]:
+        assert client.put('/work/settings', json={**payload, 'settings': settings}).status_code == 422
+    assert client.put('/work/settings', json={**payload, 'workspace_path':'/missing'}).status_code == 422
+
+
+def test_execution_configuration_uses_registered_strategy(work):
+    from backend.app.application.services.work_settings import ProjectSettings
+    class DisableStrategy:
+        key = 'automatic_execution'
+        def default(self, policy):
+            return True
+        def apply(self, policy, value):
+            return {**policy, 'enabled': False}
+    settings = ProjectSettings(work.service, strategies=[DisableStrategy()])
+    with work.service.ledger() as db:
+        assert settings.effective(db, work.policy.model_dump())['enabled'] is False

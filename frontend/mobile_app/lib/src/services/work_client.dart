@@ -26,6 +26,12 @@ class WorkClient {
     return body;
   }
 
+  Future<Map<String, dynamic>> projectSettings() => request('GET', '/settings');
+  Future<Map<String, dynamic>> updateProjectSettings(
+          String workspace, Map<String, dynamic> settings) =>
+      request('PUT', '/settings',
+          {'workspace_path': workspace, 'settings': settings});
+
   Future<Map<String, dynamic>> overview() => request('GET', '');
   Future<Map<String, dynamic>> enqueue(
       String workspace, String instruction) async {

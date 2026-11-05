@@ -8,7 +8,7 @@ from uuid import UUID, uuid5, NAMESPACE_URL
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from backend.app.api.routes import get_container
 from backend.app.application.services.work_coordinator import (
@@ -85,6 +85,22 @@ def enqueue(payload: WorkInput, service=Depends(get_work)):
 @router.put("/policy")
 def configure(payload: WorkPolicy, service=Depends(get_work)):
     return call(service.policy, payload)
+
+
+class ProjectSettingsUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    workspace_path: str = Field(min_length=1)
+    settings: dict[str, StrictBool]
+
+
+@router.get("/settings")
+def project_settings(service=Depends(get_work)):
+    return call(service.project_settings.overview)
+
+
+@router.put("/settings")
+def update_project_settings(payload: ProjectSettingsUpdate, service=Depends(get_work)):
+    return call(service.project_settings.update, payload.workspace_path, payload.settings)
 
 
 class Control(BaseModel):

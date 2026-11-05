@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/work_client.dart';
+import 'project_work_settings_screen.dart';
 
 class WorkScreen extends StatefulWidget {
   const WorkScreen(
@@ -93,6 +94,12 @@ class _WorkScreenState extends State<WorkScreen> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _settings() async {
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+        builder: (_) => ProjectWorkSettingsScreen(client: _client)));
+    if (mounted) await _refresh();
+  }
+
   Future<void> _add() async {
     final text = await showDialog<String>(
         context: context, builder: (_) => const _AddWorkDialog());
@@ -127,6 +134,10 @@ class _WorkScreenState extends State<WorkScreen> with WidgetsBindingObserver {
         appBar: AppBar(
             title: const Text('Trabajo de proyectos'),
             actions: [
+              IconButton(
+                  tooltip: 'Automatización',
+                  onPressed: _settings,
+                  icon: const Icon(Icons.tune)),
               IconButton(
                   tooltip: 'Actualizar',
                   onPressed: _refresh,
@@ -171,7 +182,7 @@ class _WorkScreenState extends State<WorkScreen> with WidgetsBindingObserver {
             const Padding(
                 padding: EdgeInsets.symmetric(vertical: 8),
                 child: Text(
-                    'Los encargos se conservan. Falta configurar el procedimiento DEV de este proyecto.')),
+                    'Los encargos se conservan. Revisá el estado en Automatización.')),
           if (project['policy'] != null)
             Row(children: [
               Expanded(
@@ -181,10 +192,11 @@ class _WorkScreenState extends State<WorkScreen> with WidgetsBindingObserver {
               TextButton(
                   onPressed: _acting
                       ? null
-                      : () => _act(() => _client.policy(
-                          Map<String, dynamic>.from(project['policy'] as Map)
-                            ..['enabled'] =
-                                !(project['policy'] as Map)['enabled'])),
+                      : () => _act(() => _client.updateProjectSettings(
+                              project['workspace_path'] as String, {
+                            'automatic_execution':
+                                !(project['policy'] as Map)['enabled']
+                          })),
                   child: Text((project['policy'] as Map)['enabled'] == true
                       ? 'Pausar nuevos'
                       : 'Reanudar'))
