@@ -66,6 +66,7 @@ void main() {
     final payloads = <Map<String, dynamic>>[];
     var fail = true;
     final client = MockClient((request) async {
+      if (request.url.path == '/feedback-contract') return http.Response('{"kind":"codex.feedbackContract","supportedBatchVersions":[3],"idempotentSubmissions":true,"submissionPath":"/feedback-batches/start-session","supportedExecutionModes":["execute","backlog"]}', 200);
       if (request.url.path == '/feedback-batches/start-session') {
         payloads.add(jsonDecode(request.body) as Map<String, dynamic>);
         return fail ? http.Response('{}', 503) : http.Response('{"backlogId":"durable-task","status":"queued"}', 202);
@@ -97,6 +98,24 @@ void main() {
     expect(find.textContaining('En backlog'), findsWidgets);
   });
 
+
+
+  testWidgets('backlog against an old Bridge never POSTs or clears pending', (tester) async {
+    var posts = 0;
+    final client = MockClient((request) async {
+      if (request.method == 'POST') posts++;
+      if (request.url.path == '/feedback-contract') return http.Response('{}', 404);
+      if (request.url.path == '/feedback-workflow-presets') return http.Response('{"default_preset_id":"generator_only","presets":[{"id":"generator_only","name":"Generator"}]}',200);
+      return http.Response('[]',200);
+    });
+    await tester.pumpWidget(_Harness(enabled:true,bridgeUrl:'http://bridge.local',httpClient:client));
+    await _saveFeedback(tester,'Conservar pendiente ante servidor antiguo');
+    await tester.tap(find.byKey(developerFeedbackPendingKey));await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('feedback-execution-mode')));await tester.pumpAndSettle();
+    await tester.tap(find.text('Añadir al backlog').last);await tester.pumpAndSettle();
+    await tester.tap(find.byKey(developerFeedbackSendBatchKey));await tester.pumpAndSettle();
+    expect(posts,0);expect(find.textContaining('Conservar pendiente ante servidor antiguo'),findsWidgets);
+  });
 
   testWidgets('disabled wrapper is absent and does not intercept app taps', (
     tester,

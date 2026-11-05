@@ -117,6 +117,7 @@ export async function submitBatch(config, items, preset, fetcher = fetch, execut
   });
   if (!response.ok) throw new Error(`El Bridge no aceptó el envío (${response.status}). La cola sigue guardada.`);
   const result = await response.json();
+  if (executionMode === 'backlog' && (typeof result.backlogId !== 'string' || !result.backlogId.trim())) throw Error('El Bridge no confirmó backlogId. La cola sigue guardada.');
   if (!result.backlogId && !result.job_id && !result.jobId && !result.batchId && !result.feedback_batch_id) {
     throw new Error('El Bridge no confirmó el envío. Revisá Codex Mobile antes de volver a enviarlo.');
   }

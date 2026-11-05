@@ -2241,6 +2241,10 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     );
     final customBatchSubmit = widget.bridgeSubmitBatch;
     if (customBatchSubmit != null) {
+      if (executionMode == 'backlog') {
+        _showMessage('Este adaptador no confirma backlogId. El feedback sigue guardado.');
+        return null;
+      }
       try {
         await customBatchSubmit(batch);
         return _SubmittedFeedbackBatch.local();
@@ -2279,6 +2283,18 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     final ownsClient = widget.httpClient == null;
     final client = widget.httpClient ?? http.Client();
     try {
+      if (executionMode == 'backlog') {
+        final advertised = await client.get(Uri.parse('$baseUrl/feedback-contract'));
+        if (advertised.statusCode != 200) throw Exception('Bridge sin contrato de backlog');
+        final contract = jsonDecode(advertised.body) as Map<String, Object?>;
+        if (contract['kind'] != 'codex.feedbackContract' ||
+            contract['idempotentSubmissions'] != true ||
+            contract['submissionPath'] != '/feedback-batches/start-session' ||
+            !(contract['supportedBatchVersions'] is List && (contract['supportedBatchVersions'] as List).contains(3)) ||
+            !(contract['supportedExecutionModes'] is List && (contract['supportedExecutionModes'] as List).contains('backlog'))) {
+          throw Exception('Bridge sin soporte de backlog');
+        }
+      }
       final response = await client.post(
         Uri.parse('$baseUrl/feedback-batches/start-session'),
         headers: const <String, String>{'Content-Type': 'application/json'},
@@ -2287,7 +2303,9 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw Exception('HTTP ${response.statusCode}: ${response.body}');
       }
-      final receipt = _SubmittedFeedbackBatch.fromStartResponse(jsonDecode(response.body) as Map<String, Object?>);
+      final decoded = jsonDecode(response.body) as Map<String, Object?>;
+      if (executionMode == 'backlog' && (decoded['backlogId'] is! String || (decoded['backlogId'] as String).trim().isEmpty)) throw Exception('Bridge sin backlogId');
+      final receipt = _SubmittedFeedbackBatch.fromStartResponse(decoded);
       if (receipt == null) throw Exception('El Bridge no confirmó el envío.');
       return receipt;
     } catch (_) {

@@ -1,6 +1,6 @@
 {
   "name": "@codex/developer-feedback-web",
-  "version": "0.8.0-dev.4",
+  "version": "0.8.0-dev.5",
   "type": "module",
   "description": "Reusable browser feedback for Codex Mobile Bridge",
   "exports": {

@@ -136,3 +136,7 @@ test('backlog receipt is durable and retries reuse the same batch identity', asy
   let posts=0;await assert.rejects(submitBatch(config,[entry],'default',async(url,opts)=>{if(opts.method==='POST')posts++;return new Response(JSON.stringify({kind:'codex.feedbackContract',supportedBatchVersions:[3],idempotentSubmissions:true,submissionPath:'/feedback-batches/start-session'}));},'backlog'));
   assert.equal(posts,0);
  });
+
+test('backlog requires its own receipt and rejects an immediate job receipt',async()=>{
+ await assert.rejects(submitBatch(config,[item()],'default',async url=>new Response(JSON.stringify(url.endsWith('/feedback-contract')?{kind:'codex.feedbackContract',supportedBatchVersions:[3],idempotentSubmissions:true,submissionPath:'/feedback-batches/start-session',supportedExecutionModes:['execute','backlog']}:{job_id:'must-not-accept-as-backlog'})),'backlog'),/backlogId/);
+});
