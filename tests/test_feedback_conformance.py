@@ -80,3 +80,30 @@ def test_reject_local_transport_private_dom_and_production(tmp_path):
     manifest["enabledEnvironments"] = ["dev", "prod"]
     (tmp_path / "feedback.project.json").write_text(json.dumps(manifest))
     assert not module.assess(tmp_path, release)["ok"]
+
+
+def test_official_adopter_bootstrap_finds_hoisted_verifier_and_rejects_patch(tmp_path):
+    import subprocess
+    import sys
+    source = Path(__file__).resolve().parents[1] / 'scripts/adopt_feedback_release.py'
+    spec = importlib.util.spec_from_file_location('adopter', source)
+    adopter = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(adopter)
+    root = tmp_path / 'consumer'
+    child = root / 'apps/web'
+    child.mkdir(parents=True)
+    (root / 'package.json').write_text(json.dumps({'workspaces':['apps/*']}))
+    (child / 'package.json').write_text(json.dumps({'scripts':{'build':'build-app'}}))
+    artifact = tmp_path / 'official.tgz'
+    artifact.write_bytes(b'fixture immutable artifact')
+    engine = root / 'node_modules/@codex/developer-feedback-web/tools/feedback_conformance.py'
+    engine.parent.mkdir(parents=True)
+    engine.write_text('print("approved verifier fixture")\n')
+    descriptor = tmp_path / 'approved.json'
+    descriptor.write_text(json.dumps({'id':'fixture','status':'approved-development','packages':{'web':{'artifact':'official.tgz','sha256':hashlib.sha256(artifact.read_bytes()).hexdigest(),'files':{'tools/feedback_conformance.py':hashlib.sha256(engine.read_bytes()).hexdigest()}}}}))
+    (root / 'feedback.project.json').write_text(json.dumps({'release':'fixture','platform':'web','artifact':'vendor/official.tgz','packageManifest':'apps/web/package.json','sourceApp':'fixture'}))
+    assert adopter.adopt(root,descriptor)['ok']
+    command=[sys.executable,str(root/'tools/check-feedback.py')]
+    assert subprocess.run(command,capture_output=True).returncode==0
+    engine.write_text('print("patched")\n')
+    assert subprocess.run(command,capture_output=True).returncode!=0
