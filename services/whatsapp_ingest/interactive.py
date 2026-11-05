@@ -1,6 +1,7 @@
 """Local interactive intake adapter. Only explicitly enabled requests are processed."""
 
 from __future__ import annotations
+import logging
 import sqlite3
 import time
 from pathlib import Path
@@ -22,40 +23,46 @@ def tick(worker):
     root.mkdir(parents=True, exist_ok=True)
     catalog = root / "catalog.json"
     if not catalog.exists() or time.time() - catalog.stat().st_mtime > 30:
-        projects = worker.bridge._request("/workspaces")
-        latest = {}
-        for filename in config.get("databases", []):
-            db = Path(filename).resolve()
-            with sqlite3.connect(
-                db.as_uri() + "?mode=ro", uri=True, timeout=3
-            ) as connection:
-                for path, stamp in connection.execute("""
-                    SELECT s.workspace_path, MAX(COALESCE(j.completed_at,j.updated_at,j.created_at))
-                    FROM jobs j JOIN sessions s ON s.id=j.session_id
-                    WHERE j.status != 'pending' GROUP BY s.workspace_path
-                """):
-                    latest[path] = max(latest.get(path, ""), stamp or "")
-        aliases = {
-            p["slug"]: p["identifiers"]
-            for p in discover_projects(worker.settings.projects_root)
-        }
-        entries = []
-        for p in projects:
-            path = Path(p["path"]).resolve()
-            if path.parent == worker.settings.projects_root and path.is_dir():
-                entries.append(
-                    {
-                        "slug": path.name,
-                        "name": p["name"],
-                        "last_execution_at": latest.get(str(path)),
-                        "aliases": aliases.get(path.name, []),
-                    }
-                )
-        entries.sort(key=lambda p: (p["name"].casefold(), p["slug"]))
-        entries.sort(key=lambda p: p["last_execution_at"] or "", reverse=True)
-        atomic_write_json(
-            catalog, {"version": 1, "updated_at": time.time(), "projects": entries}
-        )
+        try:
+            projects = worker.bridge._request("/workspaces")
+            latest = {}
+            for filename in config.get("databases", []):
+                db = Path(filename).resolve()
+                with sqlite3.connect(
+                    db.as_uri() + "?mode=ro", uri=True, timeout=3
+                ) as connection:
+                    for path, stamp in connection.execute("""
+                        SELECT s.workspace_path, MAX(COALESCE(j.completed_at,j.updated_at,j.created_at))
+                        FROM jobs j JOIN sessions s ON s.id=j.session_id
+                        WHERE j.status != 'pending' GROUP BY s.workspace_path
+                    """):
+                        latest[path] = max(latest.get(path, ""), stamp or "")
+            aliases = {
+                p["slug"]: p["identifiers"]
+                for p in discover_projects(worker.settings.projects_root)
+            }
+            entries = []
+            for p in projects:
+                path = Path(p["path"]).resolve()
+                if path.parent == worker.settings.projects_root and path.is_dir():
+                    entries.append(
+                        {
+                            "slug": path.name,
+                            "name": p["name"],
+                            "last_execution_at": latest.get(str(path)),
+                            "aliases": aliases.get(path.name, []),
+                        }
+                    )
+            entries.sort(key=lambda p: (p["name"].casefold(), p["slug"]))
+            entries.sort(key=lambda p: p["last_execution_at"] or "", reverse=True)
+            atomic_write_json(
+                catalog, {"version": 1, "updated_at": time.time(), "projects": entries}
+            )
+        except Exception:
+            # Selected requests remain processable when catalog refresh is unavailable.
+            logging.getLogger(__name__).warning(
+                "Project catalog refresh unavailable; continuing saved requests"
+            )
     requests = root / "requests"
     requests.mkdir(exist_ok=True)
     for file in sorted(requests.glob("*.json")):
@@ -192,7 +199,7 @@ def enqueue_backlog(worker, state, file, resolution):
         marker = source / "READY"
         marker.touch(mode=0o600)
         try:
-            record = worker._prepare_record(source)
+            record = worker._prepare_record(source, project_override=state["project"])
             if record is None:
                 raise ValueError("Backlog record could not be prepared")
             records.append(record)

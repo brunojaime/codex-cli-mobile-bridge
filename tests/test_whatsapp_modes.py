@@ -279,7 +279,7 @@ def test_whatsapp_backlog_records_durable_receipt_without_opening_chat(tmp_path)
         def _request(self, path, **kwargs):
             calls.append((path, kwargs))
             return {'id': 'durable-task', 'status': 'queued'}
-    worker = SimpleNamespace(settings=SimpleNamespace(data_dir=tmp_path), bridge=Client(), _prepare_record=lambda _: SimpleNamespace(kind='text', content='Cambiar título', media_path=None, workspace=workspace))
+    worker = SimpleNamespace(settings=SimpleNamespace(data_dir=tmp_path), bridge=Client(), _prepare_record=lambda _, **kwargs: SimpleNamespace(kind='text', content='Cambiar título', media_path=None, workspace=workspace))
     state = {'id': 'request-id', 'records': ['inbox/request'], 'project': 'lab'}
     target = tmp_path / 'state.json'
     enqueue_backlog(worker, state, target, {})
@@ -292,3 +292,47 @@ def test_whatsapp_backlog_records_durable_receipt_without_opening_chat(tmp_path)
     assert calls[0][1]['payload']['source_key'] == 'request-id'
     enqueue_backlog(worker, state, target, {})
     assert calls[0][1]['payload'] == calls[1][1]['payload']
+
+
+def test_backlog_resolves_selected_project_without_moving_original_inbox(tmp_path):
+    from services.whatsapp_ingest.interactive import enqueue_backlog
+    data = tmp_path / 'data'
+    source = data / 'inbox' / 'direct-bruno' / '2026-11-05' / 'original'
+    source.mkdir(parents=True)
+    (source / 'message.json').write_text(json.dumps({'message_id':'original','kind':'image','text':'Revisar esta pantalla','media_file':'image.jpg'}))
+    (source / 'image.jpg').write_bytes(b'original-bytes')
+    workspace = tmp_path / 'projects' / 'rd-gestion-hse'
+    workspace.mkdir(parents=True)
+    calls = []
+    class Client:
+        def _request(self, path, **kwargs):
+            calls.append(kwargs['payload'])
+            return {'id':'saved-task','status':'queued'}
+    worker = WhatsAppIntakeWorker(settings=WorkerSettings(data_dir=data, projects_root=workspace.parent),bridge=Client())
+    state = {'id':'selected-request','records':[str(source.relative_to(data))],'project':workspace.name}
+    enqueue_backlog(worker,state,data/'request.json',{})
+    assert calls[0]['workspace_path'] == str(workspace)
+    assert calls[0]['attachments'] == [str(source/'image.jpg')]
+    assert (source/'image.jpg').read_bytes() == b'original-bytes'
+    assert not (source/'READY').exists()
+    assert state['backlog_id'] == 'saved-task'
+
+
+def test_saved_backlog_survives_catalog_refresh_failure(tmp_path, monkeypatch):
+    from services.whatsapp_ingest import interactive
+    root = tmp_path / 'data' / 'interactive'
+    requests = root / 'requests'
+    requests.mkdir(parents=True)
+    (root / 'config.json').write_text(json.dumps({'enabled': True}))
+    project = tmp_path / 'projects' / 'rd-gestion-hse'
+    project.mkdir(parents=True)
+    state = {'id':'saved', 'status':'queued', 'channel':'backlog', 'project':project.name}
+    (requests / 'saved.json').write_text(json.dumps(state))
+    class Client:
+        def _request(self, *args, **kwargs):
+            raise RuntimeError('catalog offline')
+    calls = []
+    monkeypatch.setattr(interactive, 'enqueue_backlog', lambda worker, state, file, resolution: calls.append(state['id']))
+    worker = WhatsAppIntakeWorker(settings=WorkerSettings(data_dir=root.parent, projects_root=project.parent), bridge=Client())
+    interactive.tick(worker)
+    assert calls == ['saved']

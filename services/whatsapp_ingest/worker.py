@@ -803,9 +803,11 @@ class WhatsAppIntakeWorker:
             directories.append(record_dir)
         return sorted(directories)
 
-    def _prepare_record(self, record_dir: Path) -> PreparedRecord | None:
+    def _prepare_record(
+        self, record_dir: Path, *, project_override: str | None = None
+    ) -> PreparedRecord | None:
         relative = record_dir.relative_to(self.settings.data_dir / "inbox")
-        project = relative.parts[0]
+        project = project_override or relative.parts[0]
         if project.startswith("pending-"):
             return None
         manifest = json.loads((record_dir / "message.json").read_text(encoding="utf-8"))
