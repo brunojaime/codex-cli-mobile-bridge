@@ -32,9 +32,10 @@ class _ProjectWorkSettingsScreenState extends State<ProjectWorkSettingsScreen> {
         _error = null;
       });
     } catch (_) {
-      if (mounted)
+      if (mounted) {
         setState(
             () => _error = 'No se pudo cargar la configuración. Reintentá.');
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
