@@ -7386,6 +7386,20 @@ def _app_update_apk_proxy_url(
     channel: str,
     preview_url: str | None = None,
 ) -> str:
+    # Explicit opt-in for public releases: Android's system downloader can fetch
+    # and resume independently of the app's private Bridge/VPN connection.
+    config = container.app_update_service.get_config(source_app)
+    if (
+        (config.release_metadata or {}).get("apkDownloadMode") == "public-github"
+        and config.release_channel != "private-install"
+    ):
+        from urllib.parse import quote
+        from backend.app.application.services.app_update_service import _validate_repo
+        repo = _validate_repo(config.repo)
+        return (
+            f"https://github.com/{repo}/releases/download/"
+            f"{quote(release_tag, safe='')}/{quote(asset_name, safe='')}"
+        )
     generated_apk_url = request.url_for(
         "download_app_update_apk",
         source_app=source_app,
