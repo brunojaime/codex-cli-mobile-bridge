@@ -144,3 +144,30 @@ La primera prueba con agentes reales debe repetir esos dos cambios en un DEV
 público descartable, cargando el segundo mientras el primero trabaja. Después se
 puede habilitar un proyecto real y calibrar una noche completa. Aún no se certifican
 recepción push física, duración nocturna real ni despliegues de consumidores.
+
+## Checkout de ejecución separado
+
+La política conserva `workspace_path` como identidad registrada del proyecto y
+admite `execution_workspace` para un worktree Git del mismo repositorio. La sesión,
+la cola y el task conservan el proyecto original. Se reserva tanto el proyecto como
+el worktree; el proveedor y los comandos de validación/push/DEV usan el checkout
+separado. Su rama sigue siendo `dev/*` y debe estar limpio antes del arranque y la
+entrega. Nunca se cambia de rama ni se limpia el checkout principal.
+
+`verification_strategy="sveltekit"` usa el endpoint real `/_app/version.json`
+y comprueba también `/api/health` del mismo origen: exige `environment=dev` y el
+mismo commit que Git remoto. La estrategia predeterminada conserva el recibo
+`{environment,commit}`. Ninguna estrategia agrega promoción automática a QA/PROD.
+`execution_context` es contexto operativo configurado por el operador; no modifica
+el payload inmutable, la revisión, adjuntos ni autorización original del task.
+Los encargos preexistentes se vuelven elegibles al completar su procedimiento.
+
+Cuando el backend tiene jobs aceptados, `scripts/run_work_coordinator_worker.py`
+puede ejecutar la nueva versión del coordinador usando **el mismo registro** y su
+bloqueo exclusivo `.worker.lock`. El scheduler anterior cede; no se inicia otro
+backlog ni se reinicia la API. El worker conserva en memoria la configuración del
+backend y desactiva la recuperación general de sesiones ajenas. No detenerlo
+con un task o publicación activos. La adopción posterior en la API requiere la
+activación habitual después de drenar jobs y comprobar hashes de runtime para
+preservar correcciones concurrentes. Si se pierde el worker, no lanzar de nuevo un
+task incierto: inspeccionar sus jobs y reservas primero.
