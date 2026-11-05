@@ -2079,6 +2079,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   Future<bool> _submitFeedbackBatchToBridge({
     required String workflowPresetId,
     required bool releaseWhenComplete,
+    String executionMode = 'execute',
   }) async {
     if (_items.isEmpty) return false;
     final groups = _executionGroupsForItems(
@@ -2092,6 +2093,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
         group,
         workflowPresetId: workflowPresetId,
         releaseWhenComplete: releaseWhenComplete,
+        executionMode: executionMode,
         includeQuickAskId: groups.length == 1,
       );
       if (submittedBatch == null) {
@@ -2114,25 +2116,41 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
       _submittedBatches.insertAll(0, submittedBatches.reversed);
     });
     _showMessage(
-      groups.length == 1
+      executionMode == 'backlog' ? 'Guardado en backlog. Se ejecutará al completar el trabajo anterior.' : groups.length == 1
           ? 'Feedback enviado a ${groups.single.target.label}.'
           : 'Feedback enviado a ${groups.length} destinos.',
     );
     return true;
   }
 
+  String _backlogIdentity(_FeedbackExecutionGroup group) {
+    // Stable across retries/reloads; backend also verifies immutable batch content.
+    final text =
+        '${group.target.workspacePath}:${group.items.map((item) => '${item.id}:${item.comment}').join('|')}';
+    var first = 2166136261;
+    var second = 5381;
+    for (final unit in text.codeUnits) {
+      first = ((first ^ unit) * 16777619) & 0xffffffff;
+      second = ((second * 33) ^ unit) & 0xffffffff;
+    }
+    return 'feedback-backlog-${first.toRadixString(16)}-${second.toRadixString(16)}';
+  }
+
   Future<_SubmittedFeedbackBatch?> _submitFeedbackExecutionGroupToBridge(
     _FeedbackExecutionGroup group, {
     required String workflowPresetId,
     required bool releaseWhenComplete,
+    String executionMode = 'execute',
     required bool includeQuickAskId,
   }) async {
     final batch = DeveloperFeedbackBatch(
-      batchId:
-          'feedback-batch-${DateTime.now().toUtc().microsecondsSinceEpoch}',
+      batchId: executionMode == 'backlog'
+          ? _backlogIdentity(group)
+          : 'feedback-batch-${DateTime.now().toUtc().microsecondsSinceEpoch}',
       sourceApp: widget.sourceApp,
       sourceDisplayName: widget.sourceDisplayName,
       workflowPresetId: workflowPresetId,
+      executionMode: executionMode,
       releaseWhenComplete: releaseWhenComplete,
       quickAskId: includeQuickAskId ? _pendingQuickAskId : null,
       workspacePath: group.target.workspacePath,
@@ -2140,7 +2158,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
       items: List.of(group.items),
     );
     final customBatchSubmit = widget.bridgeSubmitBatch;
-    if (customBatchSubmit != null) {
+    if (customBatchSubmit != null && executionMode != 'backlog') {
       try {
         await customBatchSubmit(batch);
         return _SubmittedFeedbackBatch.local();
@@ -2152,6 +2170,12 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
       }
     }
     final customSubmit = widget.bridgeSubmit;
+    if (customSubmit != null && executionMode == 'backlog') {
+      _showMessage(
+        'Este adaptador necesita envío por lotes para guardar en backlog. El feedback sigue guardado.',
+      );
+      return null;
+    }
     if (customSubmit != null) {
       try {
         for (final item in List<DeveloperFeedbackItem>.of(group.items)) {
@@ -2337,6 +2361,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     var selectedPresetId = '';
     _FeedbackExecutionTargetKind? selectedExecutionTargetKind;
     var releaseWhenComplete = false;
+    var executionMode = 'execute';
     var sending = false;
     final initialEmbeddedTarget = _commonEmbeddedSddTarget(_items);
     var selectedSddTargetMode = _modeFromEmbeddedTarget(initialEmbeddedTarget);
@@ -2654,7 +2679,35 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                               );
                             },
                           ),
-                          Row(
+                          DropdownButtonFormField<String>(
+                            key: const ValueKey('feedback-execution-mode'),
+                            isExpanded: true,
+                            initialValue: executionMode,
+                            decoration: const InputDecoration(
+                              labelText: 'Cuándo ejecutar',
+                            ),
+                            items: const [
+                              DropdownMenuItem(
+                                value: 'execute',
+                                child: Text('Ejecutar ahora'),
+                              ),
+                              DropdownMenuItem(
+                                value: 'backlog',
+                                child: Text('Añadir al backlog', overflow: TextOverflow.ellipsis),
+                              ),
+                            ],
+                            onChanged: sending
+                                ? null
+                                : (value) {
+                                    if (value != null)
+                                      setDialogState(
+                                        () => executionMode = value,
+                                      );
+                                  },
+                          ),
+                          if (executionMode == 'backlog')
+                            const Padding(padding: EdgeInsets.symmetric(vertical: 8), child: Text('Se validará y publicará únicamente en DEV antes del siguiente encargo.'))
+                          else Row(
                             children: <Widget>[
                               Checkbox(
                                 key: developerFeedbackReleaseWhenCompleteKey,
@@ -2958,6 +3011,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                                 ? presets.defaultPresetId
                                 : selectedPresetId,
                             releaseWhenComplete: releaseWhenComplete,
+                            executionMode: executionMode,
                           );
                           if (!context.mounted) return;
                           if (sent) {
@@ -3003,6 +3057,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                                 ? presets.defaultPresetId
                                 : selectedPresetId,
                             releaseWhenComplete: releaseWhenComplete,
+                            executionMode: executionMode,
                           );
                           if (!context.mounted) return;
                           if (sent) {
@@ -5915,6 +5970,13 @@ class _SubmittedFeedbackBatch {
   }
 
   static _SubmittedFeedbackBatch? fromStartResponse(Map<String, Object?> json) {
+    if (json['backlogId'] is String) {
+      return _SubmittedFeedbackBatch(
+        status: 'backlog',
+        statusDetail:
+            'Guardado en el backlog. Referencia: ${json['backlogId']}',
+      );
+    }
     final batchId =
         (json['feedback_batch_id'] as String?) ?? (json['batchId'] as String?);
     final jobId = (json['job_id'] as String?) ?? (json['jobId'] as String?);
@@ -5962,7 +6024,7 @@ class _SubmittedFeedbackBatch {
 
   String get statusLabel {
     final detail = (statusDetail ?? '').trim();
-    final base = 'Estado: $status';
+    final base = status == 'backlog' ? 'En backlog' : 'Estado: $status';
     return detail.isEmpty ? base : '$base · $detail';
   }
 
@@ -6088,6 +6150,7 @@ class DeveloperFeedbackBatch {
     required this.sourceDisplayName,
     required this.workflowPresetId,
     required this.releaseWhenComplete,
+    this.executionMode = 'execute',
     this.quickAskId,
     this.workspacePath,
     this.releaseTarget = const <String, Object?>{},
@@ -6099,6 +6162,7 @@ class DeveloperFeedbackBatch {
   final String sourceDisplayName;
   final String workflowPresetId;
   final bool releaseWhenComplete;
+  final String executionMode;
   final String? quickAskId;
   final String? workspacePath;
   final Map<String, Object?> releaseTarget;
@@ -6114,6 +6178,7 @@ class DeveloperFeedbackBatch {
         'sourceDisplayName': sourceDisplayName,
       'workflowPresetId': workflowPresetId,
       'releaseWhenComplete': releaseWhenComplete,
+      if (executionMode == 'backlog') 'executionMode': executionMode,
       if ((quickAskId ?? '').trim().isNotEmpty) 'quickAskId': quickAskId,
       if ((workspacePath ?? '').trim().isNotEmpty)
         'workspace_path': workspacePath!.trim(),

@@ -25,7 +25,7 @@ try {
         if (url.pathname === '/feedback-workflow-presets') return route.fulfill({ json: { default_preset_id: 'default', presets: [{ id: 'default', name: 'Generador' }] } });
         assert.equal(url.pathname, '/feedback-batches/start-session');
         posts.push(route.request().postDataJSON());
-        return route.fulfill({ status: fail ? 503 : 202, json: fail ? {} : { job_id: 'test-job', batchId: 'test-batch' } });
+        return route.fulfill({ status: fail ? 503 : 202, json: fail ? {} : posts.at(-1).executionMode === 'backlog' ? {backlogId: 'durable-task', status: 'queued'} : { job_id: 'test-job', batchId: 'test-batch' } });
       }
       if (url.pathname === '/feedback.js') return route.fulfill({ contentType: 'text/javascript', body: script });
       return route.fulfill({ contentType: 'text/html', body: `<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Prueba aislada de feedback</title><body style="margin:0;background:#eef3f8;font-family:system-ui"><main style="padding:24px;min-height:100vh"><p>PRUEBA LOCAL · ${app.name}</p><h1>Revisión de staging</h1><p>Datos sintéticos exclusivos de esta prueba.</p><section style="background:white;padding:24px;border-radius:16px"><h2>Pantalla de prueba</h2><p>Ejemplo para comprobar capturas y comentarios.</p><input type="password" value="not-captured"></section></main><script type="module">import { mountFeedback } from '/feedback.js'; mountFeedback(${JSON.stringify(config)});</script></body></html>` });
@@ -85,14 +85,19 @@ try {
     await page.getByRole('button', { name: 'Abrir feedback, 1 pendientes', exact: true }).click();
     await page.getByRole('button', { name: 'Ver pendientes (1)', exact: true }).click();
     assert.match(await page.locator('#queue').innerText(), /Mejorar el espacio/);
+    if (app.sourceApp === 'proyecto-inmobiliaria') await page.locator('#execution-mode').selectOption('backlog');
     fail = true;
     await page.getByRole('button', { name: 'Enviar a Codex', exact: true }).click();
     await page.locator('#status').filter({ hasText: '503' }).waitFor();
     assert.match(await page.locator('#queue').innerText(), /Mejorar el espacio/);
     fail = false;
     await page.getByRole('button', { name: 'Enviar a Codex', exact: true }).click();
-    await page.locator('#status').filter({ hasText: 'Enviado a Codex' }).waitFor();
+    await page.locator('#status').filter({ hasText: app.sourceApp === 'proyecto-inmobiliaria' ? 'Guardado en backlog' : 'Enviado a Codex' }).waitFor();
     assert.equal(posts.length, 2);
+    if (app.sourceApp === 'proyecto-inmobiliaria') {
+      assert.equal(posts[1].executionMode, 'backlog');
+      assert.equal(posts[0].batchId, posts[1].batchId);
+    }
     assert.equal(posts[1].sourceApp, app.sourceApp);
     assert.equal(posts[1].releaseWhenComplete, false);
     assert.ok(posts[1].items[0].selectionPoints.length > 20);

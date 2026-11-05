@@ -271,7 +271,8 @@ void main() {
       matching: find.widgetWithText(FilledButton, 'Save'),
     );
 
-    await tester.tap(find.byKey(const ValueKey<String>('agent-engine-generator-codex')));
+    await tester.tap(
+        find.byKey(const ValueKey<String>('agent-engine-generator-codex')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Claude Code').last);
     await tester.pumpAndSettle();
@@ -288,7 +289,8 @@ void main() {
     await tester.tap(find.byType(AgentStudioStatusButton));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const ValueKey<String>('agent-engine-generator-claude')));
+    await tester.tap(
+        find.byKey(const ValueKey<String>('agent-engine-generator-claude')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Codex').last);
     await tester.pumpAndSettle();
@@ -409,40 +411,46 @@ void main() {
     );
   });
 
-  testWidgets('sidebar colors WhatsApp intake titles with their profile color',
-      (WidgetTester tester) async {
-    const whatsappGreen = Color(0xFF25D366);
-    final session = _buildSession(
-      title: 'WhatsApp · Add project indicator',
-      messages: const <ChatMessage>[],
-      agentProfileId: 'whatsapp_intake_planner',
-      agentProfileName: 'WhatsApp Intake',
-      agentProfileColor: '#25D366',
-    );
+  for (final profileId in const [
+    'whatsapp_intake_planner',
+    'whatsapp_intake_conversation',
+    'whatsapp_intake_execution',
+  ]) {
+    testWidgets('sidebar colors $profileId titles with their profile color',
+        (WidgetTester tester) async {
+      const whatsappGreen = Color(0xFF25D366);
+      final session = _buildSession(
+        title: 'WhatsApp · Add project indicator',
+        messages: const <ChatMessage>[],
+        agentProfileId: profileId,
+        agentProfileName: 'WhatsApp Intake',
+        agentProfileColor: '#25D366',
+      );
 
-    await _pumpChatScreen(
-      tester,
-      session: session,
-      apiClient: _ChatScreenOverflowApiClient(session),
-      sidebarWorkspaces: const <Workspace>[
-        Workspace(name: 'Workspace A', path: '/workspace/a'),
-      ],
-    );
+      await _pumpChatScreen(
+        tester,
+        session: session,
+        apiClient: _ChatScreenOverflowApiClient(session),
+        sidebarWorkspaces: const <Workspace>[
+          Workspace(name: 'Workspace A', path: '/workspace/a'),
+        ],
+      );
 
-    tester.state<ScaffoldState>(find.byType(Scaffold)).openDrawer();
-    await tester.pumpAndSettle();
+      tester.state<ScaffoldState>(find.byType(Scaffold)).openDrawer();
+      await tester.pumpAndSettle();
 
-    final title = tester.widget<Text>(
-      find.descendant(
-        of: find.byType(Drawer),
-        matching: find.text(
-          'WhatsApp · Add project indicator',
-          skipOffstage: false,
+      final title = tester.widget<Text>(
+        find.descendant(
+          of: find.byType(Drawer),
+          matching: find.text(
+            'WhatsApp · Add project indicator',
+            skipOffstage: false,
+          ),
         ),
-      ),
-    );
-    expect(title.style?.color, whatsappGreen);
-  });
+      );
+      expect(title.style?.color, whatsappGreen);
+    });
+  }
 
   testWidgets('sidebar session tiles sort by last message and hide metadata',
       (WidgetTester tester) async {

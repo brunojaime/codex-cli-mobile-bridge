@@ -1,8 +1,10 @@
 import 'dart:io';
+import 'dart:async';
 
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import 'chat_notification_service.dart';
+import 'proposal_notification.dart';
 
 const Map<ChatNotificationChannel, _NotificationChannelSpec> _channelSpecs =
     <ChatNotificationChannel, _NotificationChannelSpec>{
@@ -32,12 +34,59 @@ ChatNotificationService createChatNotificationService() {
   return _LocalChatNotificationService();
 }
 
-class _LocalChatNotificationService implements ChatNotificationService {
+class _LocalChatNotificationService
+    implements ChatNotificationService, ProposalNotificationService {
   _LocalChatNotificationService();
 
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
   bool _initialized = false;
+  final _proposalTaps =
+      StreamController<ProposalNotificationTarget>.broadcast();
+  ProposalNotificationTarget? _pendingProposal;
+
+  @override
+  Stream<ProposalNotificationTarget> get proposalTaps => _proposalTaps.stream;
+
+  @override
+  ProposalNotificationTarget? takePendingProposal(String server) {
+    final target = _pendingProposal;
+    if (target?.server != server) return null;
+    _pendingProposal = null;
+    return target;
+  }
+
+  void _handlePayload(String? payload) {
+    final target = ProposalNotificationTarget.parse(payload);
+    if (target == null) return;
+    _pendingProposal = target;
+    _proposalTaps.add(target);
+  }
+
+  @override
+  Future<void> showProposal(ProposalNotificationTarget target) async {
+    if (!_supportsNotifications) return;
+    if (!_initialized) await initialize();
+    // Stable ID replaces the same notice rather than multiplying retries.
+    var id = 5381;
+    for (final unit in '${target.server}:${target.id}'.codeUnits) {
+      id = ((id * 33) ^ unit) & 0x7fffffff;
+    }
+    await _plugin.show(
+        id,
+        'Propuesta de proyecto',
+        'Hay una propuesta para revisar.',
+        const NotificationDetails(
+          android: AndroidNotificationDetails(
+              'agent_proposals', 'Propuestas del agente',
+              channelDescription:
+                  'Propuestas de mejora que requieren una decisión.',
+              importance: Importance.high,
+              priority: Priority.high),
+          iOS: DarwinNotificationDetails(threadIdentifier: 'agent_proposals'),
+        ),
+        payload: target.payload);
+  }
 
   @override
   Future<void> initialize() async {
@@ -57,7 +106,13 @@ class _LocalChatNotificationService implements ChatNotificationService {
       ),
     );
 
-    await _plugin.initialize(initializationSettings);
+    await _plugin.initialize(initializationSettings,
+        onDidReceiveNotificationResponse: (response) =>
+            _handlePayload(response.payload));
+    final launchDetails = await _plugin.getNotificationAppLaunchDetails();
+    if (launchDetails?.didNotificationLaunchApp == true) {
+      _handlePayload(launchDetails?.notificationResponse?.payload);
+    }
 
     final androidImplementation = _plugin.resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin>();

@@ -94,3 +94,14 @@ test('multiple voice comments retain order, parent association and transcription
   const combined = createBatch(config,[trace],'default');assert.equal(combined.items[0].audioBase64,'main-audio');
   assert.equal(combined.items.filter(i=>i.audioBase64).length,13);assert.ok(combined.items.slice(1).every(i=>!i.guidedTrace));
 });
+test('backlog receipt is durable and retries reuse the same batch identity', async () => {
+  const entry = item();
+  const first = createBatch(config, [entry], 'default', 'backlog');
+  assert.equal(first.executionMode, 'backlog');
+  assert.equal(first.batchId, createBatch(config, [entry], 'default', 'backlog').batchId);
+  const receipt = await submitBatch(config, [entry], 'default', async (_, options) => {
+    assert.equal(JSON.parse(options.body).executionMode, 'backlog');
+    return new Response(JSON.stringify({backlogId: 'durable-task', status: 'queued'}), {status: 202});
+  }, 'backlog');
+  assert.equal(receipt.backlogId, 'durable-task');
+});

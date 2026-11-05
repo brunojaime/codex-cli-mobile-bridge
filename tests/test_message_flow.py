@@ -7427,8 +7427,8 @@ def test_document_message_flow_accepts_dwg_cad_reference() -> None:
     assert Path(cad_path).suffix == ".dwg"
 
 
-def test_document_message_flow_rejects_unsupported_documents() -> None:
-    client = build_test_client()
+def test_document_message_flow_preserves_opaque_documents() -> None:
+    client = build_session_client()
 
     create_response = client.post(
         "/message/document",
@@ -7437,8 +7437,13 @@ def test_document_message_flow_rejects_unsupported_documents() -> None:
         },
     )
 
-    assert create_response.status_code == 415
-    assert "Unsupported document type" in create_response.json()["detail"]
+    assert create_response.status_code == 202
+    job = wait_for_job(client, create_response.json()["job_id"])
+    assert job["status"] == "completed"
+    assert "Document kind: file" in job["response"]
+    original = job["response"].split("Original file local path: ", 1)[1].splitlines()[0]
+    assert Path(original).read_bytes() == b"\x00\x01\x02"
+    assert "do not execute" in job["response"]
 
 
 def test_image_message_flow_accepts_image_uploads() -> None:
