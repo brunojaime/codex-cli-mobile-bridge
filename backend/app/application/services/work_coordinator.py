@@ -86,6 +86,7 @@ class WorkPolicy(BaseModel):
     dev_branch: str = Field(pattern=r"^dev(?:[/_-])[A-Za-z0-9._/-]+$")
     remote: str = Field(default="origin", pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
     dev_url: str = Field(min_length=1)
+    preview_url: str | None = None
     # Operator-configured commands, never supplied by a queued task or model.
     validate: list[list[str]] = Field(min_length=1, max_length=10)
     deploy: list[str] = Field(min_length=1, max_length=50)
@@ -103,9 +104,11 @@ class WorkPolicy(BaseModel):
     night_end: str = "08:00"
     timezone: str = "America/Argentina/Buenos_Aires"
 
-    @field_validator("dev_url")
+    @field_validator("dev_url", "preview_url")
     @classmethod
     def url(cls, value):
+        if value is None:
+            return value
         from urllib.parse import urlparse
 
         parsed = urlparse(value)
@@ -678,7 +681,8 @@ class WorkCoordinator:
         return {
             "environment": "dev",
             "commit": commit,
-            "dev_url": policy.dev_url,
+            "dev_url": policy.preview_url or policy.dev_url,
+            "verification_url": policy.dev_url,
             "remote_confirmed": True,
         }
 
