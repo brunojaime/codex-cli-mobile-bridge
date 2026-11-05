@@ -190,6 +190,7 @@ class WorkCoordinator:
                     created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
                     priority INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0, stop_requested INTEGER NOT NULL DEFAULT 0);
                   CREATE TABLE IF NOT EXISTS work_meta (name TEXT PRIMARY KEY, value TEXT NOT NULL);
+                  CREATE TABLE IF NOT EXISTS work_project_settings (workspace TEXT PRIMARY KEY, payload TEXT NOT NULL);
                   CREATE TABLE IF NOT EXISTS work_policies (workspace TEXT PRIMARY KEY, payload TEXT NOT NULL);
                   CREATE TABLE IF NOT EXISTS work_events (
                     seq INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL,
@@ -399,6 +400,11 @@ class WorkCoordinator:
             db.commit()
         return policy.model_dump()
 
+    @property
+    def project_settings(self):
+        from .work_settings import ProjectSettings
+        return ProjectSettings(self)
+
     def overview(self):
         available = {w.path: w.name for w in self.messages.list_workspaces()}
         with self.ledger() as db:
@@ -410,7 +416,7 @@ class WorkCoordinator:
                 if r["workspace"] in available
             ]
             policies = [
-                json.loads(r[0])
+                self.project_settings.effective(db, json.loads(r[0]))
                 for r in db.execute("SELECT payload FROM work_policies")
                 if json.loads(r[0])["workspace_path"] in available
             ]
@@ -782,7 +788,7 @@ class WorkCoordinator:
             )
             db.commit()
             policies = [
-                WorkPolicy.model_validate_json(r[0])
+                WorkPolicy.model_validate(self.project_settings.effective(db, json.loads(r[0])))
                 for r in db.execute("SELECT payload FROM work_policies")
             ]
             # Refresh observers even when no frontend polls their jobs.
