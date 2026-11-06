@@ -412,6 +412,50 @@ class WorkCoordinator:
 
         return ProjectSettings(self)
 
+    def history(self, workspace_path=None, cursor=None, limit=30):
+        """Read-only, paginated terminal work. Never launches or retries a task."""
+        import base64
+
+        available = {w.path: w.name for w in self.messages.list_workspaces()}
+        if workspace_path is not None:
+            self.workspace(workspace_path)
+            available = {workspace_path: available[workspace_path]}
+        if not 1 <= limit <= 100:
+            raise ValueError("El tamaño de página debe estar entre 1 y 100")
+        before = None
+        if cursor:
+            try:
+                before = json.loads(base64.urlsafe_b64decode(cursor.encode()))
+                if (not isinstance(before, list) or len(before) != 2
+                    or not isinstance(before[0], str) or type(before[1]) is not int):
+                    raise ValueError()
+            except Exception:
+                raise ValueError("Cursor de historial no válido") from None
+        if not available:
+            return {"tasks": [], "next_cursor": None}
+        placeholders = ",".join("?" for _ in available)
+        query = ("SELECT rowid AS history_row,* FROM work_tasks "
+                 "WHERE status IN ('completed','cancelled') "
+                 f"AND workspace IN ({placeholders})")
+        args = list(available)
+        if before:
+            query += " AND (updated_at < ? OR (updated_at = ? AND rowid < ?))"
+            args.extend([before[0], before[0], before[1]])
+        query += " ORDER BY updated_at DESC,rowid DESC LIMIT ?"
+        args.append(limit + 1)
+        with self.ledger() as db:
+            rows = db.execute(query, args).fetchall()
+            page = rows[:limit]
+            next_cursor = None
+            if len(rows) > limit:
+                next_cursor = base64.urlsafe_b64encode(json.dumps(
+                    [page[-1]["updated_at"], page[-1]["history_row"]]
+                ).encode()).decode()
+            return {
+                "tasks": [{**self._view(r), "project_name": available[r["workspace"]]} for r in page],
+                "next_cursor": next_cursor,
+            }
+
     def overview(self):
         available = {w.path: w.name for w in self.messages.list_workspaces()}
         with self.ledger() as db:

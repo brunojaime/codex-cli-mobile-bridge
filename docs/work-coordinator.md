@@ -181,3 +181,12 @@ La pausa explícita de RD se conserva; esta migración no autoriza reanudar sus 
 cambiar la identidad del proyecto ni tocar su checkout original. Se reservan ambos
 paths para evitar escritores simultáneos. La estrategia de verificación SvelteKit
 comprueba versión y environment DEV en los endpoints reales del proyecto.
+
+
+## Backlog por proyecto e historial (6 de noviembre)
+
+- El acceso del workspace abre todos los proyectos con pedidos pendientes, en tarjetas con contadores y vista previa. El acceso desde el proyecto limita pendientes, historial, decisiones y configuración a ese proyecto.
+- La vista del proyecto separa «En curso» de «Por hacer». Sólo muestra estados no terminales; completados y retirados se consultan en Historial sin borrar los registros.
+- `GET /work/history?workspace_path=…&cursor=…&limit=30` devuelve exclusivamente completados/retirados de proyectos registrados. Usa paginación por fecha y rowid, con un máximo de 100 por página; leerlo no inicia ejecuciones.
+- La publicación depende del encargo. El coordinador conserva la comprobación Git/DEV y completa la entrega DEV cuando falta; evita repetir una publicación del mismo commit ya verificada.
+- El código de UI no equivale a APK distribuido. Consultar el informe del rediseño para el estado de activación y las capturas de validación.

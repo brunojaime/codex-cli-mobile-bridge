@@ -425,7 +425,7 @@ enum _AppBarOverflowAction {
   newChat,
 }
 
-enum _PinnedWorkspaceAction { newChat, remove }
+enum _PinnedWorkspaceAction { newChat, backlog, remove }
 
 enum _RenameChatMode { manual, generated }
 
@@ -4282,7 +4282,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
             unawaited(_handleAppBarOverflowAction(action));
           },
           itemBuilder: (context) => <PopupMenuEntry<_AppBarOverflowAction>>[
-            _buildAppBarOverflowMenuItem(action:_AppBarOverflowAction.work,icon:Icons.playlist_play_rounded,label:'Backlog y Tu noche'),
+            _buildAppBarOverflowMenuItem(action:_AppBarOverflowAction.work,icon:Icons.playlist_play_rounded,label:'Backlog · Workspace'),
             _buildAppBarOverflowMenuItem(
               action: _AppBarOverflowAction.apps,
               icon: Icons.apps_rounded,
@@ -4359,7 +4359,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     }
     return <Widget>[
       ...primaryActions,
-      IconButton(onPressed:_openWork,icon:const Icon(Icons.playlist_play_rounded),tooltip:'Backlog y Tu noche'),
+      IconButton(onPressed:_openWork,icon:const Icon(Icons.playlist_play_rounded),tooltip:'Backlog · Workspace'),
       IconButton(
         onPressed: () async {
           await _openInstallableAppsSheet();
@@ -4491,10 +4491,11 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     );
   }
 
-  Future<void> _openWork() async {
+  Future<void> _openWork([Workspace? workspace]) async {
     await Navigator.of(context).push(MaterialPageRoute<void>(builder:(_)=>WorkScreen(
       baseUrl:_activeServer?.baseUrl ?? widget.initialApiBaseUrl,
-      workspacePath:_chatController.currentSession?.workspacePath,
+      workspacePath:workspace?.path,
+      projectName:workspace?.name,
       onOpenChat:(id)=>_chatController.selectSession(id),
     )));
   }
@@ -5101,6 +5102,10 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                       icon: const Icon(Icons.more_horiz_rounded),
                       onSelected: (_PinnedWorkspaceAction action) async {
                         switch (action) {
+                          case _PinnedWorkspaceAction.backlog:
+                            Navigator.of(context).pop();
+                            await _openWork(workspace);
+                            return;
                           case _PinnedWorkspaceAction.newChat:
                             Navigator.of(context).pop();
                             await _createNewChatForWorkspace(workspace);
@@ -5115,6 +5120,10 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                         PopupMenuItem<_PinnedWorkspaceAction>(
                           value: _PinnedWorkspaceAction.newChat,
                           child: Text('New chat in ${workspace.name}'),
+                        ),
+                        const PopupMenuItem<_PinnedWorkspaceAction>(
+                          value: _PinnedWorkspaceAction.backlog,
+                          child: Text('Backlog del proyecto'),
                         ),
                         const PopupMenuItem<_PinnedWorkspaceAction>(
                           value: _PinnedWorkspaceAction.remove,

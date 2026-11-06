@@ -32,6 +32,15 @@ class WorkClient {
       request('PUT', '/settings',
           {'workspace_path': workspace, 'settings': settings});
 
+  Future<Map<String, dynamic>> history(
+      {String? workspacePath, String? cursor}) {
+    final query = Uri(queryParameters: {
+      if (workspacePath != null) 'workspace_path': workspacePath,
+      if (cursor != null) 'cursor': cursor,
+    }).query;
+    return request('GET', '/history${query.isEmpty ? '' : '?$query'}');
+  }
+
   Future<Map<String, dynamic>> overview() => request('GET', '');
   Future<Map<String, dynamic>> enqueue(
       String workspace, String instruction) async {

@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import '../services/work_client.dart';
 
 class ProjectWorkSettingsScreen extends StatefulWidget {
-  const ProjectWorkSettingsScreen({super.key, required this.client});
+  const ProjectWorkSettingsScreen(
+      {super.key, required this.client, this.workspacePath});
   final WorkClient client;
+  final String? workspacePath;
 
   @override
   State<ProjectWorkSettingsScreen> createState() =>
@@ -28,7 +30,12 @@ class _ProjectWorkSettingsScreenState extends State<ProjectWorkSettingsScreen> {
       final result = await widget.client.projectSettings();
       if (!mounted) return;
       setState(() {
-        _projects = (result['projects'] as List).cast<Map<String, dynamic>>();
+        _projects = (result['projects'] as List)
+            .cast<Map<String, dynamic>>()
+            .where((p) =>
+                widget.workspacePath == null ||
+                p['workspace_path'] == widget.workspacePath)
+            .toList();
         _error = null;
       });
     } catch (_) {

@@ -51,6 +51,7 @@ class FakeWork extends WorkClient {
         'questions': [
           {
             'notes': notes,
+            'workspace': '/laboratorio',
             'id': 'decision',
             'title': '¿Cómo seguimos con el laboratorio?',
             'options': [
@@ -61,6 +62,10 @@ class FakeWork extends WorkClient {
         ],
         'timeline': [],
       };
+  @override
+  Future<Map<String, dynamic>> history(
+          {String? workspacePath, String? cursor}) async =>
+      {'tasks': [], 'next_cursor': null};
   @override
   Future<Map<String, dynamic>> enqueue(String workspace, String text) async {
     submissions.add(text);
@@ -151,7 +156,7 @@ void main() {
     expect(client.choices, [0]);
     await tester.tap(find.text('Tu noche').first);
     await tester.pumpAndSettle();
-    expect(find.text('2 avances en DEV · 0 bloqueos · 1 por decidir'),
+    expect(find.text('1 avances en DEV · 0 bloqueos · 1 por decidir'),
         findsOneWidget);
     ScaffoldMessenger.of(key.currentContext!).clearSnackBars();
     await tester.pumpAndSettle();
