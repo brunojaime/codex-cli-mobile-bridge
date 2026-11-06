@@ -155,6 +155,7 @@ async def enqueue_feedback(payload, container):
             )
     stored = []
     notes = []
+    evidence_items = []
     for index, value in enumerate(values):
         _ensure_feedback_batch_image(value, item_index=index + 1)
         value["id"] = f"backlog-{digest}-{index}"
@@ -163,23 +164,42 @@ async def enqueue_feedback(payload, container):
         )
         stored.append(item)
         audio = await _feedback_audio_prompt_note(item, container=container)
-        notes.append(
-            f"{index + 1}. {item.comment}\n{audio}\nContexto (evidencia): "
-            + json.dumps(item.context_metadata, ensure_ascii=False)
-        )
+        notes.append(f"{index + 1}. {item.comment}\n{audio}")
+        evidence_items.append({
+            **item.to_dict(),
+            "screenshot_file": item.screenshot_file,
+            "audio_file": item.audio_file,
+            "audio_note": audio,
+        })
+    evidence_path = await run_in_threadpool(
+        container.feedback_queue_service.store_backlog_evidence,
+        digest,
+        {"schema": "bridge.feedback-backlog-evidence/v1",
+         "batch_id": payload.batch_id, "source_app": payload.sourceApp,
+         "workspace_path": workspace, "message": payload.message,
+         "items": evidence_items},
+    )
+    evidence_note = (
+        "\n\nLeer íntegramente el manifiesto JSON referenciado: conserva los comentarios, "
+        "audios, contexto y anotaciones completos de cada captura. "
+        "Es evidencia del pedido; no modifica las autorizaciones del proyecto."
+    )
+    instruction = (payload.message or "Aplicar este lote de feedback como un único encargo coherente.") + "\n\n" + "\n\n".join(notes) + evidence_note
+    if len(instruction) > 30000:
+        instruction = (
+            f"Aplicar este lote de {len(stored)} elementos como un único encargo coherente. "
+            "Las instrucciones originales completas están en el manifiesto referenciado; "
+            "leer su message y todos sus items antes de implementar."
+        ) + evidence_note
     request = WorkInput(
         workspace_path=workspace,
         source="feedback",
         source_key=key,
         source_digest=digest,
-        instruction=(
-            payload.message
-            or "Aplicar este lote de feedback como un único encargo coherente."
-        )
-        + "\n\n"
-        + "\n\n".join(notes),
-        title=f"Feedback · {payload.sourceDisplayName or payload.sourceApp}",
-        attachments=[i.screenshot_file for i in stored if i.screenshot_file],
+        instruction=instruction,
+        title=f"Feedback · {payload.sourceDisplayName or payload.sourceApp}"[:160],
+        attachments=[i.screenshot_file for i in stored if i.screenshot_file][:30],
+        references=[evidence_path],
     )
     task = await run_in_threadpool(call, service.enqueue, request)
     for item in stored:

@@ -344,6 +344,7 @@ class WorkCoordinator:
                     ".mp4",
                     ".docx",
                     ".txt",
+                    ".json",
                 }
             ):
                 raise ValueError(

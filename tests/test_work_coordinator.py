@@ -455,7 +455,8 @@ def test_blocked_delivery_holds_later_tasks(work):
     assert work.service.overview()["projects"][0]["active"] is None
 
 
-def test_feedback_backlog_preserves_screenshot_and_does_not_start_a_job(tmp_path):
+@pytest.mark.parametrize("evidence_kind", ["normal", "dense_annotations", "long_comments"])
+def test_feedback_backlog_preserves_screenshot_and_does_not_start_a_job(tmp_path, evidence_kind):
     import base64
     from test_message_flow import build_feedback_queue_client
 
@@ -480,6 +481,15 @@ def test_feedback_backlog_preserves_screenshot_and_does_not_start_a_job(tmp_path
             }
         ],
     }
+    if evidence_kind == "dense_annotations":
+        payload["items"][0]["contextMetadata"] = {
+            "pathname": "/admin/configuracion",
+            "annotations": {"strokes": [{"points": [{"x": i / 10, "y": i / 20} for i in range(5000)]}]},
+        }
+    elif evidence_kind == "long_comments":
+        payload["items"] = [{**payload["items"][0], "id": str(i), "comment": "Detalle original " + "á" * 9000} for i in range(4)]
+    original_comments = [item["comment"] for item in payload["items"]]
+    original_context = payload["items"][0].get("contextMetadata", {})
     response = client.post("/feedback-batches/start-session", json=payload)
     assert response.status_code == 202, response.text
     receipt = response.json()
@@ -488,12 +498,20 @@ def test_feedback_backlog_preserves_screenshot_and_does_not_start_a_job(tmp_path
     assert (
         client.post("/feedback-batches/start-session", json=payload).json() == receipt
     )
+    task = client.get("/work").json()["projects"][0]["queue"][0]
+    assert len(task["instruction"]) <= 30000
+    assert len(task["references"]) == 1
+    evidence = json.loads(Path(task["references"][0]).read_text())
+    assert [item["comment"] for item in evidence["items"]] == original_comments
+    assert evidence["items"][0]["context_metadata"] == original_context
+    assert len(evidence["items"]) == len(payload["items"])
+    assert "annotations" not in task["instruction"]
     payload["items"][0]["comment"] = "Otro alcance"
     assert (
         client.post("/feedback-batches/start-session", json=payload).status_code == 409
     )
     project = client.get("/work").json()["projects"][0]
-    assert len(project["queue"][0]["attachments"]) == 1
+    assert len(project["queue"][0]["attachments"]) == len(payload["items"])
     assert client.get("/sessions").json() == []
 
 
