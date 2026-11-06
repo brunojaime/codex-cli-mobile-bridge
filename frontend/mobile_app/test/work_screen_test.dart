@@ -107,7 +107,7 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     final font = File(
         '/home/batata/.local/share/flutter/bin/cache/artifacts/material_fonts/Roboto-Regular.ttf');
-    if (font.existsSync()) {
+    if (font.existsSync() && Platform.environment['SKIP_TEST_FONTS'] != '1') {
       await tester.runAsync(() => (FontLoader('Roboto')
             ..addFont(
                 Future.value(ByteData.sublistView(font.readAsBytesSync()))))
@@ -115,7 +115,7 @@ void main() {
     }
     final icons = File(
         '/home/batata/.local/share/flutter/bin/cache/artifacts/material_fonts/MaterialIcons-Regular.otf');
-    if (icons.existsSync()) {
+    if (icons.existsSync() && Platform.environment['SKIP_TEST_FONTS'] != '1') {
       await tester.runAsync(() => (FontLoader('MaterialIcons')
             ..addFont(
                 Future.value(ByteData.sublistView(icons.readAsBytesSync()))))
@@ -140,6 +140,7 @@ void main() {
     await tester.tap(find.text('Añadir al backlog'));
     await tester.pumpAndSettle();
     expect(client.submissions, ['Cambiar el título del laboratorio']);
+    await tester.ensureVisible(find.text('Decisiones'));
     await tester.tap(find.text('Decisiones'));
     await tester.pumpAndSettle();
     ScaffoldMessenger.of(key.currentContext!).clearSnackBars();
@@ -154,6 +155,7 @@ void main() {
     await tester.tap(find.text('Mejorar accesibilidad'));
     await tester.pumpAndSettle();
     expect(client.choices, [0]);
+    await tester.ensureVisible(find.text('Tu noche').first);
     await tester.tap(find.text('Tu noche').first);
     await tester.pumpAndSettle();
     expect(find.text('1 avances en DEV · 0 bloqueos · 1 por decidir'),
