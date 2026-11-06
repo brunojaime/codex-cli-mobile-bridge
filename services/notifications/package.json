@@ -1,0 +1,6 @@
+{
+  "name": "@codex-mobile/notifications", "version": "0.1.0", "private": true,
+  "type": "module", "engines": {"node": ">=22.22.2"},
+  "scripts": {"start": "node src/worker.mjs", "test": "node --test test/*.test.mjs"},
+  "dependencies": {"@nienfos/notifications": "file:vendor/nienfos-notifications-0.1.0-dev.9.tgz"}
+}

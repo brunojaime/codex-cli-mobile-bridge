@@ -23,7 +23,7 @@ void main() {
     expect(notification.channel, ChatNotificationChannel.generator);
     expect(notification.title, 'Workspace A');
     expect(notification.summary, 'Generator • Chat A');
-    expect(notification.body, contains('Generator reply ready'));
+    expect(notification.body, contains('Respuesta lista'));
   });
 
   test('builds reviewer and summary notifications with configured labels', () {
@@ -57,9 +57,9 @@ void main() {
 
     expect(reviewerNotification.channel, ChatNotificationChannel.reviewer);
     expect(reviewerNotification.summary, 'QA Reviewer • Chat A');
-    expect(reviewerNotification.body, contains('QA Reviewer reply ready'));
+    expect(reviewerNotification.body, contains('Respuesta lista'));
     expect(summaryNotification.channel, ChatNotificationChannel.summary);
-    expect(summaryNotification.body, contains('Summary reply ready'));
+    expect(summaryNotification.body, contains('Respuesta lista'));
   });
 
   test(
@@ -82,9 +82,9 @@ void main() {
     expect(notification.channel, ChatNotificationChannel.generic);
     expect(notification.title, 'Codex Remote');
     expect(notification.summary, 'Codex • Chat');
-    expect(notification.body, contains('Codex reply ready'));
+    expect(notification.body, contains('Respuesta lista'));
     expect(notification.body,
-        contains('Open the app to inspect the latest reply.'));
+        contains('La respuesta está lista. Tocá para leerla.'));
   });
 
   test('formats failed notifications with generic fallback error preview', () {
@@ -102,8 +102,8 @@ void main() {
     );
 
     expect(notification.channel, ChatNotificationChannel.generator);
-    expect(notification.body, contains('Generator failed'));
+    expect(notification.body, contains('Generator necesita atención'));
     expect(notification.body,
-        contains('Open the app to inspect the error details.'));
+        contains('La tarea necesita atención. Tocá para ver el detalle.'));
   });
 }

@@ -2,15 +2,17 @@ import '../models/agent_configuration.dart';
 import '../models/job_status_response.dart';
 import 'chat_notification_service.dart';
 
-const _genericReplyPreview = 'Open the app to inspect the latest reply.';
-const _genericFailurePreview = 'Open the app to inspect the error details.';
-const _genericCancelledPreview = 'Open the app to inspect the latest state.';
+const _genericReplyPreview = 'La respuesta está lista. Tocá para leerla.';
+const _genericFailurePreview =
+    'La tarea necesita atención. Tocá para ver el detalle.';
+const _genericCancelledPreview = 'La tarea se detuvo. Tocá para ver el estado.';
 
 ChatCompletedNotification buildChatCompletedNotification({
   required JobStatusResponse snapshot,
   required String workspaceName,
   required String sessionTitle,
   String? configuredAgentLabel,
+  ChatNotificationTarget? target,
 }) {
   final normalizedWorkspaceName =
       _normalizeOptionalText(workspaceName) ?? 'Codex Remote';
@@ -21,11 +23,11 @@ ChatCompletedNotification buildChatCompletedNotification({
   );
 
   return ChatCompletedNotification(
-    id: snapshot.jobId.hashCode,
+    id: target?.notificationId ?? stableNotificationId(snapshot.sessionId),
+    target: target,
     title: normalizedWorkspaceName,
     body: [
-      _statusLine(snapshot.status, resolvedAgentLabel),
-      normalizedSessionTitle,
+      '$normalizedSessionTitle · ${_statusLine(snapshot.status, resolvedAgentLabel)}',
       _notificationPreview(snapshot),
     ].join('\n'),
     channel: snapshot.resolvedNotificationChannel,
@@ -38,29 +40,30 @@ ChatCompletedNotification buildRunCompletedNotification({
   required String runId,
   required String workspaceName,
   required String sessionTitle,
+  ChatNotificationTarget? target,
 }) {
   final normalizedWorkspaceName =
       _normalizeOptionalText(workspaceName) ?? 'Codex Remote';
   final normalizedSessionTitle = _normalizeOptionalText(sessionTitle) ?? 'Chat';
 
   return ChatCompletedNotification(
-    id: runId.hashCode,
+    id: target?.notificationId ?? stableNotificationId(snapshot.sessionId),
+    target: target,
     title: normalizedWorkspaceName,
     body: [
-      _runStatusLine(snapshot.status),
-      normalizedSessionTitle,
+      '$normalizedSessionTitle · ${_runStatusLine(snapshot.status)}',
       _notificationPreview(snapshot),
     ].join('\n'),
     channel: ChatNotificationChannel.generic,
-    summary: 'Codex run - $normalizedSessionTitle',
+    summary: '${_runStatusLine(snapshot.status)} • $normalizedSessionTitle',
   );
 }
 
 String _runStatusLine(String status) {
   return switch (status) {
-    'failed' => 'Codex run failed',
-    'cancelled' => 'Codex run cancelled',
-    _ => 'Codex run complete',
+    'failed' => 'El trabajo necesita atención',
+    'cancelled' => 'Trabajo cancelado',
+    _ => 'Trabajo finalizado',
   };
 }
 
@@ -92,9 +95,9 @@ String resolveNotificationAgentLabel(
 
 String _statusLine(String status, String resolvedAgentLabel) {
   return switch (status) {
-    'failed' => '$resolvedAgentLabel failed',
-    'cancelled' => '$resolvedAgentLabel cancelled',
-    _ => '$resolvedAgentLabel reply ready',
+    'failed' => '$resolvedAgentLabel necesita atención',
+    'cancelled' => '$resolvedAgentLabel cancelado',
+    _ => 'Respuesta lista',
   };
 }
 
@@ -113,9 +116,10 @@ String _notificationPreview(JobStatusResponse snapshot) {
     };
   }
 
-  return normalizedPreview.length <= 220
+  final characters = normalizedPreview.runes.toList();
+  return characters.length <= 160
       ? normalizedPreview
-      : '${normalizedPreview.substring(0, 217)}...';
+      : '${String.fromCharCodes(characters.take(157))}...';
 }
 
 String? _normalizeOptionalText(String? value) {
@@ -123,7 +127,11 @@ String? _normalizeOptionalText(String? value) {
     return null;
   }
 
-  final normalized = value.replaceAll(RegExp(r'\s+'), ' ').trim();
+  final normalized = value
+      .replaceAll(RegExp(r'[`#*_>]'), '')
+      .replaceAllMapped(RegExp(r'\[([^\]]+)\]\([^)]*\)'), (match) => match[1]!)
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
   if (normalized.isEmpty) {
     return null;
   }

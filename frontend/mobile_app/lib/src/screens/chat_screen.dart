@@ -35,6 +35,7 @@ import '../services/work_client.dart';
 import '../services/attachment_type.dart';
 import '../services/audio_note_recorder.dart';
 import '../services/chat_notification_service.dart';
+import 'notification_settings_screen.dart';
 import '../services/clipboard_image_paste_listener_stub.dart'
     if (dart.library.js_interop) '../services/clipboard_image_paste_listener_web.dart';
 import '../services/reply_playback_service.dart';
@@ -410,6 +411,7 @@ const Key kChatScreenBodyScrollViewKey = ValueKey<String>(
 );
 
 enum _AppBarOverflowAction {
+  notifications,
   work,
   apps,
   secrets,
@@ -506,6 +508,77 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       archived: _showArchivedChatsInSidebar, search: _sessionSearch));
   }
 
+  StreamSubscription<ChatNotificationTarget>? _chatNotificationTaps;
+  bool _notificationsReady = false;
+  bool _notificationOpening = false;
+  bool _appResumed = true;
+  String? _lastReadProject;
+  String? _notificationMessageId;
+  String? _notificationSessionId;
+
+  ChatNotificationNavigation? get _notificationNavigation {
+    final service = widget.notificationService;
+    return service is ChatNotificationNavigation ? service as ChatNotificationNavigation : null;
+  }
+
+  void _showNotificationNotice(String message) {
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _openPendingChatNotification() async {
+    if (!_notificationsReady || _notificationOpening || !mounted) return;
+    final target = _notificationNavigation?.takePendingChat();
+    if (target == null) return;
+    _notificationOpening = true;
+    try {
+      final activeUrl = _activeServer?.baseUrl ?? widget.initialApiBaseUrl;
+      if (target.server != activeUrl) {
+        final profiles = _serverProfiles.where((p) => p.baseUrl == target.server);
+        if (profiles.isEmpty) {
+          _showNotificationNotice('El servidor de esta notificación ya no está configurado.');
+          return;
+        }
+        if (!await _switchToServer(profiles.first)) return;
+      }
+      final controller = _chatController;
+      await controller.selectSession(target.sessionId);
+      if (!mounted || controller != _chatController || controller.currentSession?.id != target.sessionId) return;
+      ChatMessage? findMessage() {
+        for (final message in controller.messages) {
+          if (message.id == target.messageId || message.jobId == target.jobId) return message;
+        }
+        return null;
+      }
+      var message = findMessage();
+      while (message == null && await controller.loadOlderMessages()) {
+        if (!mounted || controller != _chatController || controller.selectedSessionId != target.sessionId) return;
+        message = findMessage();
+      }
+      if (!mounted || controller.selectedSessionId != target.sessionId) return;
+      if (message == null) {
+        _showNotificationNotice('El mensaje ya no está disponible en este chat.');
+        return;
+      }
+      final found = message;
+      setState(() {
+        _notificationMessageId = found.id;
+        _notificationSessionId = target.sessionId;
+        _chatBodyView = _ChatBodyView.conversation;
+        _sidebarExpanded = false;
+        _stickToBottom = false;
+        _collapsedMessageIdsBySession[target.sessionId]?.remove(found.id);
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _scrollController.hasClients) _scrollController.jumpTo(0);
+      });
+    } catch (_) {
+      _showNotificationNotice('No se pudo abrir el mensaje. Revisá la conexión con el servidor.');
+    } finally {
+      _notificationOpening = false;
+      if (mounted) unawaited(_openPendingChatNotification());
+    }
+  }
+
   bool _stickToBottom = true;
   bool _audioRepliesEnabled = false;
   double _audioReplyPlaybackSpeed = 1.0;
@@ -565,16 +638,27 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
     _activeCodexTooling = widget.initialCodexTooling;
     _chatController.addListener(_handleChatControllerChanged);
+    _chatNotificationTaps = _notificationNavigation?.chatTaps.listen((_) {
+      unawaited(_openPendingChatNotification());
+    });
     if (widget.enableServerBootstrap && widget.controllerOverride == null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _initializeServerProfiles();
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        await _initializeServerProfiles();
+        if (!mounted) return;
+        _notificationsReady = true;
+        await _openPendingChatNotification();
       });
+    } else {
+      _notificationsReady = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _openPendingChatNotification());
     }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    unawaited(_chatNotificationTaps?.cancel());
+    _notificationNavigation?.setVisibleChat(null, null);
     unawaited(_replyPlaybackService.dispose());
     for (final timer in _projectFactoryInitPollTimers.values) {
       timer.cancel();
@@ -592,7 +676,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    _appResumed = state == AppLifecycleState.resumed;
+    if (!_appResumed) {
+      _notificationNavigation?.setVisibleChat(null, null);
+      _lastReadProject = null;
+    }
     if (state == AppLifecycleState.resumed) {
+      unawaited(_markCurrentSessionAsRead());
       _chatController.handleAppResumed();
     }
   }
@@ -1093,6 +1183,22 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                 ),
                                               ),
                                             ],
+                                          ),
+                                        ),
+                                      ),
+                                    if (_notificationMessageId != null && _notificationSessionId == currentSession?.id)
+                                      SliverToBoxAdapter(
+                                        child: ListTile(
+                                          leading: const Icon(Icons.notifications_active_outlined),
+                                          title: const Text('Mensaje de la notificación'),
+                                          trailing: TextButton(
+                                            onPressed: () => setState(() {
+                                              _notificationMessageId = null;
+                                              _notificationSessionId = null;
+                                              _stickToBottom = true;
+                                              _scrollToBottom(jumpToBottom: true);
+                                            }),
+                                            child: const Text('Ver todo el chat'),
                                           ),
                                         ),
                                       ),
@@ -2289,6 +2395,11 @@ When you create the Project Factory draft, link each asset with POST /project-fa
     final currentSession = _chatController.currentSession;
     if (currentSession == null) {
       return _chatController.messages;
+    }
+    if (_notificationSessionId == currentSession.id && _notificationMessageId != null &&
+        _chatBodyView == _ChatBodyView.conversation) {
+      final index = _chatController.messages.indexWhere((m) => m.id == _notificationMessageId);
+      if (index >= 0) return _chatController.messages.sublist(index);
     }
     if (_chatBodyView == _ChatBodyView.agentSummaries) {
       return _chatController.messages
@@ -4282,6 +4393,8 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
             unawaited(_handleAppBarOverflowAction(action));
           },
           itemBuilder: (context) => <PopupMenuEntry<_AppBarOverflowAction>>[
+            _buildAppBarOverflowMenuItem(action: _AppBarOverflowAction.notifications,
+              icon: Icons.notifications_outlined, label: 'Notificaciones'),
             _buildAppBarOverflowMenuItem(action:_AppBarOverflowAction.work,icon:Icons.playlist_play_rounded,label:'Backlog y Tu noche'),
             _buildAppBarOverflowMenuItem(
               action: _AppBarOverflowAction.apps,
@@ -4501,6 +4614,12 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
 
   Future<void> _handleAppBarOverflowAction(_AppBarOverflowAction action) async {
     switch (action) {
+      case _AppBarOverflowAction.notifications:
+        await Navigator.of(context).push<void>(MaterialPageRoute(builder: (_) => NotificationSettingsScreen(
+          server: _activeServer?.baseUrl ?? widget.initialApiBaseUrl, service: widget.notificationService,
+          sessionId: _chatController.currentSession?.id, projectName: _chatController.currentSession?.workspaceName)));
+        return;
+
       case _AppBarOverflowAction.work:
         await _openWork();
         break;
@@ -5304,6 +5423,8 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
         newestMessageId != null &&
         _lastObservedNewestMessageId == null;
     if (sessionChanged) {
+      _notificationMessageId = null;
+      _notificationSessionId = null;
       _lastObservedSessionId = currentSessionId;
       _lastObservedNewestMessageId = newestMessageId;
       final currentSession = _chatController.currentSession;
@@ -5400,9 +5521,15 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
 
   Future<void> _markCurrentSessionAsRead() async {
     final currentSession = _chatController.currentSession;
-    if (currentSession == null) {
-      return;
-    }
+    if (currentSession == null || !_appResumed) return;
+    final server = _activeServer?.baseUrl ?? widget.initialApiBaseUrl;
+    final project = '$server:${currentSession.workspacePath}';
+    _notificationNavigation?.setVisibleChat(server, currentSession.id);
+    final wholeProject = project != _lastReadProject;
+    _lastReadProject = project;
+    // Also clears OS notifications when the read timestamp is unchanged.
+    unawaited(_notificationNavigation?.readChat(server, currentSession.id,
+        currentSession.workspacePath, wholeProject: wholeProject));
 
     final lastReadAt = _sessionReadMarkers[currentSession.id];
     if (lastReadAt != null && !currentSession.updatedAt.isAfter(lastReadAt)) {

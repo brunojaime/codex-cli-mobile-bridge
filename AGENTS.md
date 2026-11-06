@@ -22,3 +22,7 @@ release.
 ## Project secrets
 
 Add or rotate credentials through the chat's **Secrets** panel. They are stored in the workspace `.env`; never ask the user to paste secret values into chat and never print or reveal them.
+
+## Notifications contract
+
+Android push adopts [notifications.consumer.json](services/notifications/notifications.consumer.json), [capabilities](services/notifications/notifications.capabilities.json) and [catalog](services/notifications/notifications.catalog.json). Follow [the integration guide](services/notifications/docs/notifications.md); keep production/dev Firebase isolated and never equate provider acceptance with phone receipt.

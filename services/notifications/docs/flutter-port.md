@@ -1,0 +1,1 @@
+El adaptador Flutter está en frontend/mobile_app/lib/src/services/bridge_push_client.dart. Usa Firebase Messaging 16.7.0 (FCM token nativo compatible con el contrato publicado dev.9), Firebase Core 4.x y Flutter Secure Storage. El SDK nativo FID de Messaging 17 requiere otra adopción del contrato y no se mezcla con el emisor token actual.

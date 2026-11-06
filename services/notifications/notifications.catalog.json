@@ -1,0 +1,16 @@
+[
+  {
+    "code": "chat.completed",
+    "label": "Trabajo del proyecto finalizado",
+    "resolver": "bridge_push_events triggers / project idle resolver",
+    "authorization": "private tailnet owner, opted-in verified installation, live session, unread final message",
+    "destination": "Exact session_id + message_id after authenticated event resolution"
+  },
+  {
+    "code": "device.test",
+    "label": "Prueba de este tel\u00e9fono",
+    "resolver": "authenticated per-device explicit action",
+    "authorization": "own installation and persistent rate limit",
+    "destination": "Notification settings"
+  }
+]

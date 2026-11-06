@@ -25,6 +25,11 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    push_notifications_enabled: bool = True
+    push_node_binary: str | None = None
+    push_origin_host: str = "batata-default-string.tail0302c4.ts.net"
+    codex_prod_firebase_service_account_json: SecretStr | None = None
+    codex_dev_firebase_service_account_json: SecretStr | None = None
     app_name: str = "Codex Mobile Bridge"
     server_name: str = socket.gethostname()
     backend_mode: Literal["local", "lambda"] = "local"

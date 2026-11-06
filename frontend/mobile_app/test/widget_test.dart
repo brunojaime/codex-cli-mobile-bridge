@@ -3507,7 +3507,7 @@ Built the draft.
     expect(notification, isNotNull);
     expect(notification.title, 'A');
     expect(notification.channel, ChatNotificationChannel.reviewer);
-    expect(notification.body, contains('Reviewer reply ready'));
+    expect(notification.body, contains('Respuesta lista'));
     expect(notification.summary, 'Reviewer • Chat A');
 
     controller.dispose();

@@ -1,0 +1,19 @@
+# Notificaciones del bridge
+
+Adopción exacta: @nienfos/notifications 0.1.0-dev.9, tarball y SHA256 en notifications.consumer.json. SQLite adapta la interfaz D1 pública; el paquete compartido conserva la cola, leases, reintentos y revocación. No se mantiene otro motor de transporte.
+
+Los triggers de migrations/001-push.sql guardan la intención junto con el mensaje. El worker espera cierre de la ejecución, trabajos procesados y proyecto sin agentes pendientes; resuelve la última respuesta y expande con deduplicación persistente. Hay un proceso hijo Node >=22.22.2 por backend, con tick cada 5 segundos y prune diario. La intención dura 90 días; el outbox usa la retención de 7 días posterior al vencimiento y las instalaciones expiran a los 30 días.
+
+Producción y desarrollo usan proyectos Firebase independientes: nienfos-codex-bridge-prod y nienfos-codex-bridge-dev. La configuración Android es pública, por flavor; las credenciales CODEX_PROD_FIREBASE_SERVICE_ACCOUNT_JSON y CODEX_DEV_FIREBASE_SERVICE_ACCOUNT_JSON se gestionan sólo mediante Secrets y nunca se empaquetan. PUSH_NODE_BINARY configura el Node del host; PUSH_NOTIFICATIONS_ENABLED permite suspender el transporte.
+
+El bridge conserva su identidad de propietario único en red Tailscale. El alta sólo acepta conexión privada sin Origin de navegador; cada instalación genera un bearer aleatorio en almacenamiento seguro, con hash en servidor. El backend fija el propietario y destinatarios; nunca recibe destinatarios de envío del cliente. Los registros tienen límite persistente. El cambio de servidor conserva preferencias por servidor; desactivar revoca en servidor antes de borrar asociación y token. No hay endpoint público de envío. La app no agrega usuarios ni Firebase Auth/Analytics.
+
+Activación explícita desde menú → Notificaciones → Activar y probar. La recepción y muestra de la prueba se confirma mediante receipt autenticado. Sólo instalaciones verificadas reciben eventos automáticos. La prueba va exclusivamente al teléfono que la pidió. Aceptado por Firebase no equivale a recibido: la evidencia física queda pendiente hasta instalar y activar la nueva APK.
+
+FCM lleva sólo eventId, path interno y bridgeId opaco. El callback de Android de alta prioridad consulta el evento autenticado, muestra proyecto/chat/extracto/logo y confirma recepción. Si el bridge está desconectado, muestra un aviso genérico con destino pendiente. Nunca abre URLs nuevas desde el payload. Android puede suspender mensajes de datos; Forzar detención desde Ajustes requiere abrir otra vez la app. Tailscale conectado permite obtener el contenido privado. No prometer entrega garantizada.
+
+Al entrar al proyecto se cancelan avisos visibles y pendientes del teléfono. Los recibos y lecturas no modifican estados de otros dispositivos. Los logos se descubren en rutas conocidas del proyecto o se eligen desde el teléfono en la misma pantalla, se validan como raster de hasta 512 KB y se guardan en .codex/project-logo.*; se rechazan escapes del workspace.
+
+Verificación local: test/engine.test.mjs; tests/test_push_notifications.py; pruebas Flutter de contenido, controller, navegación y consentimiento. La publicación utiliza el flujo Android estándar y backend/API reales. Web e iOS no se activan en esta entrega.
+
+Despliegue actual: compañeros HTTP privados en 8125 (prod) y 8126 (dev), expuestos por Tailscale Serve, cada uno con la base real de su backend. `bridge_push_endpoint.dart` resuelve esos puertos sólo para el host conocido; otros bridges pueden integrar las rutas en su API existente. `scripts/install_push_notifications.py` instala unidades de usuario sin reiniciar procesos Codex ni copiar Secrets. Las credenciales se leen desde el workspace original mediante --secrets-file. Validación OAuth real verificada para ambos emisores; recepción física pendiente del opt-in de un teléfono.

@@ -46,7 +46,7 @@ void main() {
     expect(notificationService.notifications, hasLength(1));
     expect(
       notificationService.notifications.single.body,
-      contains('Generator reply ready'),
+      contains('Respuesta lista'),
     );
 
     controller.dispose();
@@ -130,11 +130,11 @@ void main() {
     );
     expect(
       notificationService.notifications.single.body,
-      contains('Safety Reviewer failed'),
+      contains('Safety Reviewer necesita atención'),
     );
     expect(
       notificationService.notifications.single.body,
-      contains('Open the app to inspect the error details.'),
+      contains('La tarea necesita atención. Tocá para ver el detalle.'),
     );
 
     controller.dispose();
@@ -188,6 +188,18 @@ void main() {
     apiClient
       ..activeRunId = null
       ..currentRun = null
+      ..messages = <ChatMessage>[
+        _message(
+                id: 'message-reviewer',
+                jobId: 'job-reviewer',
+                runId: 'run-1',
+                agentId: AgentId.reviewer,
+                agentType: AgentType.reviewer)
+            .copyWith(
+                status: ChatMessageStatus.completed,
+                jobStatus: 'completed',
+                text: 'Revisión final lista.'),
+      ]
       ..recentRuns = <CurrentRunExecution>[
         _runExecution(
           runId: 'run-1',
@@ -209,13 +221,88 @@ void main() {
     );
     expect(
       notificationService.notifications.single.body,
-      contains('Codex run complete'),
+      contains('Trabajo finalizado'),
     );
     expect(
       notificationService.notifications.single.body,
-      isNot(contains('Generator reply ready')),
+      isNot(contains('Respuesta lista')),
     );
 
+    expect(notificationService.notifications.single.body,
+        contains('Revisión final lista.'));
+    expect(
+        notificationService.notifications.single.target?.jobId, 'job-reviewer');
+    expect(notificationService.notifications.single.target?.messageId,
+        'message-reviewer');
+    controller.applyJobSnapshotForTesting(const JobStatusResponse(
+        jobId: 'job-late-terminal',
+        sessionId: 'session-a',
+        status: 'completed',
+        elapsedSeconds: 2,
+        runId: 'run-1',
+        response: 'Late duplicate stage'));
+    await Future<void>.delayed(Duration.zero);
+    expect(notificationService.notifications, hasLength(1));
+    controller.dispose();
+  });
+
+  test('legacy jobs also wait for an active Generator Reviewer run', () async {
+    final notifications = _RecordingNotificationService();
+    final api = _NotificationApiClient(activeRunId: 'run-legacy');
+    final controller =
+        ChatController(apiClient: api, notificationService: notifications);
+    await controller.selectSession('session-a');
+    controller.applyJobSnapshotForTesting(const JobStatusResponse(
+        jobId: 'legacy-job',
+        sessionId: 'session-a',
+        status: 'completed',
+        elapsedSeconds: 1,
+        response: 'Intermediate result'));
+    await Future<void>.delayed(Duration.zero);
+    expect(notifications.notifications, isEmpty);
+    controller.applyJobSnapshotForTesting(const JobStatusResponse(
+        jobId: 'legacy-reviewer',
+        sessionId: 'session-a',
+        status: 'completed',
+        elapsedSeconds: 1,
+        response: 'Resultado final de la revisión'));
+    await Future<void>.delayed(Duration.zero);
+    expect(notifications.notifications, isEmpty);
+    api.activeRunId = null;
+    await controller.selectSession('session-a');
+    await Future<void>.delayed(Duration.zero);
+    expect(notifications.notifications, hasLength(1));
+    expect(notifications.notifications.single.body,
+        contains('Resultado final de la revisión'));
+    controller.applyJobSnapshotForTesting(const JobStatusResponse(
+        jobId: 'next-work',
+        sessionId: 'session-a',
+        status: 'completed',
+        elapsedSeconds: 1,
+        response: 'Otro trabajo terminado'));
+    await Future<void>.delayed(Duration.zero);
+    expect(notifications.notifications, hasLength(2));
+    controller.dispose();
+  });
+  test('waits until other chats in the same project finish', () async {
+    final notifications = _RecordingNotificationService();
+    final api = _NotificationApiClient()..otherChatActive = true;
+    final controller =
+        ChatController(apiClient: api, notificationService: notifications);
+    await controller.refreshSessions();
+    await controller.selectSession('session-a');
+    controller.applyJobSnapshotForTesting(const JobStatusResponse(
+        jobId: 'job-project',
+        sessionId: 'session-a',
+        status: 'completed',
+        elapsedSeconds: 1,
+        response: 'Listo'));
+    await Future<void>.delayed(Duration.zero);
+    expect(notifications.notifications, isEmpty);
+    api.otherChatActive = false;
+    await controller.refreshSessions();
+    await Future<void>.delayed(Duration.zero);
+    expect(notifications.notifications, hasLength(1));
     controller.dispose();
   });
 }
@@ -230,6 +317,7 @@ class _NotificationApiClient extends ApiClient {
 
   final AgentConfiguration configuration;
   String? activeRunId;
+  bool otherChatActive = false;
   CurrentRunExecution? currentRun;
   List<CurrentRunExecution> recentRuns = const <CurrentRunExecution>[];
   List<ChatMessage> messages;
@@ -238,6 +326,14 @@ class _NotificationApiClient extends ApiClient {
   @override
   Future<List<ChatSessionSummary>> listSessions() async {
     return <ChatSessionSummary>[
+      ChatSessionSummary(
+          id: 'session-b',
+          title: 'Chat B',
+          workspacePath: '/workspace/a',
+          workspaceName: 'Workspace A',
+          hasPendingMessages: otherChatActive,
+          createdAt: _timestamp,
+          updatedAt: _timestamp),
       ChatSessionSummary(
         id: 'session-a',
         title: 'Chat A',
