@@ -17,6 +17,9 @@ import time
 from uuid import uuid4
 
 
+from .project_logo_discovery import discover_project_logo, catalog_project_logo
+
+
 class PushError(Exception):
     def __init__(self, message: str, status: int = 503):
         super().__init__(message)
@@ -363,6 +366,11 @@ class PushNotificationService:
                 and path.stat().st_size <= 512 * 1024
             ):
                 return path
+        catalog = self.root / "services/notifications/assets/project-logos"
+        found = (catalog_project_logo(root, catalog) or discover_project_logo(root)
+                 or catalog_project_logo(root, catalog, allow_fallback=True))
+        if found:
+            return found
         raise PushError("Este proyecto todavía no tiene un logo asociado.", 404)
 
     def set_logo(self, session_id, relative_path):

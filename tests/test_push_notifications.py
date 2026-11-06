@@ -168,3 +168,60 @@ def test_device_test_is_queued_without_waiting_for_provider(service, monkeypatch
     assert event["installation_id"] == current["id"]
     assert event["expanded_at"] is None
     assert service.authenticate("a" * 43)["verified_at"] is None
+
+
+def test_logo_resolves_declared_manifest_and_rejects_escape(service, tmp_path):
+    import json
+    root = tmp_path / "project"
+    static = root / "apps/web/static"
+    (static / "icons").mkdir(parents=True)
+    image = static / "icons/product.png"
+    image.write_bytes(b"\x89PNG\r\n\x1a\nproduct")
+    manifest = static / "manifest.webmanifest"
+    manifest.write_text(json.dumps({"icons": [{"src": "/icons/product.png"}]}))
+    assert service.logo("chat-a") == image
+    manifest.write_text(json.dumps({"icons": [{"src": "../../../../outside.png"}]}))
+    (tmp_path / "outside.png").write_bytes(b"outside")
+    from backend.app.application.services.project_logo_discovery import discover_project_logo
+    assert discover_project_logo(root) is None
+
+
+def test_logo_catalog_handles_moved_workspace_and_preserves_manual_override(service, tmp_path):
+    import json
+    with service.connect():
+        pass
+    service.root = tmp_path / "bridge-source"
+    catalog = service.root / "services/notifications/assets/project-logos"
+    catalog.mkdir(parents=True)
+    own = catalog / "own.png"
+    own.write_bytes(b"\x89PNG\r\n\x1a\nreal-app")
+    fallback = catalog / "fallback.png"
+    fallback.write_bytes(b"\x89PNG\r\n\x1a\nbrand")
+    workspace = str((tmp_path / "project").resolve())
+    (catalog / "catalog.json").write_text(json.dumps({
+        "workspaces": {workspace: {"asset": "own.png", "kind": "application"}},
+        "fallback": {"asset": "fallback.png"},
+    }))
+    assert service.logo("chat-a") == own
+    uploaded = b"\xff\xd8\xffchosen"
+    service.upload_logo("chat-a", uploaded)
+    assert service.logo("chat-a").read_bytes() == uploaded
+    with service.connect() as db:
+        db.execute("DELETE FROM bridge_project_logos")
+    import shutil
+    shutil.rmtree(tmp_path / "project")
+    assert service.logo("chat-a") == own
+    (catalog / "catalog.json").write_text(json.dumps({"fallback": {"asset": "fallback.png"}}))
+    assert service.logo("chat-a") == fallback
+
+
+def test_logo_discovery_does_not_follow_external_static_symlink(service, tmp_path):
+    root = tmp_path / "project"
+    (root / "apps/web").mkdir(parents=True)
+    external = tmp_path / "external"
+    external.mkdir()
+    (external / "logo.png").write_bytes(b"private")
+    (external / "manifest.json").write_text('{"icons":[{"src":"/logo.png"}]}')
+    (root / "apps/web/static").symlink_to(external, target_is_directory=True)
+    from backend.app.application.services.project_logo_discovery import discover_project_logo
+    assert discover_project_logo(root) is None

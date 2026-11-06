@@ -1,0 +1,179 @@
+{
+  "version": 1,
+  "fallback": {
+    "asset": "nienfos-fallback.png",
+    "source": "/home/batata/Projects/nienfos.com/Nienfos-Brand-Kit/assets/nienfos-icon-primary.png",
+    "source_sha256": "6aa8898759f71ecd704642ae0f676ed69f7992645603fc456ee0808a9796c673"
+  },
+  "workspaces": {
+    "/home/batata/Projects/Gestion_ludmilo": {
+      "asset": "nienfos-fallback.png",
+      "source": "/home/batata/Projects/nienfos.com/Nienfos-Brand-Kit/assets/nienfos-icon-primary.png",
+      "source_sha256": "6aa8898759f71ecd704642ae0f676ed69f7992645603fc456ee0808a9796c673",
+      "kind": "fallback"
+    },
+    "/home/batata/Projects/alas-bravas": {
+      "asset": "d19dbfb346fc5733.png",
+      "source": "/home/batata/Projects/alas-bravas/public/brand/icon-192.png",
+      "source_sha256": "60d51e65da8eb05e4e5666eedfd2cf1c189aea7a187b52d2161231bbbff38f8c",
+      "kind": "application"
+    },
+    "/home/batata/Projects/ambientando-calendar": {
+      "asset": "301897b519755989.png",
+      "source": "/home/batata/Projects/nienfos-gestion/tmp/feedback-backlog-consumers/ambientando-calendar/frontend/assets/brand/ambientando-fiestas-logo.png",
+      "source_sha256": "630b007680c232e04d45950dd2972a85d078bb5e2cdac2d9535a9d52aac79f30",
+      "kind": "application"
+    },
+    "/home/batata/Projects/bridge-ai-compatibility-check": {
+      "asset": "nienfos-fallback.png",
+      "source": "/home/batata/Projects/nienfos.com/Nienfos-Brand-Kit/assets/nienfos-icon-primary.png",
+      "source_sha256": "6aa8898759f71ecd704642ae0f676ed69f7992645603fc456ee0808a9796c673",
+      "kind": "fallback"
+    },
+    "/home/batata/Projects/casa-digital-parametrica": {
+      "asset": "nienfos-fallback.png",
+      "source": "/home/batata/Projects/nienfos.com/Nienfos-Brand-Kit/assets/nienfos-icon-primary.png",
+      "source_sha256": "6aa8898759f71ecd704642ae0f676ed69f7992645603fc456ee0808a9796c673",
+      "kind": "fallback"
+    },
+    "/home/batata/Projects/cebandotradicion": {
+      "asset": "f064e38ce9ea3ecf.png",
+      "source": "/home/batata/Projects/cebandotradicion/public/brand/logo.png",
+      "source_sha256": "92d358ab579ec4617efbffa08d0b26a0030f19308bacad7c8fd2929366ce8936",
+      "kind": "application"
+    },
+    "/home/batata/Projects/codex-bridge-supervisor": {
+      "asset": "nienfos-fallback.png",
+      "source": "/home/batata/Projects/nienfos.com/Nienfos-Brand-Kit/assets/nienfos-icon-primary.png",
+      "source_sha256": "6aa8898759f71ecd704642ae0f676ed69f7992645603fc456ee0808a9796c673",
+      "kind": "fallback"
+    },
+    "/home/batata/Projects/codex-chatgpt-one-shot-dev": {
+      "asset": "nienfos-fallback.png",
+      "source": "/home/batata/Projects/nienfos.com/Nienfos-Brand-Kit/assets/nienfos-icon-primary.png",
+      "source_sha256": "6aa8898759f71ecd704642ae0f676ed69f7992645603fc456ee0808a9796c673",
+      "kind": "fallback"
+    },
+    "/home/batata/Projects/codex-cli-mobile-bridge": {
+      "asset": "166b0f3c43aaf066.png",
+      "source": "/home/batata/Projects/codex-cli-mobile-bridge/frontend/mobile_app/assets/branding/app_icon.png",
+      "source_sha256": "9a0a0d5a681b2c86e97cd6eaf39f0884d6961688ffc1187df1bc18799a63541f",
+      "kind": "application"
+    },
+    "/home/batata/Projects/codex-cli-mobile-bridge-spec-020": {
+      "asset": "336b8fdbf866c57f.png",
+      "source": "/home/batata/Projects/codex-cli-mobile-bridge/frontend/mobile_app/assets/branding/app_icon.png",
+      "source_sha256": "9a0a0d5a681b2c86e97cd6eaf39f0884d6961688ffc1187df1bc18799a63541f",
+      "kind": "application"
+    },
+    "/home/batata/Projects/codex-night-lab-20261105": {
+      "asset": "nienfos-fallback.png",
+      "source": "/home/batata/Projects/nienfos.com/Nienfos-Brand-Kit/assets/nienfos-icon-primary.png",
+      "source_sha256": "6aa8898759f71ecd704642ae0f676ed69f7992645603fc456ee0808a9796c673",
+      "kind": "fallback"
+    },
+    "/home/batata/Projects/delivery-app": {
+      "asset": "eabf002d74dc354b.png",
+      "source": "/home/batata/Projects/delivery-app/repos/customer-app/mobile/assets/icon.png",
+      "source_sha256": "45d9776f10af0d9bf28f1b0a8736af2dfbbf3218d45341c830aeee62817cceb4",
+      "kind": "application"
+    },
+    "/home/batata/Projects/deseo": {
+      "asset": "f34e83f01f1af830.png",
+      "source": "/home/batata/Projects/nienfos-gestion/tmp/deseo-transfer-dev/assets/brand/deseo-mark.svg",
+      "source_sha256": "083c04dafcc3d0db673774bf3104e1dc7217323d3eef3e7ffb2f693d2e2e4242",
+      "kind": "application"
+    },
+    "/home/batata/Projects/enterprise-ontology-workbench-mvp": {
+      "asset": "904bf9884423cf2d.png",
+      "source": "/home/batata/Projects/enterprise-ontology-workbench-mvp/apps/web/static/favicon.svg",
+      "source_sha256": "60790f4f3f2d1d9b592d2724c3449877b82338a1bac0aeb35ab91c9abd55604a",
+      "kind": "application"
+    },
+    "/home/batata/Projects/madryn-movil": {
+      "asset": "nienfos-fallback.png",
+      "source": "/home/batata/Projects/nienfos.com/Nienfos-Brand-Kit/assets/nienfos-icon-primary.png",
+      "source_sha256": "6aa8898759f71ecd704642ae0f676ed69f7992645603fc456ee0808a9796c673",
+      "kind": "fallback"
+    },
+    "/home/batata/Projects/nienfos-gestion": {
+      "asset": "c39db1d1862584b3.png",
+      "source": "/home/batata/Projects/nienfos-gestion/apps/web/static/icons/gestion-512.png",
+      "source_sha256": "305a3e46e09826f60e8497f29fe563424bf92ed6aae68c4754d0503bed571990",
+      "kind": "application"
+    },
+    "/home/batata/Projects/nienfos-identity": {
+      "asset": "nienfos-fallback.png",
+      "source": "/home/batata/Projects/nienfos.com/Nienfos-Brand-Kit/assets/nienfos-icon-primary.png",
+      "source_sha256": "6aa8898759f71ecd704642ae0f676ed69f7992645603fc456ee0808a9796c673",
+      "kind": "fallback"
+    },
+    "/home/batata/Projects/nienfos.com": {
+      "asset": "6280ad04eda4743b.png",
+      "source": "/home/batata/Projects/nienfos.com/Nienfos-Brand-Kit/assets/nienfos-icon-primary.png",
+      "source_sha256": "6aa8898759f71ecd704642ae0f676ed69f7992645603fc456ee0808a9796c673",
+      "kind": "application"
+    },
+    "/home/batata/Projects/operaciones-puerto": {
+      "asset": "nienfos-fallback.png",
+      "source": "/home/batata/Projects/nienfos.com/Nienfos-Brand-Kit/assets/nienfos-icon-primary.png",
+      "source_sha256": "6aa8898759f71ecd704642ae0f676ed69f7992645603fc456ee0808a9796c673",
+      "kind": "fallback"
+    },
+    "/home/batata/Projects/patsa": {
+      "asset": "bf408ef537f1b71e.png",
+      "source": "/home/batata/Projects/patsa/public/patsa-logo.svg",
+      "source_sha256": "2b647605b8f35b313c4b7d55b8a472753e6e7cb34f0bf717f5f449ad4e07ac7e",
+      "kind": "application"
+    },
+    "/home/batata/Projects/peluquerias": {
+      "asset": "c0ac24f991ec811f.png",
+      "source": "/home/batata/Projects/peluquerias/static/brand/icon-512.png",
+      "source_sha256": "77fbe393d6ed5366ebd3067dce91ef6a20824557b5447c383028e3a4b14730fa",
+      "kind": "application"
+    },
+    "/home/batata/Projects/chrem-platform-dev-20260929": {
+      "asset": "07cae8a4566e0f21.png",
+      "source": "/home/batata/Projects/chrem-platform-dev-20260929/apps/web/static/brand/chrem-symbol-v2.png",
+      "source_sha256": "c160669664eea9b7ab306651bb043439532675c0287fd5f9bd3a32fd0f4d53a4",
+      "kind": "application"
+    },
+    "/home/batata/Projects/puerto-almirante-storni": {
+      "asset": "99f6ab3599ff74d3.png",
+      "source": "/home/batata/Projects/almirante-storni/apps/mobile/assets/brand/app_icon_source.svg",
+      "source_sha256": "a85e82f9acdf65e7bbadf044619784dfacaff7f6b41658fa7e47ce8a2e4b05f5",
+      "kind": "application"
+    },
+    "/home/batata/Projects/rd-gestion-hse": {
+      "asset": "6e09204d75802854.png",
+      "source": "/home/batata/Projects/nienfos-gestion/tmp/feedback-backlog-consumers/rd/apps/web/static/brand/rd-icon-v1-512.png",
+      "source_sha256": "97cdc99d00f5308399e8e94cd3d31d4c19621adfc6c5c6bb64a6c2fb2d4bc85a",
+      "kind": "application"
+    },
+    "/home/batata/Projects/receta-comida": {
+      "asset": "12b119c3b1482f0a.png",
+      "source": "/home/batata/Projects/receta-comida/apps/web/static/favicon.svg",
+      "source_sha256": "2a1b307062d7aac49b3eb0f8aa743a29062c6435ff6f13d4ceca0a567acb3e3b",
+      "kind": "application"
+    },
+    "/home/batata/Projects/rentid": {
+      "asset": "6c0e6c30acfe9c73.png",
+      "source": "/home/batata/Projects/codex-cli-mobile-bridge/.run/notification-logo-sources/rentid.png",
+      "source_sha256": "4e9f7cb47b932b2110c7bdcf2f62ec83aa255dba0e8b8faeb2986f677c71ec2a",
+      "kind": "application",
+      "source_url": "https://github.com/brunojaime/rentid/blob/main/apps/mobile/assets/brand/rentid_app_icon.png"
+    },
+    "/home/batata/Projects/satshowroom": {
+      "asset": "3d6a113d2ab26ca7.png",
+      "source": "/home/batata/Projects/satshowroom/apps/mobile/assets/brand/sat_showroom_icon.png",
+      "source_sha256": "e2e0993d0cdc6fbe3b6a9652f2d3d75b67ecde4563c47959d79686da29c621bd",
+      "kind": "application"
+    },
+    "/home/batata/Projects/sea": {
+      "asset": "nienfos-fallback.png",
+      "source": "/home/batata/Projects/nienfos.com/Nienfos-Brand-Kit/assets/nienfos-icon-primary.png",
+      "source_sha256": "6aa8898759f71ecd704642ae0f676ed69f7992645603fc456ee0808a9796c673",
+      "kind": "fallback"
+    }
+  }
+}
