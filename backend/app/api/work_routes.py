@@ -77,6 +77,12 @@ def overview(service=Depends(get_work)):
     return call(service.overview)
 
 
+@router.get("/history")
+def history(workspace_path: str | None = None, cursor: str | None = None,
+            limit: int = 30, service=Depends(get_work)):
+    return call(service.history, workspace_path, cursor, limit)
+
+
 @router.post("/backlog", status_code=201)
 def enqueue(payload: WorkInput, service=Depends(get_work)):
     return call(service.enqueue, payload)

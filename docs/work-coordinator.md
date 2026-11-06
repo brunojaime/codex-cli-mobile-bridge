@@ -161,3 +161,32 @@ Si no existe un procedimiento DEV aislado, la elección queda guardada con estad
 no fabrica destinos ni comandos de despliegue. Esto no habilita publicación en QA o PROD.
 Los objetivos de supervisión proactiva y presupuestos permanecen en la política operativa;
 este switch sólo controla la ejecución automática de encargos.
+
+
+## Propiedad de la cola y separación de ambientes
+
+Bridge PROD administra su coordinador local y sus conversaciones usando su propio chat store.
+`WORK_HUB_URL` vacío selecciona este modo. Una dependencia externa declarada como DEV
+se rechaza al iniciar PROD; un hub externo sólo puede declararse explícitamente PROD.
+DEV conserva una cola independiente para pruebas. WhatsApp y Feedback dirigidos a PROD
+usan la cola de PROD sin cambiar sus destinos ni sus identidades.
+
+La migración usa `scripts/migrate_work_to_prod.py`, congela schedulers y entradas,
+copia registros por sus IDs y columnas explícitas y rechaza conflictos o sesiones activas.
+Conserva snapshots de políticas y conversaciones de intentos anteriores. Los registros
+pendientes migrados quedan archivados en DEV y sus políticas operativas se retiran allí.
+La pausa explícita de RD se conserva; esta migración no autoriza reanudar sus tareas.
+
+`execution_workspace` permite ejecutar en un worktree Git del mismo repositorio sin
+cambiar la identidad del proyecto ni tocar su checkout original. Se reservan ambos
+paths para evitar escritores simultáneos. La estrategia de verificación SvelteKit
+comprueba versión y environment DEV en los endpoints reales del proyecto.
+
+
+## Backlog por proyecto e historial (6 de noviembre)
+
+- El acceso del workspace abre todos los proyectos con pedidos pendientes, en tarjetas con contadores y vista previa. El acceso desde el proyecto limita pendientes, historial, decisiones y configuración a ese proyecto.
+- La vista del proyecto separa «En curso» de «Por hacer». Sólo muestra estados no terminales; completados y retirados se consultan en Historial sin borrar los registros.
+- `GET /work/history?workspace_path=…&cursor=…&limit=30` devuelve exclusivamente completados/retirados de proyectos registrados. Usa paginación por fecha y rowid, con un máximo de 100 por página; leerlo no inicia ejecuciones.
+- La publicación depende del encargo. El coordinador conserva la comprobación Git/DEV y completa la entrega DEV cuando falta; evita repetir una publicación del mismo commit ya verificada.
+- El código de UI no equivale a APK distribuido. Consultar el informe del rediseño para el estado de activación y las capturas de validación.

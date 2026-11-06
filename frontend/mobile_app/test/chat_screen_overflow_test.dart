@@ -318,11 +318,18 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Deploys'), findsOneWidget);
     expect(find.text('Notificaciones'), findsOneWidget);
+    expect(find.text('Backlog'), findsOneWidget);
     await tester.tap(find.byTooltip('Project actions for Workspace A'));
     await tester.pumpAndSettle();
     expect(find.text('Deploys · Dev / QA / Pro'), findsOneWidget);
     expect(find.text('Notificaciones del proyecto'), findsOneWidget);
+    expect(find.text('Backlog del proyecto'), findsOneWidget);
+    await tester.tap(find.text('Backlog del proyecto'));
+    await tester.pumpAndSettle();
+    expect(find.text('Workspace A'), findsOneWidget);
+    expect(find.text('Todos los proyectos'), findsNothing);
     expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
   testWidgets('global deployments are available without selecting a project', (tester) async {
@@ -330,6 +337,11 @@ void main() {
     await tester.tap(find.byTooltip('More actions'));
     await tester.pumpAndSettle();
     expect(find.text('Deploys · Workspace'), findsOneWidget);
+    expect(find.text('Backlog · Workspace'), findsOneWidget);
+    await tester.tap(find.text('Backlog · Workspace'));
+    await tester.pumpAndSettle();
+    expect(find.text('Todos los proyectos'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
   testWidgets('sidebar session tile shows minimal timeline metadata',

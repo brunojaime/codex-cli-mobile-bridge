@@ -429,7 +429,7 @@ enum _AppBarOverflowAction {
   newChat,
 }
 
-enum _PinnedWorkspaceAction { newChat, deployments, notifications, remove }
+enum _PinnedWorkspaceAction { newChat, deployments, notifications, backlog, remove }
 
 enum _RenameChatMode { manual, generated }
 
@@ -4399,7 +4399,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
               icon: Icons.cloud_outlined, label: 'Deploys · Workspace'),
             _buildAppBarOverflowMenuItem(action: _AppBarOverflowAction.notifications,
               icon: Icons.notifications_outlined, label: 'Notificaciones'),
-            _buildAppBarOverflowMenuItem(action:_AppBarOverflowAction.work,icon:Icons.playlist_play_rounded,label:'Backlog y Tu noche'),
+            _buildAppBarOverflowMenuItem(action:_AppBarOverflowAction.work,icon:Icons.playlist_play_rounded,label:'Backlog · Workspace'),
             _buildAppBarOverflowMenuItem(
               action: _AppBarOverflowAction.apps,
               icon: Icons.apps_rounded,
@@ -4477,7 +4477,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     return <Widget>[
       ...primaryActions,
       IconButton(onPressed: () => _openDeployments(), icon: const Icon(Icons.cloud_outlined), tooltip: 'Deploys · Workspace'),
-      IconButton(onPressed:_openWork,icon:const Icon(Icons.playlist_play_rounded),tooltip:'Backlog y Tu noche'),
+      IconButton(onPressed:_openWork,icon:const Icon(Icons.playlist_play_rounded),tooltip:'Backlog · Workspace'),
       IconButton(
         onPressed: () async {
           await _openInstallableAppsSheet();
@@ -4629,10 +4629,11 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
       service: widget.notificationService, sessionId: sessionId, projectName: workspace.name)));
   }
 
-  Future<void> _openWork() async {
+  Future<void> _openWork([Workspace? workspace]) async {
     await Navigator.of(context).push(MaterialPageRoute<void>(builder:(_)=>WorkScreen(
       baseUrl:_activeServer?.baseUrl ?? widget.initialApiBaseUrl,
-      workspacePath:_chatController.currentSession?.workspacePath,
+      workspacePath:workspace?.path,
+      projectName:workspace?.name,
       onOpenChat:(id)=>_chatController.selectSession(id),
     )));
   }
@@ -5255,6 +5256,10 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                             Navigator.of(context).pop();
                             await _openProjectNotifications(workspace);
                             return;
+                          case _PinnedWorkspaceAction.backlog:
+                            Navigator.of(context).pop();
+                            await _openWork(workspace);
+                            return;
                           case _PinnedWorkspaceAction.newChat:
                             Navigator.of(context).pop();
                             await _createNewChatForWorkspace(workspace);
@@ -5279,6 +5284,10 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                           child: Text('Notificaciones del proyecto'),
                         ),
                         const PopupMenuItem<_PinnedWorkspaceAction>(
+                          value: _PinnedWorkspaceAction.backlog,
+                          child: Text('Backlog del proyecto'),
+                        ),
+                        const PopupMenuItem<_PinnedWorkspaceAction>(
                           value: _PinnedWorkspaceAction.remove,
                           child: Text('Unpin project'),
                         ),
@@ -5296,6 +5305,10 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                       Navigator.of(context).pop();
                       await _openProjectNotifications(workspace);
                     }, icon: const Icon(Icons.notifications_outlined, size: 18), label: const Text('Notificaciones')),
+                    TextButton.icon(onPressed: () async {
+                      Navigator.of(context).pop();
+                      await _openWork(workspace);
+                    }, icon: const Icon(Icons.playlist_play_rounded, size: 18), label: const Text('Backlog')),
                   ])),
                   ...visibleSessions.isEmpty
                     ? <Widget>[
