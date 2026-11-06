@@ -109,6 +109,10 @@ def test_serial_queue_context_delivery_and_no_drive_trigger(work):
     overview = service.overview()
     active = overview["projects"][0]["active"]
     assert active["id"] == first["id"]
+    configuration = work.rig.messages.get_session(active["session_id"]).agent_configuration
+    from backend.app.domain.entities.agent_configuration import AgentId
+    assert "podés hacer push y publicar" in configuration.agents[AgentId.GENERATOR].prompt
+    assert "No publiques" not in configuration.agents[AgentId.REVIEWER].prompt
     assert len(work.rig.provider.requests) == 1
     service.tick()
     assert len(work.rig.provider.requests) == 1
@@ -240,7 +244,8 @@ def test_routes_intake_modes_and_no_folder(work):
         assert client.get("/work").json()["summary"]["queued"] == 1
 
 
-def test_real_git_and_dev_delivery(work, tmp_path):
+@pytest.mark.parametrize("initial_receipt", [None, "stale", "current", "wrong_environment"])
+def test_real_git_and_dev_delivery(work, tmp_path, initial_receipt):
     """Real local remote + HTTP DEV receipt; no model or cloud deployment involved."""
     from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
     import threading
@@ -259,6 +264,19 @@ def test_real_git_and_dev_delivery(work, tmp_path):
     )
     git(work.rig.workspace, "add", "deploy.py")
     git(work.rig.workspace, "commit", "-m", "Add lab deployment")
+    commit = git(work.rig.workspace, "rev-parse", "HEAD")
+    if initial_receipt:
+        (published / "version.json").write_text(json.dumps({
+            "environment": "prod" if initial_receipt == "wrong_environment" else "dev",
+            "commit": "old" if initial_receipt == "stale" else commit,
+        }))
+    deployments = []
+    original_run = work.service._run
+    def recording_run(path, argv, timeout=180):
+        if argv[:2] == ["python3", "deploy.py"]:
+            deployments.append(argv)
+        return original_run(path, argv, timeout)
+    work.service._run = recording_run
     handler = functools.partial(SimpleHTTPRequestHandler, directory=str(published))
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -272,6 +290,8 @@ def test_real_git_and_dev_delivery(work, tmp_path):
         )
         receipt = work.service._deliver(request(work).model_dump(), policy)
         assert receipt["remote_confirmed"]
+        assert len(deployments) == (0 if initial_receipt == "current" else 1)
+        assert receipt["commit"] == commit
         assert (
             git(
                 work.rig.workspace, "ls-remote", "origin", "refs/heads/dev/lab"

@@ -689,8 +689,15 @@ class WorkCoordinator:
         ).split()
         if not remote or remote[0] != commit:
             raise WorkConflict("No se pudo confirmar el commit remoto")
-        self._run(path, policy.deploy, policy.command_timeout_seconds)
-        receipt = self.dev_receipt(policy)
+        # An agent may already have published as part of the user's request.
+        # Confirm the actual version; repair missing/stale DEV without model calls.
+        try:
+            receipt = self.dev_receipt(policy)
+        except Exception:
+            receipt = {}
+        if receipt.get("environment") != "dev" or receipt.get("commit") != commit:
+            self._run(path, policy.deploy, policy.command_timeout_seconds)
+            receipt = self.dev_receipt(policy)
         if receipt.get("environment") != "dev" or receipt.get("commit") != commit:
             raise WorkConflict(
                 "La versión servida en DEV no corresponde al commit publicado"
@@ -1159,12 +1166,15 @@ class WorkCoordinator:
                 config.agents[AgentId.GENERATOR].prompt = (
                     "Implementá el encargo autorizado del backlog, comprobá el estado actual y el resultado anterior. "
                     "No repitas cambios ya resueltos. Validá el comportamiento y dejá un commit con los cambios de este encargo. "
-                    "No cambies de rama, no hagas push, no despliegues ni publiques: el coordinador realiza la entrega exclusivamente en DEV. "
+                    "Seguí el alcance y las instrucciones de publicación del encargo; podés hacer push y publicar si el pedido lo requiere, usando el procedimiento oficial del proyecto. "
+                    "Trabajá en la rama configurada. Informá el commit y la evidencia de cualquier publicación. "
+                    "Al finalizar, el coordinador comprobará Git y DEV y completará la publicación DEV si falta. "
                     "No delegues en otros chats. Si falta una decisión material, explicá el bloqueo sin inventar requisitos."
                 )
                 config.agents[AgentId.REVIEWER].prompt = (
                     "Revisá el alcance pedido, coherencia con el proyecto, regresiones y pruebas. "
-                    "Si queda una corrección concreta, pedila al Generator dentro del presupuesto. No publiques ni amplíes el alcance."
+                    "Si queda una corrección concreta, pedila al Generator dentro del presupuesto. "
+                    "Verificá las publicaciones solicitadas y sus evidencias según el encargo, sin ampliar el alcance."
                 )
                 self.messages.update_agent_configuration(
                     session_id=session_id, configuration=config
