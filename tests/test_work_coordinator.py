@@ -582,6 +582,155 @@ def test_corrupt_claim_never_admits_another_writer(work):
     assert not work.rig.provider.requests
 
 
+def test_existing_task_uses_linked_checkout_and_preserves_project_identity(
+    work, tmp_path
+):
+    service = work.service
+    original = work.rig.workspace
+    with service.ledger() as db:
+        db.execute("DELETE FROM work_policies")
+        db.commit()
+    service.project_settings.update(str(original), {"automatic_execution": True})
+    task = service.enqueue(request(work, "preexisting-linked"))
+    service.tick()
+    assert (
+        service.project_settings.overview()["projects"][0]["execution_status"]
+        == "needs_setup"
+    )
+    assert not work.rig.provider.requests
+    checkout = tmp_path / "isolated"
+    git(original, "worktree", "add", "-b", "dev/isolated", str(checkout))
+    (original / "foreign.txt").write_text("foreign pending changes\n")
+    before = git(original, "status", "--porcelain")
+    service.policy(
+        work.policy.model_copy(
+            update={
+                "execution_workspace": str(checkout),
+                "dev_branch": "dev/isolated",
+                "execution_context": "Preserve request and attachments; QA/PROD have their own procedure.",
+            }
+        )
+    )
+    service.tick()
+    active = service.overview()["projects"][0]["active"]
+    assert active["id"] == task["id"]
+    assert active["source_key"] == "preexisting-linked"
+    assert active["revision"] == task["revision"]
+    session = work.rig.messages.get_session(active["session_id"])
+    assert session.workspace_path == str(original)
+    assert service.execution_workspace_for(session) == str(checkout)
+    assert work.rig.provider.requests[-1]["workdir"] == str(checkout)
+    assert service._marker(str(checkout)).exists()
+    with pytest.raises(WorkspaceBusy):
+        service.check_claim(str(checkout), None)
+    complete_cycle(work, active)
+    service.tick()
+    assert not service._marker(str(checkout)).exists()
+    assert git(original, "status", "--porcelain") == before
+    assert (original / "foreign.txt").read_text() == "foreign pending changes\n"
+
+
+def test_separate_checkout_rejects_unrelated_repository(work, tmp_path):
+    other = tmp_path / "unrelated"
+    other.mkdir()
+    git(other, "init", "-b", "dev/other")
+    with pytest.raises(WorkConflict, match="repositorio"):
+        work.service.checkout(
+            work.policy.model_copy(update={"execution_workspace": str(other)})
+        )
+
+
+@pytest.mark.parametrize("environment", ["dev", "qa"])
+def test_sveltekit_receipt_verifies_actual_health_and_commit(
+    work, tmp_path, environment
+):
+    import functools
+    from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+    import threading
+
+    remote = tmp_path / "remote.git"
+    subprocess.run(
+        ["git", "init", "--bare", str(remote)], check=True, capture_output=True
+    )
+    git(work.rig.workspace, "remote", "add", "origin", str(remote))
+    checkout = tmp_path / "delivery-worktree"
+    git(work.rig.workspace, "worktree", "add", "-b", "dev/svelte", str(checkout))
+    (work.rig.workspace / "foreign.txt").write_text("keep unchanged")
+    (checkout / "index.html").write_text("<h1>Changed</h1>")
+    git(checkout, "add", "index.html")
+    git(checkout, "commit", "-m", "Implement task")
+    commit = git(checkout, "rev-parse", "HEAD")
+    published = tmp_path / "published"
+    (published / "_app").mkdir(parents=True)
+    (published / "api").mkdir()
+    (published / "_app/version.json").write_text(json.dumps({"version": commit}))
+    (published / "api/health").write_text(
+        json.dumps({"status": "ok", "environment": environment})
+    )
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0),
+        functools.partial(SimpleHTTPRequestHandler, directory=str(published)),
+    )
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        policy = work.policy.model_copy(
+            update={
+                "execution_workspace": str(checkout),
+                "dev_branch": "dev/svelte",
+                "dev_url": f"http://127.0.0.1:{server.server_port}/_app/version.json",
+                "verification_strategy": "sveltekit",
+                "deploy": ["python3", "-c", "pass"],
+            }
+        )
+        if environment == "dev":
+            assert (
+                work.service._deliver(request(work).model_dump(), policy)["commit"]
+                == commit
+            )
+        else:
+            with pytest.raises(WorkConflict, match="versión servida"):
+                work.service._deliver(request(work).model_dump(), policy)
+        assert (work.rig.workspace / "foreign.txt").read_text() == "keep unchanged"
+        assert (
+            git(checkout, "ls-remote", "origin", "refs/heads/dev/svelte").split()[0]
+            == commit
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_leader_lock_prevents_second_coordinator_admission(work):
+    import fcntl
+
+    service = work.service
+    service.enqueue(request(work, "leader-lock"))
+    with service.database.with_suffix(".worker.lock").open("a") as leader:
+        fcntl.flock(leader, fcntl.LOCK_EX)
+        service.tick()
+        assert not work.rig.provider.requests
+    service.tick()
+    assert len(work.rig.provider.requests) == 1
+
+
+def test_missing_linked_checkout_blocks_task_without_touching_original(work, tmp_path):
+    checkout = tmp_path / "removed-worktree"
+    git(work.rig.workspace, "worktree", "add", "-b", "dev/removed", str(checkout))
+    work.service.policy(
+        work.policy.model_copy(
+            update={"execution_workspace": str(checkout), "dev_branch": "dev/removed"}
+        )
+    )
+    task = work.service.enqueue(request(work, "removed-checkout"))
+    git(work.rig.workspace, "worktree", "remove", str(checkout))
+    work.service.tick()
+    queued = work.service.overview()["projects"][0]["queue"]
+    assert queued[0]["id"] == task["id"]
+    assert queued[0]["status"] == "blocked"
+    assert not work.rig.provider.requests
+    assert git(work.rig.workspace, "status", "--porcelain") == ""
+
+
 def test_project_switch_is_durable_and_controls_next_task(work):
     service = work.service
     path = str(work.rig.workspace)

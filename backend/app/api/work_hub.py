@@ -13,6 +13,8 @@ def install_work_hub(app, settings, *, transport=None):
     url = getattr(settings, "work_hub_url", "").rstrip("/")
     if not url or settings.bridge_environment != "prod":
         return
+    if getattr(settings, "work_hub_environment", "dev") != "prod":
+        raise ValueError("Bridge PROD cannot depend on a DEV work coordinator")
     target = urlsplit(url)
     if (
         target.scheme not in {"http", "https"}

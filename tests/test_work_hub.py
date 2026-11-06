@@ -24,7 +24,8 @@ def build(transport, environment="prod"):
     install_work_hub(
         app,
         SimpleNamespace(
-            work_hub_url="http://127.0.0.1:8118",
+            work_hub_url="http://127.0.0.1:8001",
+            work_hub_environment="prod",
             bridge_environment=environment,
             api_port=8000,
         ),
@@ -101,3 +102,16 @@ def test_forwarded_responses_keep_cors_for_feedback_consumers():
     client = build(httpx.MockTransport(lambda _: httpx.Response(202, json={'backlogId':'one'})))
     response = client.post('/feedback-batches/start-session',json={'executionMode':'backlog'},headers={'origin':'https://product.example'})
     assert response.headers['access-control-allow-origin'] == 'https://product.example'
+
+
+def test_prod_rejects_dependency_on_dev_coordinator():
+    with pytest.raises(ValueError, match="PROD cannot depend"):
+        install_work_hub(FastAPI(), SimpleNamespace(work_hub_url="http://127.0.0.1:8118", bridge_environment="prod", work_hub_environment="dev", api_port=8000))
+
+
+def test_prod_without_hub_owns_local_routes():
+    app = FastAPI()
+    @app.get('/work')
+    def local(): return {'owner':'prod'}
+    install_work_hub(app, SimpleNamespace(work_hub_url='', bridge_environment='prod'))
+    assert TestClient(app).get('/work').json() == {'owner':'prod'}

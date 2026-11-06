@@ -161,3 +161,23 @@ Si no existe un procedimiento DEV aislado, la elección queda guardada con estad
 no fabrica destinos ni comandos de despliegue. Esto no habilita publicación en QA o PROD.
 Los objetivos de supervisión proactiva y presupuestos permanecen en la política operativa;
 este switch sólo controla la ejecución automática de encargos.
+
+
+## Propiedad de la cola y separación de ambientes
+
+Bridge PROD administra su coordinador local y sus conversaciones usando su propio chat store.
+`WORK_HUB_URL` vacío selecciona este modo. Una dependencia externa declarada como DEV
+se rechaza al iniciar PROD; un hub externo sólo puede declararse explícitamente PROD.
+DEV conserva una cola independiente para pruebas. WhatsApp y Feedback dirigidos a PROD
+usan la cola de PROD sin cambiar sus destinos ni sus identidades.
+
+La migración usa `scripts/migrate_work_to_prod.py`, congela schedulers y entradas,
+copia registros por sus IDs y columnas explícitas y rechaza conflictos o sesiones activas.
+Conserva snapshots de políticas y conversaciones de intentos anteriores. Los registros
+pendientes migrados quedan archivados en DEV y sus políticas operativas se retiran allí.
+La pausa explícita de RD se conserva; esta migración no autoriza reanudar sus tareas.
+
+`execution_workspace` permite ejecutar en un worktree Git del mismo repositorio sin
+cambiar la identidad del proyecto ni tocar su checkout original. Se reservan ambos
+paths para evitar escritores simultáneos. La estrategia de verificación SvelteKit
+comprueba versión y environment DEV en los endpoints reales del proyecto.

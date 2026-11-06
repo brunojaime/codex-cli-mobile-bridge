@@ -56,6 +56,7 @@ def get_work(container=Depends(get_container)):
                 Path.cwd() / ".data" / "whatsapp_ingest" / "inbox",
             ),
         )
+        service.owner_environment = getattr(settings, "bridge_environment", "unknown")
         service._temporary_store = temporary
         container.work_coordinator_service = service
     return service
@@ -74,7 +75,7 @@ def call(function, *args):
 
 @router.get("")
 def overview(service=Depends(get_work)):
-    return call(service.overview)
+    return {**call(service.overview), "coordinator": {"environment": getattr(service, "owner_environment", "unknown"), "local": True}}
 
 
 @router.post("/backlog", status_code=201)
