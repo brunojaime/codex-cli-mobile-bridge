@@ -98,6 +98,17 @@ def project_settings(service=Depends(get_work)):
     return call(service.project_settings.overview)
 
 
+@router.get("/deployments")
+def project_deployments(workspace_path: str | None = None,
+                        service=Depends(get_work), container=Depends(get_container)):
+    from backend.app.application.services.project_deployments import deployment_overview
+
+    try:
+        return deployment_overview(service, getattr(container, "web_preview_deploy_service", None), workspace_path)
+    except KeyError:
+        raise HTTPException(404, "No se encontró el proyecto") from None
+
+
 @router.put("/settings")
 def update_project_settings(payload: ProjectSettingsUpdate, service=Depends(get_work)):
     return call(service.project_settings.update, payload.workspace_path, payload.settings)

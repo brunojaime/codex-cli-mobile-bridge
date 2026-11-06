@@ -310,6 +310,28 @@ void main() {
     expect(generatorPayload.containsKey('model'), isFalse);
   });
 
+  testWidgets('project actions expose deployments and notifications beside chats', (tester) async {
+    final session = _buildSession(messages: const <ChatMessage>[]);
+    await _pumpChatScreen(tester, session: session, width: 430, height: 932,
+      sidebarWorkspaces: const [Workspace(name: 'Workspace A', path: '/workspace/a')]);
+    await tester.tap(find.byTooltip('Projects'));
+    await tester.pumpAndSettle();
+    expect(find.text('Deploys'), findsOneWidget);
+    expect(find.text('Notificaciones'), findsOneWidget);
+    await tester.tap(find.byTooltip('Project actions for Workspace A'));
+    await tester.pumpAndSettle();
+    expect(find.text('Deploys · Dev / QA / Pro'), findsOneWidget);
+    expect(find.text('Notificaciones del proyecto'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('global deployments are available without selecting a project', (tester) async {
+    await _pumpChatScreen(tester, session: _buildSession(messages: const <ChatMessage>[]), width: 430, height: 932);
+    await tester.tap(find.byTooltip('More actions'));
+    await tester.pumpAndSettle();
+    expect(find.text('Deploys · Workspace'), findsOneWidget);
+  });
+
   testWidgets('sidebar session tile shows minimal timeline metadata',
       (WidgetTester tester) async {
     final session = _buildSession(

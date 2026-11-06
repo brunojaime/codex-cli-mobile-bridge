@@ -31,6 +31,7 @@ import '../services/message_outbox.dart';
 import '../widgets/outbox_panel.dart';
 import '../widgets/agent_proposals.dart';
 import 'work_screen.dart';
+import 'deployments_screen.dart';
 import '../services/work_client.dart';
 import '../services/attachment_type.dart';
 import '../services/audio_note_recorder.dart';
@@ -411,6 +412,7 @@ const Key kChatScreenBodyScrollViewKey = ValueKey<String>(
 );
 
 enum _AppBarOverflowAction {
+  deployments,
   notifications,
   work,
   apps,
@@ -427,7 +429,7 @@ enum _AppBarOverflowAction {
   newChat,
 }
 
-enum _PinnedWorkspaceAction { newChat, remove }
+enum _PinnedWorkspaceAction { newChat, deployments, notifications, remove }
 
 enum _RenameChatMode { manual, generated }
 
@@ -4393,6 +4395,8 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
             unawaited(_handleAppBarOverflowAction(action));
           },
           itemBuilder: (context) => <PopupMenuEntry<_AppBarOverflowAction>>[
+            _buildAppBarOverflowMenuItem(action: _AppBarOverflowAction.deployments,
+              icon: Icons.cloud_outlined, label: 'Deploys · Workspace'),
             _buildAppBarOverflowMenuItem(action: _AppBarOverflowAction.notifications,
               icon: Icons.notifications_outlined, label: 'Notificaciones'),
             _buildAppBarOverflowMenuItem(action:_AppBarOverflowAction.work,icon:Icons.playlist_play_rounded,label:'Backlog y Tu noche'),
@@ -4472,6 +4476,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     }
     return <Widget>[
       ...primaryActions,
+      IconButton(onPressed: () => _openDeployments(), icon: const Icon(Icons.cloud_outlined), tooltip: 'Deploys · Workspace'),
       IconButton(onPressed:_openWork,icon:const Icon(Icons.playlist_play_rounded),tooltip:'Backlog y Tu noche'),
       IconButton(
         onPressed: () async {
@@ -4604,6 +4609,26 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     );
   }
 
+  Future<void> _openDeployments([Workspace? workspace]) async {
+    final client = WorkClient(_activeServer?.baseUrl ?? widget.initialApiBaseUrl);
+    try {
+      await Navigator.of(context).push<void>(MaterialPageRoute(builder: (_) => DeploymentsScreen(
+        client: client, workspacePath: workspace?.path, projectName: workspace?.name)));
+    } finally {
+      client.close();
+    }
+  }
+
+  Future<void> _openProjectNotifications(Workspace workspace) async {
+    final sessions = _chatController.sessions.where((s) => s.workspacePath == workspace.path);
+    final selected = _chatController.currentSession;
+    final sessionId = selected?.workspacePath == workspace.path ? selected?.id
+        : sessions.isEmpty ? null : sessions.first.id;
+    await Navigator.of(context).push<void>(MaterialPageRoute(builder: (_) => NotificationSettingsScreen(
+      server: _activeServer?.baseUrl ?? widget.initialApiBaseUrl,
+      service: widget.notificationService, sessionId: sessionId, projectName: workspace.name)));
+  }
+
   Future<void> _openWork() async {
     await Navigator.of(context).push(MaterialPageRoute<void>(builder:(_)=>WorkScreen(
       baseUrl:_activeServer?.baseUrl ?? widget.initialApiBaseUrl,
@@ -4614,10 +4639,12 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
 
   Future<void> _handleAppBarOverflowAction(_AppBarOverflowAction action) async {
     switch (action) {
+      case _AppBarOverflowAction.deployments:
+        await _openDeployments();
+        return;
       case _AppBarOverflowAction.notifications:
         await Navigator.of(context).push<void>(MaterialPageRoute(builder: (_) => NotificationSettingsScreen(
-          server: _activeServer?.baseUrl ?? widget.initialApiBaseUrl, service: widget.notificationService,
-          sessionId: _chatController.currentSession?.id, projectName: _chatController.currentSession?.workspaceName)));
+          server: _activeServer?.baseUrl ?? widget.initialApiBaseUrl, service: widget.notificationService)));
         return;
 
       case _AppBarOverflowAction.work:
@@ -5220,6 +5247,14 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                       icon: const Icon(Icons.more_horiz_rounded),
                       onSelected: (_PinnedWorkspaceAction action) async {
                         switch (action) {
+                          case _PinnedWorkspaceAction.deployments:
+                            Navigator.of(context).pop();
+                            await _openDeployments(workspace);
+                            return;
+                          case _PinnedWorkspaceAction.notifications:
+                            Navigator.of(context).pop();
+                            await _openProjectNotifications(workspace);
+                            return;
                           case _PinnedWorkspaceAction.newChat:
                             Navigator.of(context).pop();
                             await _createNewChatForWorkspace(workspace);
@@ -5236,6 +5271,14 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                           child: Text('New chat in ${workspace.name}'),
                         ),
                         const PopupMenuItem<_PinnedWorkspaceAction>(
+                          value: _PinnedWorkspaceAction.deployments,
+                          child: Text('Deploys · Dev / QA / Pro'),
+                        ),
+                        const PopupMenuItem<_PinnedWorkspaceAction>(
+                          value: _PinnedWorkspaceAction.notifications,
+                          child: Text('Notificaciones del proyecto'),
+                        ),
+                        const PopupMenuItem<_PinnedWorkspaceAction>(
                           value: _PinnedWorkspaceAction.remove,
                           child: Text('Unpin project'),
                         ),
@@ -5243,7 +5286,18 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                     ),
                   ],
                 ),
-                children: visibleSessions.isEmpty
+                children: <Widget>[
+                  Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: Wrap(spacing: 8, children: [
+                    TextButton.icon(onPressed: () async {
+                      Navigator.of(context).pop();
+                      await _openDeployments(workspace);
+                    }, icon: const Icon(Icons.cloud_outlined, size: 18), label: const Text('Deploys')),
+                    TextButton.icon(onPressed: () async {
+                      Navigator.of(context).pop();
+                      await _openProjectNotifications(workspace);
+                    }, icon: const Icon(Icons.notifications_outlined, size: 18), label: const Text('Notificaciones')),
+                  ])),
+                  ...visibleSessions.isEmpty
                     ? <Widget>[
                         Padding(
                           padding: EdgeInsets.fromLTRB(24, 0, 24, 16),
@@ -5305,6 +5359,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                             ),
                           ),
                       ],
+                ],
               ),
             ),
           ),

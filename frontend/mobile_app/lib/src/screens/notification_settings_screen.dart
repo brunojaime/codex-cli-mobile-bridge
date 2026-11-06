@@ -109,14 +109,22 @@ class _NotificationSettingsScreenState
     final enabled = _status?['enabled'] == true;
     final verified = _status?['verified'] == true;
     return Scaffold(
-        appBar: AppBar(title: const Text('Notificaciones')),
+        appBar: AppBar(title: Text(widget.projectName == null ? 'Notificaciones' : 'Notificaciones · ${widget.projectName}',
+          maxLines: 1, overflow: TextOverflow.ellipsis)),
         body: ListView(padding: const EdgeInsets.all(20), children: [
+          if (widget.projectName != null) ...[
+            Text(widget.projectName!, style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 8),
+            if (widget.sessionId == null) const Text('Este proyecto todavía no tiene una conversación disponible. El logo se podrá configurar cuando tenga una.'),
+            const SizedBox(height: 16),
+          ],
           const Text('Enterate cuando tu proyecto termine',
               style: TextStyle(fontSize: 23, fontWeight: FontWeight.w700)),
           const SizedBox(height: 12),
           const Text(
               'Recibí un aviso con una vista previa cuando ya no quede nadie trabajando. Al tocarlo vas directo al mensaje. Los avisos se limpian al entrar al proyecto.'),
           const SizedBox(height: 20),
+          const Text('Configuración de este teléfono · se aplica a todos los proyectos'),
           Card(
               child: Padding(
                   padding: const EdgeInsets.all(16),

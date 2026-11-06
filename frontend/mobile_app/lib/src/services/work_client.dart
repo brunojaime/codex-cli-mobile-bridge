@@ -27,6 +27,8 @@ class WorkClient {
   }
 
   Future<Map<String, dynamic>> projectSettings() => request('GET', '/settings');
+  Future<Map<String, dynamic>> deployments({String? workspacePath}) => request(
+      'GET', '/deployments${workspacePath == null ? '' : '?workspace_path=${Uri.encodeQueryComponent(workspacePath)}'}');
   Future<Map<String, dynamic>> updateProjectSettings(
           String workspace, Map<String, dynamic> settings) =>
       request('PUT', '/settings',

@@ -987,7 +987,8 @@ def test_web_preview_invite_revoke_after_deploy_updates_d1(
     assert revoked["sync_status"] == "synced"
     assert revoked["revoked_at"]
     assert fake.sql_calls[-1]["params"][0] == invite["invite_id"]
-    assert fake.sql_calls[-1]["params"][7] == revoked["revoked_at"]
+    assert fake.sql_calls[-1]["params"][7] == invite["created_at"]
+    assert fake.sql_calls[-1]["params"][9] == revoked["revoked_at"]
 
 
 def _generated_project(tmp_path: Path) -> Path:
@@ -1445,3 +1446,16 @@ class _FakeCloudflareClient:
                 "build_id": headers["X-Codex-Expected-Build"],
             },
         )
+
+
+def test_web_preview_listing_can_include_all_projects(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    directory = tmp_path / 'state' / 'previews'
+    directory.mkdir(parents=True, exist_ok=True)
+    for index in range(3):
+        (directory / f'preview-{index}.json').write_text(json.dumps({
+            'preview_id': f'preview-{index}', 'status': 'planned',
+            'created_at': f'2026-11-0{index + 1}T12:00:00Z',
+        }))
+    assert len(service.list_previews(limit=1)) == 1
+    assert len(service.list_previews(limit=None)) == 3
