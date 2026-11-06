@@ -8,9 +8,9 @@ Siempre devuelve Dev, QA y Pro, con publicación vigente, último intento e hist
 
 ## Evidencia y comparación
 
-Fuentes automáticas: comprobantes de tareas completadas del coordinador y estados guardados de previews web. Los previews se presentan como Dev. Un plan de preview o un build no acreditan un deploy. El historial de previews contiene el estado que conserva ese servicio; no reconstruye publicaciones que ese servicio ya sobrescribió.
+Fuentes automáticas: comprobantes de tareas completadas del coordinador, estados guardados de previews web e índice sincronizado de Cloudflare Workers/Pages. Los previews se presentan como Dev. Un plan de preview o un build no acreditan un deploy. El historial de previews contiene el estado que conserva ese servicio; no reconstruye publicaciones que ese servicio ya sobrescribió.
 
-Los publicadores externos pueden registrar sus comprobantes en `<proyecto>/.codex/deployments.json`. No se inspeccionan archivos `.env`, tokens, respaldos ni logs de publicación. No se consulta GitHub o Cloudflare en vivo. Un deploy externo que no emite comprobante figura como **sin deploy registrado**, aunque exista fuera del Bridge.
+Los publicadores externos pueden registrar sus comprobantes en `<proyecto>/.codex/deployments.json`. No se inspeccionan archivos `.env`, tokens, respaldos ni logs de publicación. La pantalla no consulta proveedores durante cada apertura: lee el índice de Cloudflare actualizado cada diez minutos. Los proveedores todavía no integrados pueden emitir el comprobante manual; sin comprobante ni fuente integrada, la pantalla muestra **sin deploy registrado**, aunque exista una publicación fuera del Bridge.
 
 La comparación utiliza los campos compartidos entre publicaciones: commit completo y/o release. Si cualquiera de las identidades compartidas difiere, indica releases diferentes. Si faltan identidades comparables, indica trazabilidad insuficiente. Dos ambientes iguales con un tercero ausente nunca se presentan como tres ambientes sincronizados. Un error de lectura impide afirmar igualdad.
 
