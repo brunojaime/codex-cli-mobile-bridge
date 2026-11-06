@@ -794,3 +794,31 @@ def test_execution_configuration_uses_registered_strategy(work):
     settings = ProjectSettings(work.service, strategies=[DisableStrategy()])
     with work.service.ledger() as db:
         assert settings.effective(db, work.policy.model_dump())['enabled'] is False
+
+
+def test_dev_receipt_identifies_bridge_to_origin(work):
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import threading
+
+    requests = []
+
+    class Origin(BaseHTTPRequestHandler):
+        def do_GET(self):
+            requests.append((self.path, self.headers.get("User-Agent")))
+            if self.headers.get("User-Agent") != "Codex-Bridge/1.0":
+                self.send_error(403)
+                return
+            self.send_response(200)
+            self.end_headers()
+            data = {"version": "a" * 40} if self.path == "/_app/version.json" else {"environment": "dev"}
+            self.wfile.write(json.dumps(data).encode())
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Origin)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        policy = work.policy.model_copy(update={"dev_url": f"http://127.0.0.1:{server.server_port}/_app/version.json", "verification_strategy": "sveltekit"})
+        assert work.service.dev_receipt(policy) == {"environment": "dev", "commit": "a" * 40}
+        assert requests == [("/_app/version.json", "Codex-Bridge/1.0"), ("/api/health", "Codex-Bridge/1.0")]
+    finally:
+        server.shutdown()
+        server.server_close()

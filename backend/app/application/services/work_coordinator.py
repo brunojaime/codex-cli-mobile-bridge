@@ -17,7 +17,7 @@ import sqlite3
 import subprocess
 import threading
 from typing import Literal
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 from uuid import uuid4, uuid5, NAMESPACE_URL
 from zoneinfo import ZoneInfo
 
@@ -697,7 +697,7 @@ class WorkCoordinator:
 
     def dev_receipt(self, policy):
         """Use one version strategy for delivery and periodic reconciliation."""
-        with urlopen(policy.dev_url, timeout=20) as response:
+        with urlopen(Request(policy.dev_url, headers={"User-Agent": "Codex-Bridge/1.0"}), timeout=20) as response:
             if response.url.rstrip("/") != policy.dev_url.rstrip("/"):
                 raise WorkConflict("DEV redirigió a un destino distinto del autorizado")
             receipt = json.loads(response.read(65536))
@@ -708,7 +708,7 @@ class WorkCoordinator:
             if parsed.path != "/_app/version.json":
                 raise WorkConflict("SvelteKit requiere su versión pública real")
             with urlopen(
-                f"{parsed.scheme}://{parsed.netloc}/api/health", timeout=20
+                Request(f"{parsed.scheme}://{parsed.netloc}/api/health", headers={"User-Agent": "Codex-Bridge/1.0"}), timeout=20
             ) as health:
                 if health.url != f"{parsed.scheme}://{parsed.netloc}/api/health":
                     raise WorkConflict("Salud DEV redirigida")
