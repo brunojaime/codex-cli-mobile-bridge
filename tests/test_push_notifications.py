@@ -149,3 +149,22 @@ def test_native_configuration_and_invalid_request_are_safe(service):
     )
     assert response.status_code == 422
     assert "hidden" not in response.text
+
+
+def test_device_test_is_queued_without_waiting_for_provider(service, monkeypatch):
+    current = device(service, verified=False)
+
+    def provider_unavailable(*args, **kwargs):
+        pytest.fail("Request must not wait for worker/provider RPC")
+
+    monkeypatch.setattr(service, "rpc", provider_unavailable)
+    result = service.test(current)
+    assert result["status"] == "queued"
+    with service.connect() as db:
+        event = db.execute(
+            "SELECT * FROM bridge_push_events WHERE id=?", (result["event_id"],)
+        ).fetchone()
+    assert event["kind"] == "device.test"
+    assert event["installation_id"] == current["id"]
+    assert event["expanded_at"] is None
+    assert service.authenticate("a" * 43)["verified_at"] is None

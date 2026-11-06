@@ -258,7 +258,8 @@ class PushNotificationService:
                 "INSERT INTO bridge_push_events(id,event_key,installation_id,kind,created_at,ready_at) VALUES(?,?,?,'device.test',?,?)",
                 (event_id, "test:" + event_id, device["id"], now, now),
             )
-        self.rpc("tick")
+        # The durable intent is picked up by the worker every five seconds.
+        # Do not hold the mobile request open for OAuth/FCM or their retries.
         return {"event_id": event_id, "status": "queued"}
 
     def event(self, device, event_id):
