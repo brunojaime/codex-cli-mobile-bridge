@@ -66,8 +66,8 @@ class BridgePushClient {
     final binding = _bindings[server];
     final client = http.Client();
     try {
-      final request =
-          http.Request(method, Uri.parse('${bridgePushServiceUrl(server)}/notifications/$path'));
+      final request = http.Request(method,
+          Uri.parse('${bridgePushServiceUrl(server)}/notifications/$path'));
       request.headers['Content-Type'] = 'application/json';
       if (authenticated && binding != null) {
         request.headers['Authorization'] = 'Bearer ${binding['credential']}';
@@ -133,7 +133,8 @@ class BridgePushClient {
           'Habilitá las notificaciones de la app en los ajustes de Android.');
     }
     await FirebaseMessaging.instance.setAutoInitEnabled(true);
-    _bindings[server] ??= {
+    // Flags are booleans; do not infer this record as Map<String, String>.
+    _bindings[server] ??= <String, dynamic>{
       'installation': _installationId(),
       'credential': _random(32)
     };
