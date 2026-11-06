@@ -782,7 +782,14 @@ def test_settings_lists_empty_projects_and_explains_missing_delivery(work):
     service.project_settings.update(path, {'automatic_execution': True})
     project = service.project_settings.overview()['projects'][0]
     assert project['execution_status'] == 'needs_setup'
+    task = service.enqueue(request(work, "missing-project-delivery"))
+    waiting = service.overview()["projects"][0]["queue"][0]
+    assert waiting["id"] == task["id"]
+    assert waiting["status"] == "queued"
+    assert "Falta preparar el flujo" in waiting["problem"]
+    assert waiting["session_id"] is None
     service.tick()
+    assert not work.rig.provider.requests
     assert service.project_settings.overview()['projects'][0]['settings']['automatic_execution'] is True
 
 
@@ -840,3 +847,25 @@ def test_dev_receipt_identifies_bridge_to_origin(work):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_preparing_delivery_does_not_launch_a_paused_backlog(work):
+    service = work.service
+    path = str(work.rig.workspace)
+    service.project_settings.update(path, {"automatic_execution": False})
+    with service.ledger() as db:
+        db.execute("DELETE FROM work_policies")
+        db.commit()
+    task = service.enqueue(request(work, "prepare-without-executing"))
+    service.tick()
+    assert not work.rig.provider.requests
+    # Installing a delivery profile must respect the saved explicit pause.
+    service.policy(work.policy.model_copy(update={"enabled": True}))
+    restarted = WorkCoordinator(work.rig.messages, service.database, delivery=service.delivery)
+    restarted.tick()
+    project = restarted.overview()["projects"][0]
+    assert project["active"] is None
+    assert project["queue"][0]["id"] == task["id"]
+    assert project["queue"][0]["status"] == "queued"
+    assert project["queue"][0]["session_id"] is None
+    assert not work.rig.provider.requests

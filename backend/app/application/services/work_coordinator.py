@@ -440,6 +440,13 @@ class WorkCoordinator:
                 {r["workspace"] for r in rows} | {p["workspace_path"] for p in policies}
             ):
                 tasks = [self._view(r) for r in rows if r["workspace"] == workspace]
+                if not any(p["workspace_path"] == workspace for p in policies):
+                    for task in tasks:
+                        if task["status"] == "queued" and not task["problem"]:
+                            task["problem"] = (
+                                "Falta preparar el flujo de ejecución y publicación DEV "
+                                "de este proyecto. El pedido está guardado y todavía no empezó."
+                            )
                 projects.append(
                     {
                         "workspace_path": workspace,
