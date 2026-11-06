@@ -73,3 +73,13 @@ CAPTURE_DEPLOYS=1 flutter test test/deployments_screen_test.dart
 ```
 
 Las capturas se guardan en `reports/project-deployments/screenshots`. La captura opcional usa DejaVu Sans del sistema y Material Icons del bundle de Flutter.
+
+## Sincronización de ambientes existentes (06/11/2026)
+
+El backend combina los comprobantes anteriores con `.data/project-deployments/index.json`, producido por `scripts/sync_project_deployments.py`. El colector consulta únicamente metadatos de Cloudflare Workers/Pages, sin desplegar apps, modificar DNS, consultar datos de clientes ni copiar credenciales a su índice. Las fechas provienen de los despliegues del proveedor, no de la fecha del relevamiento.
+
+La asociación cruza manifiestos, nombres exactos, dominio personalizado propietario y repositorio común de los worktrees. La etiqueta técnica `environment=production` de Cloudflare no equivale al ambiente comercial Pro: también aparece en workers Dev/QA. Se evita asociar aplicaciones embebidas de otro proyecto al repositorio Bridge. Las plantillas o ramas sin publicación no crean registros.
+
+Los identificadores de versión de Cloudflare quedan en el ID del comprobante, no como release comparable entre workers diferentes. El commit sólo se incorpora cuando existe una vinculación explícita con la versión realmente desplegada (por ejemplo, un comprobante `sourceVersionVerified` que coincide exactamente con el worker y version ID). Diferencias conocidas entre QA/Pro se informan aunque falte la identidad de Dev.
+
+El índice conserva registros previos ante fallos y señala desactualización al superar una hora. La sincronización se programa cada diez minutos; una sesión del CLI existente puede renovarse mediante su mecanismo normal y sin login interactivo. Una falla de acceso conserva el índice anterior y requiere revisar el servicio. No se presenta una configuración antigua como despliegue vigente.

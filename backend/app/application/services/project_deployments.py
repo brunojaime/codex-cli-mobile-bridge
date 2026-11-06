@@ -36,11 +36,53 @@ class DeploymentManifest(BaseModel):
     deployments: list[DeploymentRecord] = Field(max_length=1000)
 
 
+class IndexedProject(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    workspace_path: str
+    deployments: list[DeploymentRecord] = Field(default_factory=list, max_length=1000)
+    errors: list[str] = Field(default_factory=list)
+
+
+class DeploymentIndex(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    version: Literal[1]
+    observed_at: datetime
+    projects: list[IndexedProject] = Field(max_length=2000)
+
+
+def read_deployment_index(path):
+    if path is None:
+        return {}, []
+    try:
+        with Path(path).open("rb") as stream:
+            content = stream.read(16 * 1024 * 1024 + 1)
+        if len(content) > 16 * 1024 * 1024:
+            raise ValueError("Index too large")
+        index = DeploymentIndex.model_validate_json(content)
+        if index.observed_at.tzinfo is None:
+            raise ValueError("Index needs a timezone")
+        stale = (datetime.now(timezone.utc) - index.observed_at).total_seconds() > 3600
+        return {p.workspace_path: p for p in index.projects}, (
+            ["La sincronización de deploys externos está desactualizada."]
+            if stale
+            else []
+        )
+    except FileNotFoundError:
+        return {}, []
+    except (ValueError, OSError):
+        return {}, ["No se pudo consultar el índice de deploys externos."]
+
+
 def comparison(environments):
     current = [env["current"] for env in environments]
     present = [item for item in current if item]
     if len(present) < 2:
         return "insufficient"
+    # Known disagreement is conclusive even when a third environment lacks
+    # source identity. Unknown metadata must never conceal that disagreement.
+    for key in ("commit", "release"):
+        if len({item[key] for item in present if item.get(key)}) > 1:
+            return "different"
     # Compare immutable source identities when available. Never compare a commit
     # to a tag, or call two missing versions the same release.
     keys = [
@@ -53,13 +95,16 @@ def comparison(environments):
     return "same" if len(present) == 3 else "partial_same"
 
 
-def deployment_overview(coordinator, previews=None, workspace_path=None):
+def deployment_overview(
+    coordinator, previews=None, workspace_path=None, *, index_path=None
+):
     workspaces = coordinator.messages.list_workspaces()
     if workspace_path is not None:
         workspaces = [w for w in workspaces if w.path == workspace_path]
         if not workspaces:
             raise KeyError(workspace_path)
     projects = []
+    indexed, index_errors = read_deployment_index(index_path)
     preview_error = False
     try:
         preview_rows = previews.list_previews(limit=None) if previews else ()
@@ -73,7 +118,17 @@ def deployment_overview(coordinator, previews=None, workspace_path=None):
         ).fetchall()
     for workspace in sorted(workspaces, key=lambda w: (w.name.casefold(), w.path)):
         records = []
-        errors = ["No se pudieron leer los previews."] if preview_error else []
+        errors = [
+            *index_errors,
+            *(["No se pudieron leer los previews."] if preview_error else []),
+        ]
+        external = indexed.get(workspace.path)
+        if external:
+            records.extend(
+                {**r.model_dump(mode="json"), "source": "provider"}
+                for r in external.deployments
+            )
+            errors.extend(external.errors)
         manifest_path = Path(workspace.path) / ".codex" / "deployments.json"
         try:
             # Fixed allowlisted file, bounded read, no arbitrary file discovery.

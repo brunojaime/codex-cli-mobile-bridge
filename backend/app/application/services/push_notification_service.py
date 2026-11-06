@@ -64,6 +64,7 @@ class PushNotificationService:
                         self.root / "services/notifications/migrations/001-push.sql"
                     ).read_text()
                 )
+                db.executescript((self.root / "services/notifications/migrations/002-trigger-idempotency.sql").read_text())
                 self._schema_ready = True
         return db
 

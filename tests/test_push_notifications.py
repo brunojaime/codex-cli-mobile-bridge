@@ -36,6 +36,7 @@ def service(tmp_path):
     )
     settings = Settings(
         _env_file=None,
+        push_notifications_enabled=False,
         chat_store_path=str(database),
         projects_root=str(tmp_path),
         pipeline_quality_enabled=False,

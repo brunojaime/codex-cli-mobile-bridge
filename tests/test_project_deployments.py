@@ -209,3 +209,50 @@ def test_source_failure_never_claims_release_equality(rig):
     assert result["comparison"] == "unknown"
     assert result["errors"]
     assert "private provider" not in json.dumps(result)
+
+
+def test_provider_index_adds_real_environments_and_does_not_forge_source_versions(
+    rig, tmp_path
+):
+    index = tmp_path / "index.json"
+    from datetime import datetime, timezone
+
+    index.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "observed_at": datetime.now(timezone.utc).isoformat(),
+                "projects": [
+                    {
+                        "workspace_path": str(rig.path),
+                        "errors": [],
+                        "deployments": [
+                            {
+                                "id": "cf:app-qa:real-provider-id",
+                                "environment": "qa",
+                                "status": "published",
+                                "deployed_at": "2026-11-06T13:45:17Z",
+                            },
+                            {
+                                "id": "cf:app-prod:another-provider-id",
+                                "environment": "prod",
+                                "status": "published",
+                                "deployed_at": "2026-11-06T13:48:19Z",
+                            },
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    result = deployment_overview(rig.service, index_path=index)["projects"][0]
+    assert result["environments"][1]["current"]["source"] == "provider"
+    assert result["environments"][2]["current"]["release"] is None
+    assert result["comparison"] == "unknown"
+
+
+def test_known_qa_prod_difference_is_not_hidden_by_unknown_dev_identity(rig):
+    receipt(rig, "dev", commit=None)
+    receipt(rig, "qa", commit="a" * 40)
+    receipt(rig, "prod", commit="b" * 40)
+    assert project(rig)["comparison"] == "different"

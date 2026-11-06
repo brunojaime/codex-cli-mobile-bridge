@@ -104,7 +104,8 @@ def project_deployments(workspace_path: str | None = None,
     from backend.app.application.services.project_deployments import deployment_overview
 
     try:
-        return deployment_overview(service, getattr(container, "web_preview_deploy_service", None), workspace_path)
+        return deployment_overview(service, getattr(container, "web_preview_deploy_service", None), workspace_path,
+                                   index_path=Path.cwd() / ".data" / "project-deployments" / "index.json")
     except KeyError:
         raise HTTPException(404, "No se encontró el proyecto") from None
 
