@@ -51,6 +51,7 @@ def prepare(config, bootstrap=False):
         candidate.parent.mkdir(parents=True, exist_ok=True)
         before = destination.read_bytes() if destination.exists() else None
         if bootstrap:
+            assert digest(destination) == config['bootstrap_before'][relative], 'DEV changed since preparation; reconcile before bootstrap'
             after = source.read_bytes()
             if relative.endswith('/message_service.py'):
                 text = before.decode()
