@@ -2217,7 +2217,7 @@ class MessageService:
             codex_options=codex_options,
             serial_key=serial_key,
             submission_token=submission_token,
-            workdir=session.workspace_path,
+            workdir=(self._work_coordinator.execution_workspace_for(session) if getattr(self, "_work_coordinator", None) is not None else session.workspace_path),
         )
         return Job(
             id=job_id,
@@ -4591,7 +4591,7 @@ class MessageService:
             job_id = self._execution_provider.execute(
                 prompt,
                 serial_key=f"{session.id}:turn-summary",
-                workdir=session.workspace_path,
+                workdir=(self._work_coordinator.execution_workspace_for(session) if getattr(self, "_work_coordinator", None) is not None else session.workspace_path),
             )
         except Exception:
             return None
@@ -4716,7 +4716,7 @@ class MessageService:
             job_id = self._execution_provider.execute(
                 prompt,
                 serial_key=f"{session.id}:title",
-                workdir=session.workspace_path,
+                workdir=(self._work_coordinator.execution_workspace_for(session) if getattr(self, "_work_coordinator", None) is not None else session.workspace_path),
                 model=self._title_generation_model,
             )
         except Exception:

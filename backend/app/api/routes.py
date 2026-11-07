@@ -409,6 +409,14 @@ def _backend_commit() -> str | None:
     return commit or None
 
 
+from backend.app.application.services.backend_automation_release import loaded_revision as _loaded_automation_revision
+
+
+@router.get("/automation/version")
+def automation_version(container: AppContainer = Depends(get_container)):
+    return {"environment": container.settings.bridge_environment, "commit": _loaded_automation_revision()}
+
+
 @router.get("/health", response_model=HealthResponse)
 async def healthcheck(
     container: AppContainer = Depends(get_container),
