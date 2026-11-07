@@ -22,3 +22,8 @@ release.
 ## Project secrets
 
 Add or rotate credentials through the chat's **Secrets** panel. They are stored in the workspace `.env`; never ask the user to paste secret values into chat and never print or reveal them.
+
+
+## Correcciones automáticas del Bridge — 07/11/2026
+
+El usuario eligió corrección de errores, pruebas y publicación en DEV. Usar el coordinador DEV y su checkout separado; producción no ejecuta estos encargos. Leer docs/automatic-dev-bugfixes.md. Publicar sólo después de validar, sin cortar trabajos ni mensajes aceptados. No habilita funciones nuevas ni producción.
