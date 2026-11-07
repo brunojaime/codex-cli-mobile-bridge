@@ -342,6 +342,20 @@ class FeedbackQueueService:
         self._image_dir.mkdir(parents=True, exist_ok=True)
         self._audio_dir.mkdir(parents=True, exist_ok=True)
 
+    def store_backlog_evidence(self, digest: str, evidence: dict[str, Any]) -> str:
+        """Keep complete batch evidence out of bounded prompts and public reports."""
+        if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+            raise ValueError("Invalid feedback evidence digest")
+        path = self._image_dir / f"backlog-evidence-{digest}.json"
+        with NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=self._image_dir, delete=False
+        ) as temporary:
+            json.dump(evidence, temporary, ensure_ascii=False)
+            temporary.write("\n")
+            temporary_path = Path(temporary.name)
+        temporary_path.replace(path)
+        return str(path.resolve())
+
     def list_items(self, *, include_images: bool = False) -> list[FeedbackQueueItem]:
         return self._load_items(include_images=include_images)
 
