@@ -30,7 +30,7 @@ class MessageOutbox extends ChangeNotifier {
   final Set<String> _removing = {};
   Future<void>? _initializing;
   Future<void> _mutations = Future.value();
-  Timer? _retryTimer;
+  final Map<String, Timer> _retryTimers = {};
   bool _closed = false;
   String? storageError;
   int _lastMicros = 0;
@@ -97,6 +97,7 @@ class MessageOutbox extends ChangeNotifier {
       if (_activeLanes.length >= 2) break;
       if (entry.needsAttention ||
           _activeLanes.contains(entry.sessionId) ||
+          _retryTimers.containsKey(entry.sessionId) ||
           _removing.contains(entry.id)) {
         continue;
       }
@@ -175,23 +176,18 @@ class MessageOutbox extends ChangeNotifier {
       _activeLanes.remove(entry.sessionId);
       if (!_closed) {
         if (waitForNetwork) {
-          _retryTimer ??= Timer(retryInterval, () {
-            _retryTimer = null;
+          // Every pump must honor this lane's wait, including pumps triggered
+          // by failures, completions or enqueues in other conversations.
+          _retryTimers[entry.sessionId]?.cancel();
+          _retryTimers[entry.sessionId] = Timer(retryInterval, () {
+            _retryTimers.remove(entry.sessionId);
             _pump();
           });
-          // Other projects can progress while this one waits for connectivity.
-          _pumpExcluding(entry.sessionId);
-        } else {
-          _pump();
         }
+        // Other projects can progress while this one waits for connectivity.
+        _pump();
       }
     }
-  }
-
-  void _pumpExcluding(String lane) {
-    _activeLanes.add(lane);
-    _pump();
-    _activeLanes.remove(lane);
   }
 
   Future<void> retry(String id) async {
@@ -199,6 +195,7 @@ class MessageOutbox extends ChangeNotifier {
     if (!entry.needsAttention && entry.state != 'waiting_connection') return;
     final receipt = await api.getOutboxReceipt(id);
     if (receipt != null) await api.outboxAction(id, 'retry');
+    _retryTimers.remove(entry.sessionId)?.cancel();
     entry.error = null;
     entry.state = 'queued';
     await _persist(entry);
@@ -241,7 +238,10 @@ class MessageOutbox extends ChangeNotifier {
   @override
   void dispose() {
     _closed = true;
-    _retryTimer?.cancel();
+    for (final timer in _retryTimers.values) {
+      timer.cancel();
+    }
+    _retryTimers.clear();
     super.dispose();
   }
 }

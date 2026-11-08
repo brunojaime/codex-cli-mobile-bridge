@@ -56,11 +56,18 @@ class QueueApi extends ApiClient {
   final Map<String, Map<String, dynamic>> receipts = {};
   final List<Map<String, dynamic>> submissions = [];
   final List<List<int>> uploadedBytes = [];
+  final List<String> receiptRequests = [];
   bool completeImmediately = false;
   bool loseNextResponse = false;
   bool offline = false;
+  int transientReceiptFailures = 0;
   @override
   Future<Map<String, dynamic>?> getOutboxReceipt(String id) async {
+    receiptRequests.add(id);
+    if (transientReceiptFailures > 0) {
+      transientReceiptFailures--;
+      throw const SocketException('transient offline');
+    }
     if (offline) throw const SocketException('offline');
     return receipts[id];
   }
@@ -179,6 +186,68 @@ void main() {
     await queue.enqueue(payload('a', 1));
     await until(() => queue.entries.single.isAccepted);
     expect(api.submissions.length, 1);
+  });
+  testWidgets('disconnected conversations each wait their full retry interval',
+      (tester) async {
+    // Bound failures so a retry storm fails assertions instead of hanging.
+    final api = QueueApi()
+      ..transientReceiptFailures = 4
+      ..completeImmediately = true;
+    final queue = MessageOutbox(
+        api: api,
+        store: MemoryStore(),
+        retryInterval: const Duration(seconds: 5));
+    addTearDown(queue.dispose);
+
+    await queue.enqueue(payload('a', 0));
+    await tester.pump();
+    final a = queue.entries.single.id;
+    expect(queue.entries.single.state, 'waiting_connection');
+    expect(api.receiptRequests, [a]);
+
+    await tester.pump(const Duration(seconds: 2));
+    await queue.enqueue(payload('b', 0));
+    await tester.pump();
+    final b = queue.entries.last.id;
+    expect(queue.entries.last.state, 'waiting_connection');
+    expect(api.receiptRequests, [a, b]);
+
+    // Enqueue pumps and queued followers must respect both lane cooldowns.
+    await queue.enqueue(payload('a', 1));
+    await queue.enqueue(payload('b', 1));
+    await tester.pump();
+    expect(api.receiptRequests, [a, b]);
+    await tester.pump(const Duration(seconds: 2));
+    api.transientReceiptFailures = 0;
+    await queue.enqueue(payload('c', 0));
+    await tester.pump();
+    expect(api.submissions.single['session_id'], 'c');
+    expect(api.receiptRequests.where((id) => id == a).length, 1);
+    expect(api.receiptRequests.where((id) => id == b).length, 1);
+
+    await tester.pump(const Duration(milliseconds: 999));
+    expect(api.submissions.length, 1);
+    await tester.pump(const Duration(milliseconds: 1));
+    expect(api.receiptRequests.where((id) => id == a).length, 2);
+    expect(api.receiptRequests.where((id) => id == b).length, 1);
+    expect(
+        api.submissions
+            .where((s) => s['session_id'] == 'a')
+            .map((s) => s['message']),
+        ['0', '1']);
+
+    await tester.pump(const Duration(milliseconds: 1999));
+    expect(api.receiptRequests.where((id) => id == b).length, 1);
+    await tester.pump(const Duration(milliseconds: 1));
+    expect(api.receiptRequests.where((id) => id == b).length, 2);
+    expect(
+        api.submissions
+            .where((s) => s['session_id'] == 'b')
+            .map((s) => s['message']),
+        ['0', '1']);
+    expect(queue.entries.every((e) => e.isAccepted), isTrue);
+    expect(api.submissions.length, 5);
+    expect(api.submissions.map((s) => s['id']).toSet().length, 5);
   });
   test('failed save rejects enqueue and preserves original audio', () async {
     final api = QueueApi();
