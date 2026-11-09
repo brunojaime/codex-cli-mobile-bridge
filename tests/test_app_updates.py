@@ -6,6 +6,7 @@ import hashlib
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+import httpx
 import pytest
 
 from backend.app.api.routes import get_container
@@ -16,9 +17,121 @@ from backend.app.application.services.app_update_service import (
     GitHubAsset,
     GitHubRelease,
     GitHubReleaseError,
+    HttpGitHubReleaseClient,
 )
 from backend.app.infrastructure.config.settings import Settings
 from backend.app.main import create_app
+
+
+@pytest.fixture
+def github_release_http(monkeypatch: pytest.MonkeyPatch):
+    requests: list[httpx.Request] = []
+    pages: dict[str, httpx.Response] = {}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return pages[str(request.url)]
+
+    with httpx.Client(transport=httpx.MockTransport(handle)) as client:
+        monkeypatch.setattr(httpx, "get", client.get)
+        yield pages, requests
+
+
+@pytest.mark.parametrize("operation", ["check_update", "resolve_apk_asset"])
+def test_http_release_pagination_finds_prod_after_dev(
+    github_release_http, operation: str,
+) -> None:
+    pages, requests = github_release_http
+    first = "https://api.github.com/repos/example/repo/releases"
+    second = first + "?page=2"
+    tag = "android-v1.0.0-build.105"
+    apk_url = f"https://github.com/example/repo/releases/download/{tag}/codex-mobile.apk"
+    pages[first] = httpx.Response(
+        200,
+        headers={"Link": f'<{second}>; rel="next", <{second}>; rel="last"'},
+        json=[{
+            "tag_name": "android-dev-v1.0.0-build.106",
+            "prerelease": True,
+            "assets": [{"name": "codex-mobile-dev.apk"}],
+        }],
+    )
+    pages[second] = httpx.Response(
+        200,
+        headers={"Link": f'<{first}>; rel="prev"'},
+        json=[{
+            "tag_name": tag,
+            "assets": [{"name": "codex-mobile.apk", "browser_download_url": apk_url}],
+        }],
+    )
+    service = AppUpdateService(
+        registry=AppUpdateRegistry.from_mapping({
+            "codex-mobile": {
+                "displayName": "Codex Mobile Bridge",
+                "repo": "example/repo",
+                "releaseTagPattern": "android-v*",
+                "apkAssetPattern": "codex-mobile-*.apk",
+                "latestAssetName": "codex-mobile.apk",
+                "releaseChannel": "prod",
+                "enabled": True,
+            },
+        }),
+        release_client=HttpGitHubReleaseClient(token="test-token", timeout_seconds=7),
+    )
+
+    if operation == "check_update":
+        result = service.check_update(
+            source_app="codex-mobile", channel="prod", current_build=104,
+        )
+        assert result.available is True
+        assert result.latest_build == 105
+        assert result.release_tag == tag
+        assert result.apk_url == apk_url
+        assert result.release_channel == "prod"
+    else:
+        _, asset = service.resolve_apk_asset(
+            source_app="codex-mobile", channel="prod",
+            release_tag=tag, asset_name="codex-mobile.apk",
+        )
+        assert asset.name == "codex-mobile.apk"
+        assert asset.browser_download_url == apk_url
+
+    assert [str(request.url) for request in requests] == [first, second]
+    for request in requests:
+        assert request.method == "GET"
+        assert request.headers["Authorization"] == "Bearer test-token"
+        assert request.headers["Accept"] == "application/vnd.github+json"
+        assert request.headers["X-GitHub-Api-Version"] == "2022-11-28"
+        assert request.extensions["timeout"]["read"] == 7
+
+
+def test_http_release_pagination_stops_without_next(github_release_http) -> None:
+    pages, requests = github_release_http
+    url = "https://api.github.com/repos/example/repo/releases"
+    pages[url] = httpx.Response(200, json=[{"tag_name": "android-v1.0.0-build.105"}])
+
+    releases = HttpGitHubReleaseClient().list_releases("example/repo")
+
+    assert [release.tag_name for release in releases] == ["android-v1.0.0-build.105"]
+    assert [str(request.url) for request in requests] == [url]
+    assert "Authorization" not in requests[0].headers
+
+
+def test_http_release_pagination_wraps_later_http_error(github_release_http) -> None:
+    pages, requests = github_release_http
+    first = "https://api.github.com/repos/example/repo/releases"
+    second = first + "?page=2"
+    pages[first] = httpx.Response(
+        200, headers={"Link": f'<{second}>; rel="next"'},
+        json=[{"tag_name": "android-dev-v1.0.0-build.106"}],
+    )
+    pages[second] = httpx.Response(503)
+
+    with pytest.raises(GitHubReleaseError) as error:
+        HttpGitHubReleaseClient().list_releases("example/repo")
+
+    assert isinstance(error.value.__cause__, httpx.HTTPStatusError)
+    assert error.value.__cause__.response.status_code == 503
+    assert [str(request.url) for request in requests] == [first, second]
 
 
 def test_known_app_with_newer_release_returns_update(tmp_path: Path) -> None:
