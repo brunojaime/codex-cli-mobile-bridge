@@ -6,6 +6,7 @@ engine is copied into a consumer; the legacy PROD executor is never restarted.
 from __future__ import annotations
 import json
 import os
+import sqlite3
 from pathlib import Path
 
 import httpx
@@ -17,13 +18,32 @@ from backend.app.api.schemas import FeedbackBatchStartRequest
 from backend.app.application.services.feedback_submission import FeedbackSubmissions, SubmissionConflict
 
 
-def create_app(*, backend_url: str, ledger_path: Path, consumers: dict, handoff_file: Path | None = None, transport=None):
+def create_app(*, backend_url: str, ledger_path: Path, consumers: dict, handoff_file: Path | None = None, legacy_ledgers: tuple[Path, ...] = (), transport=None):
     if backend_url != 'http://127.0.0.1:8000':
         raise ValueError('EXACT_PROD_BRIDGE_TARGET_REQUIRED')
     app = FastAPI(title='Codex Bridge official PROD Feedback ingress')
-    app.add_middleware(CORSMiddleware, allow_origins=[c['origin'] for c in consumers.values()], allow_methods=['GET', 'POST'], allow_headers=['content-type'])
+    app.add_middleware(CORSMiddleware, allow_origins=sorted({o for c in consumers.values() for o in c.get('origins', [c.get('origin')]) if o}), allow_methods=['GET', 'POST'], allow_headers=['content-type'])
     router = APIRouter()
     ledger = FeedbackSubmissions(ledger_path)
+
+    def legacy_status(identity: str, canonical: dict | None = None):
+        records = []
+        for path in legacy_ledgers:
+            if not path.is_file():
+                continue
+            with sqlite3.connect('file:' + str(path) + '?mode=ro', uri=True) as db:
+                row = db.execute('SELECT digest,state,receipt FROM submissions WHERE id=?', (identity,)).fetchone()
+            if row is None or row[1] == 'retryable':
+                continue
+            if canonical is not None and row[0] != FeedbackSubmissions.identity(canonical)[1]:
+                raise HTTPException(409, 'legacy_batch_id_content_conflict')
+            records.append({'id': identity, 'state': row[1], 'receipt': json.loads(row[2]) if row[2] else None})
+        if not records:
+            return None
+        # Divergent histories require review, never an arbitrary receipt or a new job.
+        if any(record != records[0] for record in records[1:]):
+            raise HTTPException(409, 'legacy_feedback_histories_require_review')
+        return records[0]
 
     async def backend(path, *, payload=None):
         async with httpx.AsyncClient(transport=transport, timeout=httpx.Timeout(600, connect=15)) as client:
@@ -63,6 +83,8 @@ def create_app(*, backend_url: str, ledger_path: Path, consumers: dict, handoff_
     async def status(batch_id: str):
         result = await run_in_threadpool(ledger.status, batch_id)
         if result is None:
+            result = await run_in_threadpool(legacy_status, batch_id)
+        if result is None:
             raise HTTPException(404, 'Feedback submission not found')
         return result
 
@@ -70,10 +92,10 @@ def create_app(*, backend_url: str, ledger_path: Path, consumers: dict, handoff_
     async def start(payload: FeedbackBatchStartRequest, request: Request):
         consumer = consumers.get(payload.sourceApp)
         if (consumer is None or not payload.items or payload.session_id is not None
-            or payload.release_when_complete or payload.workspace_path not in (payload.sourceApp, consumer['workspace'])
+            or payload.release_when_complete or payload.workspace_path not in (None, payload.sourceApp, consumer['workspace'], *consumer.get('aliases', []))
             or any(item.contextMetadata.get('environment') != 'dev' for item in payload.items)):
             raise HTTPException(403, 'Authorized development consumer and exact workspace required')
-        if request.headers.get('origin') not in (None, consumer['origin']):
+        if request.headers.get('origin') not in (None, *consumer.get('origins', [consumer.get('origin')])):
             raise HTTPException(403, 'Exact consumer origin required')
         await prod_health()
         if payload.execution_mode == 'backlog':
@@ -81,6 +103,12 @@ def create_app(*, backend_url: str, ledger_path: Path, consumers: dict, handoff_
             if 'backlog' not in capabilities['supportedExecutionModes']:
                 raise HTTPException(409, 'PROD backlog capability not advertised; queue retained')
         canonical = payload.model_dump(mode='json', exclude_none=True)
+        identity, _ = FeedbackSubmissions.identity(canonical)
+        previous = await run_in_threadpool(legacy_status, identity, canonical)
+        if previous is not None:
+            if previous['state'] == 'accepted' and previous['receipt']:
+                return previous['receipt']
+            raise HTTPException(409, {'code': 'legacy_feedback_requires_reconciliation', 'batchId': identity, 'statusPath': '/feedback-submissions/' + identity})
         try:
             reservation = await run_in_threadpool(ledger.reserve, canonical)
         except SubmissionConflict as exc:
@@ -91,6 +119,9 @@ def create_app(*, backend_url: str, ledger_path: Path, consumers: dict, handoff_
             raise HTTPException(409, {'code': 'feedback_submission_in_progress_or_uncertain', 'batchId': reservation['id'], 'statusPath': '/feedback-submissions/' + reservation['id']})
         try:
             dispatched = dict(canonical)
+            # Resolve the server-owned alias without changing original admission identity.
+            if consumer.get('resolveWorkspace'):
+                dispatched['workspace_path'] = consumer['workspace']
             # Trusted migration context changes execution instructions, not the
             # original content-addressed submission or the browser's queue.
             if handoff_file and handoff_file.is_file():
@@ -119,4 +150,4 @@ def create_app(*, backend_url: str, ledger_path: Path, consumers: dict, handoff_
 
 def configured_app():
     config = json.loads(Path(os.environ['CODEX_FEEDBACK_INGRESS_CONFIG']).read_text())
-    return create_app(backend_url=config['backend_url'], ledger_path=Path(config['ledger_path']), consumers=config['consumers'], handoff_file=Path(config['handoff_file']) if config.get('handoff_file') else None)
+    return create_app(backend_url=config['backend_url'], ledger_path=Path(config['ledger_path']), consumers=config['consumers'], legacy_ledgers=tuple(Path(p) for p in config.get('legacy_ledgers', [])), handoff_file=Path(config['handoff_file']) if config.get('handoff_file') else None)

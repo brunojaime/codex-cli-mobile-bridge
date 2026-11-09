@@ -133,3 +133,52 @@ def test_backlog_cannot_accept_job_receipt_and_blindly_retry(tmp_path):
     assert client.get('/feedback-submissions/stable').json()['state']=='uncertain'
     assert client.post('/feedback-batches/start-session',json=body).status_code==409
     assert len(calls)==1
+
+
+def migration_client(tmp_path, state='accepted'):
+    from backend.app.application.services.feedback_submission import FeedbackSubmissions
+    from backend.app.api.schemas import FeedbackBatchStartRequest
+    legacy=FeedbackSubmissions(tmp_path/'legacy.sqlite3')
+    canonical=FeedbackBatchStartRequest.model_validate(payload()).model_dump(mode='json',exclude_none=True)
+    reservation=legacy.reserve(canonical)
+    receipt={'job_id':'previous-dev-job','session_id':'previous-dev-session','sourceApp':'fixture'}
+    legacy.finish(reservation['id'],reservation['owner'],receipt if state=='accepted' else None)
+    fake=FastAPI();calls=[]
+    @fake.get('/health')
+    def health():return {'environment_identity':{'environment':'prod'}}
+    @fake.post('/feedback-batches/start-session',status_code=202)
+    def submit(body:dict):calls.append(body);return {'job_id':'new-prod-job','session_id':'new-prod-session'}
+    client=TestClient(create_app(backend_url='http://127.0.0.1:8000',ledger_path=tmp_path/'new.sqlite3',consumers={'fixture':{'origins':['https://fixture.invalid','https://other-approved.invalid'],'workspace':'/fixtures/fixture','resolveWorkspace':True}},legacy_ledgers=(legacy.path,),transport=httpx.ASGITransport(app=fake)))
+    return client,calls,legacy,receipt
+
+
+def test_legacy_accepted_batch_returns_original_receipt_without_prod_dispatch(tmp_path):
+    client,calls,legacy,receipt=migration_client(tmp_path)
+    assert client.get('/feedback-submissions/stable').json()['receipt']==receipt
+    assert client.post('/feedback-batches/start-session',json=payload()).json()==receipt
+    assert calls==[]
+    assert legacy.status('stable')['receipt']==receipt
+
+
+def test_legacy_uncertain_batch_remains_blocked_and_unmodified(tmp_path):
+    client,calls,legacy,_=migration_client(tmp_path,'uncertain')
+    before=legacy.status('stable')
+    assert client.post('/feedback-batches/start-session',json=payload()).status_code==409
+    assert legacy.status('stable')==before
+    assert calls==[]
+
+
+def test_legacy_conflicting_content_never_reexecutes(tmp_path):
+    client,calls,legacy,_=migration_client(tmp_path)
+    assert client.post('/feedback-batches/start-session',json={**payload(),'workflowPresetId':'amended'}).status_code==409
+    assert calls==[]
+
+
+def test_new_submission_uses_prod_and_server_owned_workspace_for_verified_alias(tmp_path):
+    client,calls,_,_=migration_client(tmp_path)
+    body={**payload(),'batchId':'new-identity'}
+    assert client.post('/feedback-batches/start-session',json=body,headers={'origin':'https://other-approved.invalid'}).status_code==202
+    assert calls[0]['workspace_path']=='/fixtures/fixture'
+    assert calls[0]['sourceApp']=='fixture'
+    assert client.post('/feedback-batches/start-session',json={**body,'batchId':'forbidden-origin'},headers={'origin':'https://evil.invalid'}).status_code==403
+    assert len(calls)==1
