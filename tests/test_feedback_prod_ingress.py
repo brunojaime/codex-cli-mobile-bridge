@@ -182,3 +182,15 @@ def test_new_submission_uses_prod_and_server_owned_workspace_for_verified_alias(
     assert calls[0]['sourceApp']=='fixture'
     assert client.post('/feedback-batches/start-session',json={**body,'batchId':'forbidden-origin'},headers={'origin':'https://evil.invalid'}).status_code==403
     assert len(calls)==1
+
+
+def test_owned_prod_receipt_is_not_replaced_by_late_legacy_history(tmp_path):
+    from backend.app.api.schemas import FeedbackBatchStartRequest
+    client,calls,legacy,_=migration_client(tmp_path)
+    body={**payload(),'batchId':'new-owned-identity'}
+    receipt=client.post('/feedback-batches/start-session',json=body).json()
+    canonical=FeedbackBatchStartRequest.model_validate(body).model_dump(mode='json',exclude_none=True)
+    old=legacy.reserve(canonical)
+    legacy.finish(old['id'],old['owner'],{'job_id':'older-dev-job','session_id':'older-dev-session'})
+    assert client.post('/feedback-batches/start-session',json=body).json()==receipt
+    assert len(calls)==1

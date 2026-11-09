@@ -20,6 +20,6 @@ captures and audio stay intact. A receiver switch does not authorize application
 QA/production publication or real-agent smoke tests.
 
 Validation: tests/test_feedback_prod_ingress.py and test_feedback_submission.py;
-24 tests including original DEV receipts, uncertainty, concurrent retries,
+25 tests including original DEV receipts, uncertainty, concurrent retries,
 workspace/origin denial, PROD health verification and backlog receipt negotiation.
 The PROD executor itself is not restarted; only its ingress sidecar changes.

@@ -26,9 +26,9 @@ def create_app(*, backend_url: str, ledger_path: Path, consumers: dict, handoff_
     router = APIRouter()
     ledger = FeedbackSubmissions(ledger_path)
 
-    def legacy_status(identity: str, canonical: dict | None = None):
+    def legacy_status(identity: str, canonical: dict | None = None, *, paths=None):
         records = []
-        for path in legacy_ledgers:
+        for path in (legacy_ledgers if paths is None else paths):
             if not path.is_file():
                 continue
             with sqlite3.connect('file:' + str(path) + '?mode=ro', uri=True) as db:
@@ -104,6 +104,13 @@ def create_app(*, backend_url: str, ledger_path: Path, consumers: dict, handoff_
                 raise HTTPException(409, 'PROD backlog capability not advertised; queue retained')
         canonical = payload.model_dump(mode='json', exclude_none=True)
         identity, _ = FeedbackSubmissions.identity(canonical)
+        # This ingress already owns the definitive receipt after its own admission.
+        # A late-discovered legacy record cannot replace it or invalidate a retry.
+        owned = await run_in_threadpool(legacy_status, identity, canonical, paths=(ledger.path,))
+        if owned is not None:
+            if owned['state'] == 'accepted' and owned['receipt']:
+                return owned['receipt']
+            raise HTTPException(409, {'code': 'feedback_submission_in_progress_or_uncertain', 'batchId': identity, 'statusPath': '/feedback-submissions/' + identity})
         previous = await run_in_threadpool(legacy_status, identity, canonical)
         if previous is not None:
             if previous['state'] == 'accepted' and previous['receipt']:
