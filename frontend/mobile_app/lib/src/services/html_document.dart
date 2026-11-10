@@ -47,27 +47,27 @@ class HtmlDocumentBuilder {
   Future<String> _asset(String value, Uri base, {int depth = 0}) async {
     final raw = value.trim();
     if (raw.startsWith('#')) return raw;
-    final uri = base.resolve(raw);
-    if (uri.scheme == 'data') return raw;
-    if (!const {'http', 'https'}.contains(uri.scheme) ||
-        uri.origin != htmlPreviewOrigin) {
-      _missing++;
-      return '';
-    }
-    final path = Uri.decodeComponent(uri.path.substring(1));
-    final ext = path.split('.').last.toLowerCase();
-    final mime = _mime[ext];
-    if (mime == null || depth > 4) {
-      _missing++;
-      return '';
-    }
-    if (_cache.containsKey(path)) return _cache[path]!;
-    if (++_requests > 64 || _bytes >= 15 * 1024 * 1024) {
-      _missing++;
-      return '';
-    }
-    _cache[path] = ''; // Break cyclic CSS imports.
     try {
+      final uri = base.resolve(raw);
+      if (uri.scheme == 'data') return raw;
+      if (!const {'http', 'https'}.contains(uri.scheme) ||
+          uri.origin != htmlPreviewOrigin) {
+        _missing++;
+        return '';
+      }
+      final path = Uri.decodeComponent(uri.path.substring(1));
+      final ext = path.split('.').last.toLowerCase();
+      final mime = _mime[ext];
+      if (mime == null || depth > 4) {
+        _missing++;
+        return '';
+      }
+      if (_cache.containsKey(path)) return _cache[path]!;
+      if (++_requests > 64 || _bytes >= 15 * 1024 * 1024) {
+        _missing++;
+        return '';
+      }
+      _cache[path] = ''; // Break cyclic CSS imports.
       final bytes = await loadAsset(path).timeout(const Duration(seconds: 15));
       _bytes += bytes.length;
       if (_bytes > 15 * 1024 * 1024) throw StateError('Asset limit');

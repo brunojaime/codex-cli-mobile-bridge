@@ -106,6 +106,60 @@ void main() {
             .build('a' * (maxHtmlBytes + 1), 'a.html'),
         throwsStateError);
   });
+  for (final invalid in ['http://[', '%FF.png']) {
+    for (final context in [
+      'image',
+      'stylesheet',
+      'style block',
+      'style attribute'
+    ]) {
+      test('malformed $context resource $invalid is isolated', () async {
+        final base = htmlDocumentUri('reports/index.html');
+        // Guard the fixtures: exercise resolution and invalid UTF-8 decoding.
+        expect(
+            () => Uri.decodeComponent(base.resolve(invalid).path.substring(1)),
+            throwsFormatException);
+        final fragment = switch (context) {
+          'image' => '<img id="bad" src="$invalid">',
+          'stylesheet' => '<link id="bad" rel="stylesheet" href="$invalid">',
+          'style block' =>
+            '<style id="bad">h1 { background: url("$invalid"); color: green; }</style>',
+          _ =>
+            '''<h1 id="bad" style='background: url("$invalid"); color: green;'>Título</h1>''',
+        };
+        final paths = <String>[];
+        final result = await HtmlDocumentBuilder((path) async {
+          paths.add(path);
+          return Uint8List.fromList(utf8.encode(
+              path.endsWith('.css') ? 'p { color: blue; }' : 'image-bytes'));
+        }).build(
+            '$fragment<p>Contenido conservado</p>'
+                '<link rel="stylesheet" href="valid.css">'
+                '<img src="valid.png"><img src="https://evil.test/pixel.png">',
+            'reports/index.html');
+        final doc = parse(result.html);
+        final bad = doc.querySelector('#bad')!;
+        switch (context) {
+          case 'image':
+            expect(bad.attributes['src'], isEmpty);
+          case 'stylesheet':
+            expect(bad.attributes['href'], isEmpty);
+          default:
+            final css =
+                context == 'style block' ? bad.text : bad.attributes['style']!;
+            expect(css, contains('url("")'));
+            expect(css, contains('color: green;'));
+        }
+        expect(doc.querySelector('p')!.text, 'Contenido conservado');
+        expect(doc.querySelector('link[href^="data:"]'), isNotNull);
+        expect(doc.querySelector('img[src^="data:"]'), isNotNull);
+        expect(paths, ['reports/valid.css', 'reports/valid.png']);
+        expect(result.unavailableAssets, 2); // Malformed + blocked network URL.
+        expect(doc.querySelector('meta[http-equiv]')!.attributes['content'],
+            contains("connect-src 'none'"));
+      });
+    }
+  }
   test('spaces and accents in workspace file paths survive URI conversion', () {
     final uri = htmlDocumentUri('reports/mi página.html');
     expect(
