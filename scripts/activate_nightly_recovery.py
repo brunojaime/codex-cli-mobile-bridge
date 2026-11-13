@@ -51,7 +51,7 @@ def activate(target, stage, state_root, report, *, allow_prod=False, client=None
         save(report, {"state": "prepared_requires_prod_restart_authorization", "environment": name})
         return True
     own_client = client is None
-    client = client or httpx.Client(base_url=target["bridge_url"], timeout=30, trust_env=False)
+    client = client or httpx.Client(base_url=target["bridge_url"], timeout=180, trust_env=False)
     runtime = Path(target["runtime"])
     owned_drain = False
     worker_lock = None
@@ -61,7 +61,11 @@ def activate(target, stage, state_root, report, *, allow_prod=False, client=None
                    for f, h in target["files"].items())
 
     try:
-        status = client.get("/maintenance/drain").raise_for_status().json()
+        try:
+            status = client.get("/maintenance/drain").raise_for_status().json()
+        except httpx.HTTPError:
+            save(report, {"state": "waiting_for_backend_response", "environment": name})
+            return False
         if not ready(status):
             save(report, {"state": "waiting_for_accepted_work", "environment": name,
                           "active_jobs": status["active_job_count"],

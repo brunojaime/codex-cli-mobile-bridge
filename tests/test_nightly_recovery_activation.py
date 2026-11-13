@@ -29,7 +29,7 @@ def test_configuring_recovery_preserves_pause_and_never_creates_missing_procedur
     assert len(configured) == 2
 
 
-@pytest.mark.parametrize("condition", ["busy", "changed", "drain_race", "healthy"])
+@pytest.mark.parametrize("condition", ["busy", "changed", "drain_race", "healthy", "timeout"])
 def test_activation_preserves_accepted_work_and_checks_hashes(tmp_path, condition):
     runtime, stage = tmp_path / "runtime", tmp_path / "stage"
     runtime.mkdir(); stage.mkdir()
@@ -40,6 +40,8 @@ def test_activation_preserves_accepted_work_and_checks_hashes(tmp_path, conditio
     calls, restarts = [], []
     def respond(request):
         calls.append((request.method, request.url.path))
+        if condition == "timeout":
+            raise httpx.ReadTimeout("slow read", request=request)
         if request.url.path == "/maintenance/drain":
             return httpx.Response(200, json={"requested": False, "active_job_count": int(condition == "busy"),
                 "active_session_count": 0, "in_flight_message_count": 0,
