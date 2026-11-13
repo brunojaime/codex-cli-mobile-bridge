@@ -1,5 +1,47 @@
 # Backlog y supervisor de proyectos
 
+## Recuperación durable de validaciones — 13/11/2026
+
+La política `automatic_recovery` habilita un ciclo de recuperación para el mismo
+encargo bloqueado. Se admite durante la ventana nocturna y respeta la preferencia
+`automatic_execution`, las pausas, reservas y el presupuesto de arranques del
+proyecto. `max_recoveries_per_task` limita a tres recuperaciones por defecto;
+`recovery_delay_seconds` espera dos minutos entre intentos. Los contadores y el
+diagnóstico sobreviven al reinicio. No se reinician cada noche ni al abrir la app.
+
+Los comandos de validación/publicación generan un diagnóstico estructural con
+etapa, comando, categoría, revisión y ubicaciones de código. La salida completa
+queda en logs privados de modo 0600; no se copia al modelo, API ni informes.
+El clasificador también consulta los logs de fallo de adaptadores conocidos
+cuando éstos ocultan el error interno. Nunca consulta credenciales ni backups.
+
+Una validación fallida recuperable abre un ciclo Generator/Reviewer nuevo, conserva
+la identidad, el alcance, el commit base y el resultado anterior del encargo y
+vuelve a exigir todos los gates DEV. No exige un cambio ficticio si el encargo ya
+dejó su commit y sólo faltaba completar la evidencia. Repetir el mismo fallo en
+el mismo SHA detiene la recuperación; otros proyectos pueden continuar.
+
+No se recuperan a ciegas publicaciones interrumpidas, procesos desconocidos,
+cancelaciones, WIP previo, cambios de pins, credenciales ni infraestructura
+faltante. Se conserva el bloqueo y se expone el motivo en `recovery.state`.
+Los fallos antiguos sin etapa acreditada repiten sólo la validación y verifican
+Git remoto/DEV sin hacer push ni deploy. Si ese diagnóstico falla en validación,
+puede entrar al ciclo de corrección; si pasó pero falta reconciliar la entrega,
+requiere el procedimiento del operador. No se inventa el estado publicado.
+
+`GET /work` conserva sus estados de cola y agrega `recovery` en cada encargo.
+`completed` sigue requiriendo comprobantes de entrega DEV. Un reintento explícito
+del usuario abre un nuevo presupuesto de recuperación. Habilitar este código
+requiere activar la versión en el coordinador PROD; publicarlo sólo en el backend
+DEV que reenvía `/work` no activa la cola real.
+
+Activación: `scripts/activate_nightly_recovery.py` consume un plan con hashes,
+espera todos los jobs/sesiones/mensajes aceptados, toma el bloqueo del scheduler,
+usa drain y verifica salud/esquema/código después. Un reinicio PROD necesita la
+autorización explícita correspondiente; no se cancela trabajo para acelerar la
+activación. La autorización de este cambio es del pipeline; no promociona apps
+a QA/producción.
+
 Implementación del 5 de noviembre de 2026. La versión Android/web 157 se preparó por el circuito habitual; el estado operativo actualizado está en [despliegue](../reports/work-coordinator-deploy/index.html). El código está preparado para
 pilotos; esto no certifica que un backend instalado, un APK o aplicaciones
 consumidoras estén ejecutando esta versión. Ningún proyecto se habilita solo.

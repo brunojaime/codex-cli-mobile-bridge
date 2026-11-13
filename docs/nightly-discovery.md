@@ -1,5 +1,12 @@
 # Búsqueda autónoma nocturna
 
+Desde la recuperación del 13/11, `pause_discovery_with_backlog` (predeterminado
+`true`) evita nuevas búsquedas de proyectos con encargos pendientes o bloqueados.
+`require_delivery_ready=true` permite además posponer proyectos cuyo procedimiento
+DEV sigue en `needs_setup`. El snapshot incluye `deferred` con motivos; una
+postergación no se cuenta como análisis realizado ni entrega publicada. El trabajo
+ya aceptado se reconcilia aunque cambie el horario o se deshabiliten búsquedas.
+
 El servicio de usuario `codex-nightly-discovery.service` investiga los proyectos
 seleccionados entre 22:30 y 08:00 de Argentina. Se configura en
 `.data/nightly-discovery/config.json` y conserva su registro idempotente en

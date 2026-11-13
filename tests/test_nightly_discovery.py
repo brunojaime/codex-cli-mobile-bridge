@@ -89,6 +89,29 @@ def test_disabled_and_daytime_do_not_start_jobs(tmp_path):
         worker.tick(datetime(2026, 11, 7, 15, tzinfo=timezone.utc))
 
 
+@pytest.mark.parametrize("queue,status,reason", [
+    ([{"status": "blocked"}], "enabled", "resolve_existing_backlog"),
+    ([{"status": "queued"}], "enabled", "resolve_existing_backlog"),
+    ([], "needs_setup", "needs_setup"),
+])
+def test_discovery_prioritizes_existing_work_and_ready_delivery(tmp_path, queue, status, reason):
+    def respond(request):
+        if request.url.path == "/work/settings":
+            return httpx.Response(200, json={"projects": [{"workspace_path": "/project", "settings": {"automatic_execution": True}, "execution_status": status}]})
+        if request.url.path == "/work":
+            return httpx.Response(200, json={"projects": [{"workspace_path": "/project", "queue": queue}]})
+        pytest.fail("Discovery must not start another review")
+    with httpx.Client(base_url="http://bridge", transport=httpx.MockTransport(respond)) as client:
+        worker = Worker({"enabled": True, "require_delivery_ready": True,
+                         "projects": [{"name": "Project", "workspace_path": "/project"}]},
+                        tmp_path / "state.sqlite", tmp_path / "report.json", client)
+        now = datetime(2026, 11, 7, 3, tzinfo=timezone.utc)
+        worker.tick(now)
+        worker.snapshot(now)
+        assert json.loads((tmp_path / "report.json").read_text())["deferred"] == [{"name": "Project", "reason": reason}]
+        assert not worker.db.execute("SELECT 1 FROM reviews").fetchone()
+
+
 def test_delivery_uses_real_backlog_contract(tmp_path):
     from types import SimpleNamespace
     from fastapi import FastAPI

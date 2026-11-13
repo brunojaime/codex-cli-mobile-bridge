@@ -68,6 +68,7 @@ class Worker:
                    "schedule": "22:30–08:00 America/Argentina/Buenos_Aires",
                    "projects": self.config["projects"], "problem": problem,
                    "reviews": [dict(r) for r in self.db.execute("SELECT night,name,status,session_id,job_id,problem FROM reviews ORDER BY night DESC,name")]}
+        payload["deferred"] = getattr(self, "deferred", [])
         self.report.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.report.with_suffix(".tmp")
         temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
@@ -150,6 +151,7 @@ class Worker:
         self.update(row, status="running", job_id=accepted["job_id"])
 
     def tick(self, now):
+        self.deferred = []
         # Finish/reconcile previously accepted work even after 08:00 or disable.
         pending = self.db.execute("SELECT * FROM reviews WHERE status IN ('reserved','submitting','running','delivering') ORDER BY night,name LIMIT 1").fetchone()
         if pending:
@@ -175,6 +177,12 @@ class Worker:
                 target_work = self.api('GET', project['execution_bridge_url'].rstrip('/') + '/work')
                 current = next((p for p in target_work['projects'] if p['workspace_path'] == workspace), {})
             if not project_settings or not project_settings["settings"].get("automatic_execution"):
+                continue
+            if self.config.get("require_delivery_ready", False) and project_settings.get("execution_status") == "needs_setup":
+                self.deferred.append({"name": project["name"], "reason": "needs_setup"})
+                continue
+            if self.config.get("pause_discovery_with_backlog", True) and current.get("queue"):
+                self.deferred.append({"name": project["name"], "reason": "resolve_existing_backlog"})
                 continue
             if current.get("active") or (current.get("policy") or {}).get("autonomous"):
                 continue
