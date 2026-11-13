@@ -54,6 +54,9 @@
     "verifiedPackageIds": {
       "android-v*": "com.example.codex_mobile_frontend",
       "codex-mobile*.apk": "com.example.codex_mobile_frontend"
+    },
+    "releaseMetadata": {
+      "apkDownloadMode": "public-github"
     }
   },
   "codex-mobile-dev": {
@@ -69,6 +72,9 @@
     "verifiedPackageIds": {
       "android-dev-v*": "io.github.brunojaime.codexmobilebridge.dev",
       "codex-mobile-dev*.apk": "io.github.brunojaime.codexmobilebridge.dev"
+    },
+    "releaseMetadata": {
+      "apkDownloadMode": "public-github"
     }
   },
   "gestion-ludmilo": {

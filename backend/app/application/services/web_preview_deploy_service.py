@@ -634,7 +634,7 @@ class WebPreviewDeployService:
             json.loads(path.read_text(encoding="utf-8"))
         )
 
-    def list_previews(self, *, limit: int = 50) -> tuple[dict[str, Any], ...]:
+    def list_previews(self, *, limit: int | None = 50) -> tuple[dict[str, Any], ...]:
         previews = []
         for path in self._preview_state_dir.glob("*.json"):
             try:
@@ -646,7 +646,7 @@ class WebPreviewDeployService:
             except (json.JSONDecodeError, OSError):
                 continue
         previews.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
-        return tuple(previews[: max(1, min(limit, 200))])
+        return tuple(previews if limit is None else previews[: max(1, min(limit, 200))])
 
     def disable_preview(self, request: WebPreviewLifecycleInput) -> dict[str, Any]:
         state = self._load_preview_or_raise(request.preview_id)

@@ -203,7 +203,10 @@ def _target_path(target: str) -> str:
     if not target or "\x00" in target:
         raise SessionFileError("La referencia al archivo no es válida.", 422)
     target = re.sub(r":\d+(?::\d+)?$", "", target)
-    uri = urlsplit(target)
+    try:
+        uri = urlsplit(target)
+    except ValueError as exc:
+        raise SessionFileError("La referencia al archivo no es válida.", 422) from exc
     if uri.scheme and (uri.scheme != "file" or uri.netloc not in {"", "localhost"}):
         raise SessionFileError("Esta referencia no es un archivo del proyecto.", 422)
     path = unquote(uri.path)

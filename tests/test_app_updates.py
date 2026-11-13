@@ -1947,3 +1947,32 @@ def _apk_asset(name: str, *, digest: str | None = None) -> GitHubAsset:
         size=12345,
         digest=digest,
     )
+
+
+def test_public_release_download_opt_in_avoids_private_proxy_and_keeps_checksum(tmp_path):
+    client = _build_app_update_client(tmp_path, releases=[
+        _release('android-v1.0.0-build.40', assets=[_apk_asset('ambientando-calendar.apk', digest='sha256:'+'a'*64)])
+    ])
+    path = tmp_path / 'app_updates.json'
+    raw = json.loads(path.read_text())
+    raw['ambientando-calendar']['releaseMetadata'] = {'apkDownloadMode':'public-github'}
+    path.write_text(json.dumps(raw))
+    response = client.get('/app-updates/ambientando-calendar', params={'currentBuild':39})
+    assert response.status_code == 200
+    assert response.json()['apkUrl'] == 'https://github.com/brunojaime/ambientando-calendar/releases/download/android-v1.0.0-build.40/ambientando-calendar.apk'
+    assert response.json()['sha256'] == 'a'*64
+    installable = client.get('/installable-apps/ambientando-calendar')
+    assert installable.json()['apkUrl'] == response.json()['apkUrl']
+
+
+def test_private_install_does_not_bypass_authenticated_proxy(tmp_path):
+    client = _build_app_update_client(tmp_path, release_channel='private-install', releases=[
+        _release('android-v1.0.0-build.40', prerelease=True, assets=[_apk_asset('ambientando-calendar.apk')])
+    ])
+    path = tmp_path / 'app_updates.json'
+    raw = json.loads(path.read_text())
+    raw['ambientando-calendar']['releaseMetadata'] = {'apkDownloadMode':'public-github'}
+    path.write_text(json.dumps(raw))
+    response = client.get('/app-updates/ambientando-calendar', params={'currentBuild':39,'channel':'private-install'})
+    assert response.status_code == 200
+    assert response.json()['apkUrl'].startswith('http://testserver/app-updates/')

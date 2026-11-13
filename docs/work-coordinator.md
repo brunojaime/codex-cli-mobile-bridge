@@ -1,0 +1,192 @@
+# Backlog y supervisor de proyectos
+
+Implementación del 5 de noviembre de 2026. La versión Android/web 157 se preparó por el circuito habitual; el estado operativo actualizado está en [despliegue](../reports/work-coordinator-deploy/index.html). El código está preparado para
+pilotos; esto no certifica que un backend instalado, un APK o aplicaciones
+consumidoras estén ejecutando esta versión. Ningún proyecto se habilita solo.
+
+## Entradas
+
+Las tres entradas escriben en la misma cola durable:
+
+- **Chat/app Bridge:** menú «Backlog y Tu noche», «Agregar tarea» o
+  `/backlog Cambiar el título…` en el chat del proyecto. El comando guarda el
+  pedido sin llamar al modelo. Los borradores no confirmados conservan identidad
+  en el dispositivo para reintentar sin duplicar. Esta primera pantalla admite
+  texto; capturas y audio se cargan por Feedback o WhatsApp. Un comando backlog
+  con adjuntos en el compositor conserva el borrador y explica esa alternativa.
+- **WhatsApp / Info Codex:** selector «Backlog · Ejecutar después». Se preservan
+  proyecto, mensajes agrupados y adjuntos; el comprobante se envía después de
+  guardar. No abre un chat al capturar el pedido. Requiere desplegar esta versión
+  del adaptador y del backend juntos.
+- **Codex Bridge Feedback:** «Cuándo ejecutar → Añadir al backlog». Se conservan
+  capturas y observaciones; el audio se transcribe al ingresar. Se confirma con
+  `backlogId`; las colas originales sólo se retiran tras ese comprobante. Los SDK
+  centrales Flutter/web tienen cambios fuente sin publicar: los consumidores del
+  release aprobado anterior todavía no reciben esta opción. No se modificó su
+  descriptor aprobado ni se copiaron SDK a otros proyectos.
+
+**Codex Folder no es una entrada ni tiene watcher para este sistema.** Puede ser
+material de consulta cuando el usuario lo solicita dentro de un encargo.
+
+## Ejecución
+
+Cada encargo se reclama de forma persistente. El siguiente toma el resultado y
+el commit del anterior, vuelve a inspeccionar el estado actual y ejecuta el ciclo
+Generator/Reviewer completo. Terminar un job de Generator no libera la cola.
+El coordinador también consulta los jobs: no necesita que el celular permanezca
+abierto para que continúen los turnos.
+
+Al concluir se exige árbol limpio, comandos de validación, commit nuevo, push
+sin force a la rama DEV autorizada, confirmación del hash remoto, despliegue por
+el procedimiento configurado y comprobación HTTP del mismo hash. Un resultado
+sin commit nuevo no se considera una implementación completada. El proceso de
+entrega corre fuera del bloqueo del registro: se pueden cargar pedidos mientras
+publica. Un fallo visible retiene los encargos siguientes de ese proyecto hasta
+reintentar o retirar el encargo fallido. Otros proyectos pueden avanzar. «Frenar» solicita cancelar los jobs conocidos y conserva la reserva hasta comprobar el cierre; no declara detenido un proceso desconocido ni interrumpe una publicación ya iniciada. «Pausar nuevos» deja terminar el ciclo actual.
+
+El piloto limita a un ciclo de trabajo global por registro de coordinación. Hay
+reservas por proyecto y archivos de admisión compartidos entre procesos; los
+chats normales no inician otro escritor en un proyecto reservado. Un arranque
+interrumpido se reconcilia con su sesión, sin reenviar a ciegas. Si no puede
+comprobarse, queda `uncertain` para inspección operativa; no hay recuperación
+forzada automática que pueda duplicar un escritor desconocido. Reintentar un
+encargo fallido abre una sesión nueva conservando la identidad del encargo.
+
+## Noche y calibración
+
+La cola de pedidos explícitos funciona todo el día. El supervisor autónomo usa
+por defecto **22:30–08:00, America/Argentina/Buenos_Aires**. Se despierta con el
+scheduler cada 15 segundos, usando sleep del proceso sin llamadas al modelo.
+
+Con política habilitada, la auditoría nocturna comprueba Git y DEV como máximo
+una vez por hora aunque no haya tareas. Si la versión está atrasada, ejecuta
+validación/push/publicación DEV del commit existente sin llamar a un agente. No
+mezcla cambios locales previos sin commit: informa el bloqueo para revisarlos.
+
+La exploración de mejoras es opcional (`autonomous` + `focus` autorizado), con
+hasta dos observaciones por noche, separadas una hora. El análisis usa herramientas
+de lectura; puede dormir en silencio, plantear una pregunta con opciones o poner
+un encargo dentro del foco autorizado en la cola. Una política cambiada o una
+respuesta recibida fuera de esa noche no autoriza nueva ejecución autónoma.
+
+El presupuesto inicial es de seis arranques por ventana, tres turnos de Generator
+y dos de Reviewer por encargo. Son límites de actividad, no una medición monetaria
+ni una garantía de gasto exacto de tokens. El proveedor conserva sus límites de
+ejecución. Un ciclo que excede 45 minutos se señala y conserva su reserva hasta
+comprobar cierre: el watchdog todavía no cancela procesos desconocidos.
+
+`Tu noche` resume avances DEV, bloqueos y decisiones. Muestra un avance por
+proyecto, hasta tres proyectos y un recorrido desplegable; las opciones elegidas
+entran en la misma cola. Rechazar descarta la propuesta; las observaciones se guardan sin ejecutar y se incorporan al encargo cuando se elige una opción. La actividad reciente del worker se informa por separado
+de la fecha de consulta. Es una primera versión para calibrar frecuencia, foco,
+utilidad y coste. No genera videos automáticamente. La bandeja de decisiones
+se refresca con la app abierta; esta versión no añade push remoto de las preguntas
+nocturnas con la aplicación cerrada.
+
+## Configuración operativa
+
+API disponible en raíz y `/api/v1`:
+
+| Método y ruta | Uso |
+| --- | --- |
+| `GET /work` | Cola, noche, decisiones, actividad del worker |
+| `POST /work/backlog` | Recepción idempotente con source y source_key |
+| `PUT /work/policy` | Procedimiento DEV y límites por proyecto |
+| `POST /work/backlog/{id}/control` | cancel/retry/stop con revisión vigente |
+| `POST /work/questions/{id}/choose` | Elegir opción y guardar encargo |
+| `POST /work/questions/{id}/respond` | Rechazar o guardar observaciones |
+
+Ejemplo de política, para adaptar a un **worktree DEV aislado registrado**:
+
+```json
+{
+  "workspace_path": "/ruta/registrada/al/proyecto-dev",
+  "enabled": true,
+  "dev_branch": "dev/night",
+  "remote": "origin",
+  "dev_url": "https://dev-del-proyecto.example/version.json",
+  "validate": [["npm", "test"], ["npm", "run", "build"]],
+  "deploy": ["./scripts/deploy-dev.sh"],
+  "dev_isolated": true,
+  "reconcile_dev": true,
+  "autonomous": true,
+  "focus": "Resolver backlog y mejorar accesibilidad de pantallas existentes",
+  "max_tasks_per_day": 6,
+  "max_observations_per_night": 2
+}
+```
+
+El endpoint de versión debe servir `{"environment":"dev","commit":"HASH"}`.
+Los comandos son argv configurados por el operador, nunca instrucciones de una
+tarea o respuesta de un modelo. Su infraestructura y credenciales deben estar
+limitadas a DEV; declarar `dev_isolated` no crea esa separación. El coordinador
+no tiene procedimientos de promoción a QA/producción.
+
+No hay configuración inventada para Peluquería ni Cebando Tradición. Para
+habilitarlos se debe registrar su worktree, procedimiento y comprobante DEV reales.
+La cola se conserva aunque falte esa configuración. La activación de los backends se realiza después de sus corridas vigentes; el laboratorio real se configura automáticamente al cargar el coordinador DEV. Ver el informe de despliegue para distinguir lo activo de lo pendiente.
+
+## Primera prueba
+
+Se ejecuta automáticamente en `tests/test_work_coordinator.py` el caso
+`test_two_tasks_publish_in_sequence_with_real_git_and_dev`:
+
+1. Proyecto descartable, rama `dev/lab`, remoto Git bare y servicio HTTP aislados.
+2. Encargo del chat: cambiar título. Encargo de WhatsApp: agregar descripción.
+3. Agentes controlados en el test; ciclos completos, commits/push/DEV reales.
+4. El segundo recibe el hash anterior y ambos completan sólo con DEV confirmado.
+
+No se enviaron mensajes de WhatsApp ni se llamaron modelos externos para este
+piloto. La captura de `Tu noche` usa el widget real y datos sintéticos explícitos.
+Ver [evidencia y capturas](../reports/work-coordinator-pilot/informe.html).
+
+La primera prueba con agentes reales debe repetir esos dos cambios en un DEV
+público descartable, cargando el segundo mientras el primero trabaja. Después se
+puede habilitar un proyecto real y calibrar una noche completa. Aún no se certifican
+recepción push física, duración nocturna real ni despliegues de consumidores.
+
+
+## Configuración por proyecto
+
+En Backlog y Tu noche → Automatización se listan todos los proyectos, incluso sin encargos.
+El único ajuste público inicial es `automatic_execution` (booleano). GET /work/settings
+y PUT /work/settings guardan preferencias durables compartidas por ambos canales mediante Work Hub.
+
+`ProjectSettings` registra estrategias por clave; `AutomaticExecutionStrategy` transforma
+la política efectiva del coordinador sin acoplar la pantalla al procedimiento de publicación.
+Los proyectos existentes heredan su valor anterior hasta el primer cambio explícito.
+Desactivar frena nuevas admisiones, conserva la cola y permite terminar la tarea activa.
+Activar con un procedimiento DEV preparado permite procesar la cola de día y noche.
+Si no existe un procedimiento DEV aislado, la elección queda guardada con estado `needs_setup`;
+no fabrica destinos ni comandos de despliegue. Esto no habilita publicación en QA o PROD.
+Los objetivos de supervisión proactiva y presupuestos permanecen en la política operativa;
+este switch sólo controla la ejecución automática de encargos.
+
+
+## Propiedad de la cola y separación de ambientes
+
+Bridge PROD administra su coordinador local y sus conversaciones usando su propio chat store.
+`WORK_HUB_URL` vacío selecciona este modo. Una dependencia externa declarada como DEV
+se rechaza al iniciar PROD; un hub externo sólo puede declararse explícitamente PROD.
+DEV conserva una cola independiente para pruebas. WhatsApp y Feedback dirigidos a PROD
+usan la cola de PROD sin cambiar sus destinos ni sus identidades.
+
+La migración usa `scripts/migrate_work_to_prod.py`, congela schedulers y entradas,
+copia registros por sus IDs y columnas explícitas y rechaza conflictos o sesiones activas.
+Conserva snapshots de políticas y conversaciones de intentos anteriores. Los registros
+pendientes migrados quedan archivados en DEV y sus políticas operativas se retiran allí.
+La pausa explícita de RD se conserva; esta migración no autoriza reanudar sus tareas.
+
+`execution_workspace` permite ejecutar en un worktree Git del mismo repositorio sin
+cambiar la identidad del proyecto ni tocar su checkout original. Se reservan ambos
+paths para evitar escritores simultáneos. La estrategia de verificación SvelteKit
+comprueba versión y environment DEV en los endpoints reales del proyecto.
+
+
+## Backlog por proyecto e historial (6 de noviembre)
+
+- El acceso del workspace abre todos los proyectos con pedidos pendientes, en tarjetas con contadores y vista previa. El acceso desde el proyecto limita pendientes, historial, decisiones y configuración a ese proyecto.
+- La vista del proyecto separa «En curso» de «Por hacer». Sólo muestra estados no terminales; completados y retirados se consultan en Historial sin borrar los registros.
+- `GET /work/history?workspace_path=…&cursor=…&limit=30` devuelve exclusivamente completados/retirados de proyectos registrados. Usa paginación por fecha y rowid, con un máximo de 100 por página; leerlo no inicia ejecuciones.
+- La publicación depende del encargo. El coordinador conserva la comprobación Git/DEV y completa la entrega DEV cuando falta; evita repetir una publicación del mismo commit ya verificada.
+- El código de UI no equivale a APK distribuido. Consultar el informe del rediseño para el estado de activación y las capturas de validación.

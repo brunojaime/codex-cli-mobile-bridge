@@ -264,6 +264,37 @@ def test_idempotency_invalid_input_has_no_side_effect(rig, field, value):
     assert not rig.provider.requests
 
 
+def test_mobile_intake_id_launches_once_and_preserves_source_membership(rig):
+    from dataclasses import replace
+    ident = MessageService._client_submission_message_id("mobile-submission")
+    human = replace(rig.human, id=ident)
+    rig.repo.save_message(human)
+    data = rig.request.model_dump(mode="json")
+    data["source_message_id"] = ident
+    first = rig.client.post("/agent-launches/generator-reviewer", json=data)
+    assert first.status_code == 200, first.text
+    assert first.json()["state"] == "started"
+    assert first.json()["source_message_id"] == ident
+    again = rig.client.post("/agent-launches/generator-reviewer", json=data)
+    assert again.json()["job_id"] == first.json()["job_id"]
+    assert len(rig.provider.requests) == 1
+
+
+@pytest.mark.parametrize("ident", ["client-intake-abc", "client-intake-" + "g" * 64, "", "random-text"])
+def test_invalid_mobile_id_is_rejected_without_launch(rig, ident):
+    data = rig.request.model_dump(mode="json")
+    data["source_message_id"] = ident
+    assert rig.client.post("/agent-launches/generator-reviewer", json=data).status_code == 422
+    assert not rig.provider.requests
+
+
+def test_unknown_mobile_message_cannot_launch_from_other_origin(rig):
+    data = rig.request.model_dump(mode="json")
+    data["source_message_id"] = "client-intake-" + "a" * 64
+    assert rig.client.post("/agent-launches/generator-reviewer", json=data).status_code == 422
+    assert not rig.provider.requests
+
+
 def test_idempotency_failed_configuration_is_visible_without_retry(rig, monkeypatch):
     def fail(**kwargs):
         raise RuntimeError("configuration unavailable")
@@ -319,7 +350,13 @@ def test_launch_http_and_conflict_status(rig):
     assert rig.client.get("/agent-launches/" + str(uuid4())).status_code == 404
 
 
-def test_free_prompts_mcp_protocol_launches_from_another_workspace(rig, tmp_path):
+@pytest.mark.parametrize("mobile_source", [False, True])
+def test_free_prompts_mcp_protocol_launches_from_another_workspace(rig, tmp_path, mobile_source):
+    if mobile_source:
+        from dataclasses import replace
+        ident = MessageService._client_submission_message_id("mcp-mobile-submission")
+        rig.repo.save_message(replace(rig.human, id=ident))
+        rig.request = rig.request.model_copy(update={"source_message_id": ident})
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
     port = sock.getsockname()[1]
