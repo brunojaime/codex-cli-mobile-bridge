@@ -232,3 +232,27 @@ comprueba versión y environment DEV en los endpoints reales del proyecto.
 - `GET /work/history?workspace_path=…&cursor=…&limit=30` devuelve exclusivamente completados/retirados de proyectos registrados. Usa paginación por fecha y rowid, con un máximo de 100 por página; leerlo no inicia ejecuciones.
 - La publicación depende del encargo. El coordinador conserva la comprobación Git/DEV y completa la entrega DEV cuando falta; evita repetir una publicación del mismo commit ya verificada.
 - El código de UI no equivale a APK distribuido. Consultar el informe del rediseño para el estado de activación y las capturas de validación.
+
+
+## Reanudación de una entrega preparada — prueba real 13/11/2026
+
+El control `retry_delivery` exige encargo bloqueado con fallo acreditado en
+`deploy`, revisión vigente y `target_commit` explícito de 40 caracteres. Conserva
+la implementación, sesión y commit base; no abre otro ciclo Generator/Reviewer.
+El scheduler comprueba árbol limpio, rama y que HEAD siga siendo ese SHA antes
+de repetir validaciones y la entrega oficial. Un HEAD cambiado bloquea la entrega.
+Los adaptadores conservan sus controles de intentos inciertos: esta acción no
+elimina recibos, no fuerza publicaciones ni marca terminado sin Git/DEV real.
+
+En Nienfos web el operador admite una `credential_file` configurada por el
+operador, obtenida del almacenamiento de Secrets. Sólo extrae el token necesario
+y verifica el destino Cloudflare real; no lo envía a modelos o informes. La
+compatibilidad OAuth anterior queda como alternativa cuando no hay ese ajuste.
+Si DEV cambió por fuera de la cola, una reconciliación explícita se limita a un
+candidato exacto, snapshot de versión/módulos/configuración y página pública, con
+vencimiento. Se conservan las páginas ya publicadas; no se acepta una nueva base
+por inferencia ni se reutiliza el permiso para otro SHA.
+
+La prueba real `reports/backlog-live-test-20261113/informe.html` distingue dos
+encargos de cola central ejecutados/publicados, una recepción API de Feedback
+retirada después del recibo y el transporte desde teléfonos, que no se probó.
