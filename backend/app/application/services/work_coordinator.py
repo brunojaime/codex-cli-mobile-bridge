@@ -252,6 +252,7 @@ class WorkCoordinator:
                     "recoveries": "INTEGER NOT NULL DEFAULT 0",
                     "recovery_mode": "TEXT",
                     "recovery_state": "TEXT",
+                    "delivery_commit": "TEXT",
                 }.items():
                     if name not in columns:
                         db.execute(f"ALTER TABLE work_tasks ADD COLUMN {name} {definition}")
@@ -341,6 +342,7 @@ class WorkCoordinator:
             "recovery": {
                 "attempts": row["recoveries"],
                 "mode": row["recovery_mode"],
+                "delivery_commit": row["delivery_commit"],
                 "state": row["recovery_state"],
                 "failure": json.loads(row["failure"]) if row["failure"] else None,
             },
@@ -595,7 +597,7 @@ class WorkCoordinator:
                 "folder_triggers": False,
             }
 
-    def control(self, task_id, revision, action):
+    def control(self, task_id, revision, action, target_commit=None):
         with self.ledger() as db:
             row = db.execute(
                 "SELECT * FROM work_tasks WHERE id=?", (task_id,)
@@ -623,11 +625,28 @@ class WorkCoordinator:
                 raise WorkConflict(
                     "El trabajo ya fue reclamado; no se modifica su alcance en ejecución"
                 )
+            if action == "retry_delivery":
+                diagnostic = json.loads(row["failure"]) if row["failure"] else {}
+                if (row["status"] != "blocked" or row["stop_requested"] or not row["policy"]
+                        or diagnostic.get("stage") != "deploy" or not target_commit):
+                    raise WorkConflict("Reanudar entrega requiere un fallo de publicación acreditado y un commit explícito")
+                policy = WorkPolicy.model_validate_json(row["policy"])
+                path = self.checkout(policy)
+                if self._run(path, ["git", "rev-parse", "HEAD"]) != target_commit:
+                    raise WorkConflict("El commit elegido no coincide con el checkout actual")
+                db.execute(
+                    "UPDATE work_tasks SET status='queued',revision=revision+1,problem=NULL,"
+                    "recovery_mode='delivery',recovery_state='delivery_queued',delivery_commit=? WHERE id=?",
+                    (target_commit, task_id),
+                )
+                self._event(db, task_id, action, "Reanudar sólo la entrega del commit explícito; conservar implementación y gates")
+                db.commit()
+                return {"id": task_id, "status": "queued", "delivery_commit": target_commit}
             status = "cancelled" if action == "cancel" else "queued"
             if action not in {"cancel", "retry"}:
                 raise ValueError("Acción no válida")
             db.execute(
-                "UPDATE work_tasks SET status=?,revision=revision+1,problem=NULL,stop_requested=0,recovery_state=NULL,recovery_mode=NULL,recoveries=0 WHERE id=?",
+                "UPDATE work_tasks SET status=?,revision=revision+1,problem=NULL,stop_requested=0,recovery_state=NULL,recovery_mode=NULL,delivery_commit=NULL,recoveries=0 WHERE id=?",
                 (status, task_id),
             )
             self._event(db, task_id, action, "Decisión del usuario")
@@ -1298,11 +1317,13 @@ class WorkCoordinator:
                     raise WorkConflict(
                         "El proyecto tiene cambios previos sin commit; se conservan sin mezclarlos"
                     )
+                if row["recovery_mode"] == "delivery" and self._run(path, ["git", "rev-parse", "HEAD"]) != row["delivery_commit"]:
+                    raise WorkConflict("El checkout cambió después de elegir la entrega; se conserva sin publicar")
             except Exception as exc:
                 self._update(db, row, "blocked", str(exc)[:300], failure=None,
                              recovery_state="workspace_needs_review")
                 return
-            if row["recovery_mode"] == "diagnose" or (
+            if row["recovery_mode"] in {"diagnose", "delivery"} or (
                 json.loads(row["payload"])["source_key"].startswith("supervisor-dev:") and row["recovery_mode"] != "repair"
             ):
                 self._update(db, row, "starting", policy=policy.model_dump_json())

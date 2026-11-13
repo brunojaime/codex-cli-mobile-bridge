@@ -125,11 +125,12 @@ def update_project_settings(payload: ProjectSettingsUpdate, service=Depends(get_
 class Control(BaseModel):
     revision: int = Field(ge=1)
     action: str
+    target_commit: str | None = Field(default=None, pattern=r"^[a-f0-9]{40}$")
 
 
 @router.post("/backlog/{task_id}/control")
 def control(task_id: UUID, payload: Control, service=Depends(get_work)):
-    return call(service.control, str(task_id), payload.revision, payload.action)
+    return call(service.control, str(task_id), payload.revision, payload.action, payload.target_commit)
 
 
 class Choice(BaseModel):

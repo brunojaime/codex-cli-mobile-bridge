@@ -235,3 +235,47 @@ def test_known_operator_exposes_only_structural_missing_review_hint(work, tmp_pa
     config.write_text(json.dumps({"state": str(tmp_path / "private-state")}))
     hints = operator_hints(["node", "gestion_dev_delivery.mjs", str(config), "validate"], work.rig.workspace, 0)
     assert hints == "\nFileNotFoundError: review.json"
+
+
+@pytest.mark.parametrize("changed_after_choice", [False, True])
+def test_explicit_delivery_resume_keeps_commit_and_does_not_rerun_agents(work, changed_after_choice):
+    task, original_run = block_validation(work)
+    (work.rig.workspace / "index.html").write_text("<h1>implemented</h1>")
+    git(work.rig.workspace, "add", ".")
+    git(work.rig.workspace, "commit", "-m", "Implementation already prepared")
+    commit = git(work.rig.workspace, "rev-parse", "HEAD")
+    diagnostic = command_diagnostic(stage="deploy", index=0, argv=["python3", "operator.py"],
+                                    returncode=1, output="Previous publication attempt requires inspection", revision=commit)
+    with work.service.ledger() as db:
+        db.execute("UPDATE work_tasks SET failure=? WHERE id=?", (json.dumps(diagnostic), task["id"]))
+        db.commit()
+    blocked = project(work)["queue"][0]
+    calls = len(work.rig.provider.requests)
+    base = blocked["base_commit"]
+    work.service.control(task["id"], blocked["revision"], "retry_delivery", commit)
+    if changed_after_choice:
+        (work.rig.workspace / "index.html").write_text("<h1>foreign newer commit</h1>")
+        git(work.rig.workspace, "add", ".")
+        git(work.rig.workspace, "commit", "-m", "Concurrent commit")
+    delivered = []
+    def deliver(task, policy):
+        delivered.append(task)
+        return {"environment": "dev", "commit": commit, "remote_confirmed": True}
+    work.service.delivery = deliver
+    work.service.tick()
+    assert len(work.rig.provider.requests) == calls
+    if changed_after_choice:
+        assert not delivered
+        assert project(work)["queue"][0]["status"] == "blocked"
+    else:
+        assert len(delivered) == 1
+        assert delivered[0]["session_id"] == original_run["session_id"]
+        assert delivered[0]["base_commit"] == base
+        assert project(work)["completed"][0]["id"] == task["id"]
+
+
+def test_delivery_resume_rejects_unprepared_task(work):
+    from backend.app.application.services.work_coordinator import WorkConflict
+    task = work.service.enqueue(request(work))
+    with pytest.raises(WorkConflict):
+        work.service.control(task["id"], task["revision"], "retry_delivery", git(work.rig.workspace, "rev-parse", "HEAD"))
