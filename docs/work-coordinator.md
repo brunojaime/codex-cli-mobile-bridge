@@ -122,8 +122,7 @@ proyecto, hasta tres proyectos y un recorrido desplegable; las opciones elegidas
 entran en la misma cola. Rechazar descarta la propuesta; las observaciones se guardan sin ejecutar y se incorporan al encargo cuando se elige una opción. La actividad reciente del worker se informa por separado
 de la fecha de consulta. Es una primera versión para calibrar frecuencia, foco,
 utilidad y coste. No genera videos automáticamente. La bandeja de decisiones
-se refresca con la app abierta; esta versión no añade push remoto de las preguntas
-nocturnas con la aplicación cerrada.
+se refresca con la app abierta. Los bloqueos de recuperación se convierten en decisiones y mensajes persistentes del coordinador, con el push existente para teléfonos activados y verificados. Las preguntas exploratorias del supervisor conservan su comportamiento anterior. Ver [decisiones de recuperación](work-recovery-decisions.md).
 
 ## Configuración operativa
 

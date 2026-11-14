@@ -311,7 +311,9 @@ class PushNotificationService:
             if len(preview) > 160:
                 preview = preview[:157] + "..."
             status = (
-                "Necesita atención"
+                "Decisión pendiente"
+                if row["agent_label"] == "Coordinador · decisión pendiente"
+                else "Necesita atención"
                 if row["status"] == "failed"
                 else "Trabajo finalizado"
             )

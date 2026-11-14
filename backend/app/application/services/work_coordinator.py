@@ -222,6 +222,8 @@ class WorkCoordinator:
                     id TEXT PRIMARY KEY, workspace TEXT NOT NULL, title TEXT NOT NULL,
                     options TEXT NOT NULL, selected INTEGER, task_id TEXT, created_at TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '');
                 """)
+                from .work_decisions import migrate
+                migrate(db)
                 if "policy" not in {
                     r[1] for r in db.execute("PRAGMA table_info(work_observations)")
                 }:
@@ -672,6 +674,9 @@ class WorkCoordinator:
                         "SELECT * FROM work_tasks WHERE id=?", (row["task_id"],)
                     ).fetchone()
                 )
+            if row["source_task_id"]:
+                from .work_decisions import choose
+                return choose(self, db, row, option)
             request = WorkInput(
                 workspace_path=row["workspace"],
                 source="chat",
@@ -728,6 +733,9 @@ class WorkCoordinator:
                     return {"id": question_id, "status": "rejected"}
                 raise WorkConflict("La decisión ya fue tomada")
             if action == "reject":
+                if row["source_task_id"]:
+                    from .work_decisions import cancel_notice
+                    cancel_notice(self, question_id)
                 db.execute(
                     "UPDATE work_questions SET selected=-1 WHERE id=?", (question_id,)
                 )
@@ -1046,6 +1054,8 @@ class WorkCoordinator:
                 )
                 for r in db.execute("SELECT payload FROM work_policies")
             ]
+            from .work_decisions import reconcile
+            reconcile(self, db)
             # Refresh observers even when no frontend polls their jobs.
             for current in policies:
                 observation = db.execute(
