@@ -52,6 +52,8 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
   int _tab = 0;
   Timer? _timer;
   DateTime? _received;
+  List<Map<String, dynamic>> _preparations = [];
+  String? _preparationError;
 
   @override
   void initState() {
@@ -86,6 +88,8 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
     if (_loading) return;
     final selected = _selected;
     setState(() => _loading = true);
+    final preparation =
+        selected == null ? _refreshPreparations() : Future<void>.value();
     try {
       final data =
           await widget.client.get(selected == null ? '' : '/$selected');
@@ -102,9 +106,27 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
             'Sin conexión al equipo. Los datos anteriores pueden estar desactualizados.');
       }
     } finally {
+      await preparation;
       if (mounted) {
         setState(() => _loading = false);
         if (selected != _selected) unawaited(_refresh());
+      }
+    }
+  }
+
+  Future<void> _refreshPreparations() async {
+    try {
+      final items = await widget.client.preparations();
+      if (mounted) {
+        setState(() {
+          _preparations = items;
+          _preparationError = null;
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _preparationError =
+            'No se pudo actualizar la preparación desde el chat.');
       }
     }
   }
@@ -163,6 +185,7 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
                                         icon: const Icon(Icons.arrow_back),
                                         label: const Text(
                                             'Todas las ejecuciones'))),
+                              if (_selected == null) ..._preparationCards(),
                               if (_data != null && _selected == null)
                                 ..._overview(),
                               if (_data != null && _selected != null)
@@ -319,12 +342,65 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
         const SizedBox(height: 5),
         Text(subtitle, style: const TextStyle(color: Color(0xFFAAB8D0)))
       ]));
+  List<Widget> _preparationCards() => [
+        if (_preparationError != null)
+          Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: Text(
+                  '$_preparationError Los datos previos pueden estar desactualizados.',
+                  style:
+                      TextStyle(color: Theme.of(context).colorScheme.error))),
+        if (_preparations.isNotEmpty)
+          _heading('Preparación desde el chat',
+              'El equipo aparece abajo cuando queda registrado.'),
+        for (final job in _preparations)
+          _surface(
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Wrap(spacing: 8, runSpacing: 8, children: [
+              _pill(job['status'] == 'failed'
+                  ? 'Preparación interrumpida'
+                  : job['status'] == 'cancelled'
+                      ? 'Preparación cancelada'
+                      : job['status'] == 'pending'
+                          ? 'Pedido en cola'
+                          : 'Preparando el proyecto'),
+              _pill('Coordinación inicial'),
+            ]),
+            const SizedBox(height: 14),
+            Text('${job['title']}',
+                style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 10),
+            Text(
+                job['status'] == 'failed' || job['status'] == 'cancelled'
+                    ? 'El chat se detuvo. Revisá el resultado antes de continuar.'
+                    : 'El chat está atendiendo el encargo y preparando el inicio del equipo.',
+                style: const TextStyle(color: Color(0xFFAAB8D0))),
+            if (DateTime.tryParse('${job['created_at']}')
+                case final DateTime started)
+              Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: Text(
+                      'Pedido hace ${DateTime.now().difference(started).inMinutes.clamp(0, 999999)} min',
+                      style: Theme.of(context).textTheme.bodySmall)),
+            if (widget.onOpenChat != null) ...[
+              const SizedBox(height: 12),
+              TextButton.icon(
+                  icon: const Icon(Icons.chat_bubble_outline_rounded),
+                  label: const Text('Ver chat de preparación'),
+                  onPressed: () async {
+                    await widget.onOpenChat!(job['session_id'] as String);
+                    if (mounted) Navigator.of(context).pop();
+                  }),
+            ],
+          ])),
+      ];
+
   List<Widget> _overview() {
     final runs = _rows(_data!['runs']);
     return [
       _heading('Tus proyectos, en movimiento',
           'Elegí un proyecto para entender qué está pasando.'),
-      if (runs.isEmpty)
+      if (runs.isEmpty && _preparations.isEmpty)
         _empty(Icons.hub_outlined, 'Todavía no hay ejecuciones',
             'Creá el encargo desde el chat de Code.'),
       for (final run in runs)
