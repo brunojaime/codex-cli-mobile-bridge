@@ -183,335 +183,371 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
     );
   }
 
+  Map<String, dynamic> _product(Map<String, dynamic> data) =>
+      Map<String, dynamic>.from(data['presentation'] as Map? ?? {});
+  String _status(dynamic value) =>
+      const {
+        'verified': 'Verificado',
+        'building': 'En construcción',
+        'reviewing': 'En revisión',
+        'waiting': 'Esperando otra etapa',
+        'planned': 'Por comenzar',
+      }[value] ??
+      'Por confirmar';
+  Color _tone(dynamic status) => status == 'verified'
+      ? const Color(0xFF72DAC4)
+      : status == 'waiting'
+          ? const Color(0xFFEBC581)
+          : const Color(0xFF9EAEFF);
+  Widget _pill(String value, {Color color = const Color(0xFF9EAEFF)}) =>
+      Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+              color: color.withValues(alpha: .12),
+              borderRadius: BorderRadius.circular(10)),
+          child: Text(value,
+              style: TextStyle(
+                  color: color, fontSize: 12, fontWeight: FontWeight.w600)));
+  Widget _surface(Widget child, {Color? accent}) => Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+          color: const Color(0xFF141E32),
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(
+              color:
+                  (accent ?? const Color(0xFF60718F)).withValues(alpha: .22))),
+      child: child);
+  Widget _empty(IconData icon, String title, String description) =>
+      _surface(Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Icon(icon, color: const Color(0xFF9EAEFF), size: 30),
+        const SizedBox(height: 16),
+        Text(title, style: Theme.of(context).textTheme.titleLarge),
+        const SizedBox(height: 8),
+        Text(description, style: const TextStyle(color: Color(0xFFAAB8D0)))
+      ]));
+  Widget _heading(String title, String subtitle) => Padding(
+      padding: const EdgeInsets.only(top: 6, bottom: 18),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(title,
+            style: Theme.of(context)
+                .textTheme
+                .titleLarge
+                ?.copyWith(fontWeight: FontWeight.w700)),
+        const SizedBox(height: 5),
+        Text(subtitle, style: const TextStyle(color: Color(0xFFAAB8D0)))
+      ]));
   List<Widget> _overview() {
     final runs = _rows(_data!['runs']);
-    final active = runs.where((r) => r['status'] != 'completed').length;
     return [
-      Text('Del objetivo al resultado.',
-          style: Theme.of(context)
-              .textTheme
-              .headlineLarge
-              ?.copyWith(fontWeight: FontWeight.w800)),
-      const SizedBox(height: 8),
-      Text('$active en curso · ${runs.length} ejecuciones',
-          style: Theme.of(context).textTheme.titleMedium),
-      const SizedBox(height: 24),
-      if ((_data!['unavailable'] as num? ?? 0) > 0 ||
-          _data!['truncated'] == true)
-        const Text(
-            'Hay registros que no se pudieron incluir. La lista puede estar incompleta.'),
+      _heading('Tus proyectos, en movimiento',
+          'Elegí un proyecto para entender qué está pasando.'),
       if (runs.isEmpty)
-        const Padding(
-            padding: EdgeInsets.symmetric(vertical: 56),
-            child: Column(children: [
-              Icon(Icons.hub_outlined, size: 56),
-              SizedBox(height: 16),
-              Text('Todavía no hay ejecuciones por objetivos.'),
-              SizedBox(height: 8),
-              Text(
-                  'Creá el encargo desde el chat de Code. Los ciclos anteriores no aparecen aquí.',
-                  textAlign: TextAlign.center)
-            ])),
+        _empty(Icons.hub_outlined, 'Todavía no hay ejecuciones',
+            'Creá el encargo desde el chat de Code.'),
       for (final run in runs)
-        Padding(
-            padding: const EdgeInsets.only(bottom: 14),
-            child: Semantics(
-                key: ValueKey('objective-run-${run['id']}'),
-                container: true,
-                button: true,
-                excludeSemantics: true,
-                label:
-                    'Abrir ejecución: ${run['project']}. ${run['objective']}. ${_label(run['status'])}. ${run['accepted_units']} de ${run['total_units']} incrementos aceptados.',
+        Semantics(
+            key: ValueKey('objective-run-${run['id']}'),
+            button: true,
+            container: true,
+            excludeSemantics: true,
+            label:
+                'Abrir ejecución: ${_product(run)['name'] ?? run['project']}',
+            onTap: () => _select(run['id'] as String),
+            child: InkWell(
+                borderRadius: BorderRadius.circular(22),
                 onTap: () => _select(run['id'] as String),
-                child: Card(
-                    clipBehavior: Clip.antiAlias,
-                    child: InkWell(
-                        onTap: () => _select(run['id'] as String),
-                        child: Padding(
-                            padding: const EdgeInsets.all(20),
-                            child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Wrap(
-                                      spacing: 12,
-                                      runSpacing: 8,
-                                      crossAxisAlignment:
-                                          WrapCrossAlignment.center,
-                                      children: [
-                                        Text('${run['project']}',
-                                            style: Theme.of(context)
-                                                .textTheme
-                                                .titleLarge),
-                                        _badge(_label(run['status']))
-                                      ]),
-                                  const SizedBox(height: 12),
-                                  Text('${run['objective']}',
-                                      maxLines: 3,
-                                      overflow: TextOverflow.ellipsis),
-                                  const SizedBox(height: 18),
-                                  _progress(run),
-                                  const SizedBox(height: 12),
-                                  Wrap(
-                                    spacing: 10,
-                                    runSpacing: 8,
-                                    children: [
-                                      for (final agent
-                                          in _rows(run['active_agents']))
-                                        _badge(
-                                            _label(agent['role']), Icons.bolt),
-                                      const Icon(Icons.arrow_forward_rounded)
-                                    ],
-                                  ),
-                                ])))))),
+                child: _surface(Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(children: [
+                        Expanded(
+                            child: Text(
+                                '${_product(run)['name'] ?? run['project']}',
+                                style:
+                                    Theme.of(context).textTheme.headlineSmall)),
+                        const Icon(Icons.arrow_forward_rounded,
+                            color: Color(0xFF72DAC4))
+                      ]),
+                      const SizedBox(height: 12),
+                      Text(
+                          '${_product(run)['purpose'] ?? 'Preparando el plan de trabajo.'}'),
+                      const SizedBox(height: 18),
+                      Wrap(spacing: 10, runSpacing: 8, children: [
+                        _pill(_label(run['status'])),
+                        _pill(
+                            '${_product(run)['verified'] ?? run['accepted_units'] ?? 0} entregas verificadas',
+                            color: const Color(0xFF72DAC4))
+                      ])
+                    ]))))
     ];
-  }
-
-  Widget _badge(String label, [IconData? icon]) {
-    final status = icon == Icons.check_circle
-        ? '$label: sí'
-        : icon == Icons.radio_button_unchecked
-            ? '$label: pendiente'
-            : label;
-    return Semantics(
-        label: status,
-        excludeSemantics: true,
-        child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(12)),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              if (icon != null) ...[
-                Icon(icon, size: 16),
-                const SizedBox(width: 6)
-              ],
-              Text(label),
-            ])));
-  }
-
-  Widget _progress(Map<String, dynamic> data) {
-    final total = (data['total_units'] as num? ?? 0).toInt();
-    final accepted = (data['accepted_units'] as num? ?? 0).toInt();
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      LinearProgressIndicator(
-          value: total == 0 ? 0 : (accepted / total).clamp(0, 1),
-          minHeight: 6,
-          borderRadius: BorderRadius.circular(5)),
-      const SizedBox(height: 8),
-      Text('$accepted de $total incrementos aceptados'),
-    ]);
   }
 
   List<Widget> _detail(Map<String, dynamic> data) {
-    final delivery = data['delivery'] as Map? ?? {};
+    final product = _product(data);
+    return [
+      Container(
+          padding: const EdgeInsets.all(22),
+          decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                  colors: [Color(0xFF213455), Color(0xFF18233D)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight),
+              borderRadius: BorderRadius.circular(24)),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            _pill(_label(data['status']), color: const Color(0xFF72DAC4)),
+            const SizedBox(height: 16),
+            Text('${product['name'] ?? data['project']}',
+                style: Theme.of(context)
+                    .textTheme
+                    .headlineMedium
+                    ?.copyWith(fontWeight: FontWeight.w800)),
+            const SizedBox(height: 10),
+            Text(
+                '${product['purpose'] ?? 'El equipo está preparando el plan de trabajo.'}'),
+            const SizedBox(height: 20),
+            Wrap(spacing: 18, runSpacing: 12, children: [
+              _metric('${product['verified'] ?? data['accepted_units'] ?? 0}',
+                  'Verificadas'),
+              _metric('${product['active'] ?? 0}', 'En curso'),
+              _metric('${product['issues'] ?? 0}', 'Por resolver'),
+            ]),
+          ])),
+      if (product['communication'] != 'current')
+        Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: Text(
+                'El comunicador está preparando la explicación. El equipo puede seguir trabajando.',
+                style: Theme.of(context).textTheme.bodySmall)),
+      const SizedBox(height: 20),
+      SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(children: [
+            for (final (index, label) in [
+              'Ahora',
+              'Producto',
+              'Resultados',
+              'Diseño',
+              'Atención'
+            ].indexed)
+              Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ChoiceChip(
+                      label: Text(label),
+                      selected: _tab == index,
+                      onSelected: (_) => setState(() => _tab = index))),
+          ])),
+      const SizedBox(height: 20),
+      if (_tab == 0) ..._now(data),
+      if (_tab == 1) ..._capabilities(data),
+      if (_tab == 2) ..._results(data),
+      if (_tab == 3) ..._visual(data),
+      if (_tab == 4) ..._attention(data),
+      const SizedBox(height: 16),
+      OutlinedButton.icon(
+          icon: const Icon(Icons.manage_search_outlined),
+          label: const Text('Detalle técnico'),
+          onPressed: () => _technical(data)),
+    ];
+  }
+
+  Widget _metric(String number, String label) => SizedBox(
+      width: 86,
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(number,
+            style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800)),
+        Text(label,
+            style: const TextStyle(fontSize: 12, color: Color(0xFFAAB8D0)))
+      ]));
+  List<Widget> _now(Map<String, dynamic> data) {
+    final tasks = _rows(_product(data)['tasks']);
+    final active = tasks
+        .where((t) => ['building', 'reviewing'].contains(t['status']))
+        .toList();
+    final waiting = tasks.where((t) => t['status'] == 'waiting').toList();
+    return [
+      _heading('En marcha', 'Responsables, propósito y siguiente entrega.'),
+      if (active.isEmpty)
+        _empty(
+            Icons.timelapse_outlined,
+            data['status'] == 'completed'
+                ? 'Trabajo finalizado'
+                : 'Sin tarea activa registrada',
+            data['status'] == 'completed'
+                ? 'Revisá las entregas y sus comprobaciones.'
+                : 'El equipo puede estar preparando o revisando el siguiente paso.'),
+      for (final task in active) _task(task),
+      if (waiting.isNotEmpty) ...[
+        _heading('Lo que sigue', 'Estas tareas esperan una etapa anterior.'),
+        for (final task in waiting.take(3)) _task(task, compact: true),
+      ],
+    ];
+  }
+
+  Widget _task(Map<String, dynamic> task, {bool compact = false}) => _surface(
+      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Wrap(spacing: 8, runSpacing: 8, children: [
+          _pill('${task['owner']}'),
+          _pill(_status(task['status']), color: _tone(task['status']))
+        ]),
+        const SizedBox(height: 14),
+        Text('${task['title']}',
+            style: Theme.of(context)
+                .textTheme
+                .titleLarge
+                ?.copyWith(fontWeight: FontWeight.w700)),
+        const SizedBox(height: 8),
+        Text('${task['purpose']}',
+            style: const TextStyle(color: Color(0xFFB9C5D9))),
+        if (!compact) ...[
+          const SizedBox(height: 16),
+          const Text('Entrega esperada',
+              style: TextStyle(fontSize: 12, color: Color(0xFF72DAC4))),
+          const SizedBox(height: 5),
+          Text('${task['outcome']}')
+        ],
+        if ((task['dependencies'] as List? ?? []).isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Text('Espera: ${(task['dependencies'] as List).join(' · ')}',
+              style: const TextStyle(fontSize: 12, color: Color(0xFFEBC581)))
+        ],
+      ]),
+      accent: _tone(task['status']));
+  List<Widget> _capabilities(Map<String, dynamic> data) {
+    final areas = _rows(_product(data)['capabilities']);
+    return [
+      _heading('El mapa del producto',
+          'Qué tendrá la aplicación y cómo avanza cada área.'),
+      if (areas.isEmpty)
+        _empty(Icons.grid_view_outlined, 'Organizando las capacidades',
+            'El mapa aparecerá cuando el comunicador termine de describir el plan.'),
+      for (final area in areas)
+        _surface(
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            const Icon(Icons.widgets_outlined, color: Color(0xFF9EAEFF)),
+            const SizedBox(width: 12),
+            Expanded(
+                child: Text('${area['title']}',
+                    style: Theme.of(context).textTheme.titleLarge))
+          ]),
+          const SizedBox(height: 10),
+          Text('${area['purpose']}'),
+          const SizedBox(height: 14),
+          Wrap(spacing: 10, runSpacing: 8, children: [
+            _pill(_status(area['status']), color: _tone(area['status'])),
+            Text('${area['verified']} de ${area['total']} entregas verificadas')
+          ]),
+        ]))
+    ];
+  }
+
+  List<Widget> _results(Map<String, dynamic> data) {
+    final tasks = _rows(_product(data)['tasks'])
+        .where((t) => t['status'] == 'verified')
+        .toList();
+    return [
+      _heading('Entregas verificadas',
+          'Sólo aparecen trabajos aceptados por la revisión.'),
+      _empty(Icons.public_outlined, 'Publicación sin acreditar',
+          'La integración de código no confirma que ya esté disponible para usar.'),
+      if (tasks.isEmpty)
+        _empty(Icons.fact_check_outlined, 'Todavía no hay entregas verificadas',
+            'El trabajo en curso aparece en Ahora. Una tarea iniciada no es un resultado.'),
+      for (final task in tasks) _task(task),
+    ];
+  }
+
+  List<Widget> _attention(Map<String, dynamic> data) {
+    final issues =
+        _rows(data['issues']).where((i) => i['status'] == 'open').toList();
+    final tasks = _rows(_product(data)['tasks']);
     final blocker = data['blocker'] as Map? ?? {};
     return [
-      Text('${data['project']}',
-          style: Theme.of(context)
-              .textTheme
-              .headlineMedium
-              ?.copyWith(fontWeight: FontWeight.w800)),
-      const SizedBox(height: 8),
-      ExpansionTile(
-          title: const Text('Objetivo y alcance'),
-          children: [SelectableText('${data['objective']}')]),
-      const SizedBox(height: 16),
-      Wrap(spacing: 10, runSpacing: 8, children: [
-        _badge(_label(data['status'])),
-        for (final entry in {
-          'implemented': 'Implementado',
-          'verified': 'Verificado',
-          'applied': 'Integrado'
-        }.entries)
-          _badge(
-              entry.value,
-              delivery[entry.key] == true
-                  ? Icons.check_circle
-                  : Icons.radio_button_unchecked),
-      ]),
-      const SizedBox(height: 14),
-      _progress(data),
-      const SizedBox(height: 8),
-      Text(
-          '${data['calls']} / ${data['max_calls']} llamadas · Integrado no significa publicado',
-          style: Theme.of(context).textTheme.bodySmall),
-      Text('Último cambio: ${_date(data['updated_at'])}',
-          style: Theme.of(context).textTheme.bodySmall),
+      _heading('Lo que necesita atención',
+          'Las correcciones del equipo y las dependencias pendientes.'),
       if ('${blocker['reason'] ?? ''}'.isNotEmpty)
-        Card(
-            child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('Qué falta resolver',
-                          style: TextStyle(fontWeight: FontWeight.bold)),
-                      Text('${blocker['reason']}'),
-                      if ('${blocker['next_action'] ?? ''}'.isNotEmpty)
-                        Text('${blocker['next_action']}'),
-                    ]))),
-      const SizedBox(height: 22),
-      Wrap(spacing: 8, runSpacing: 8, children: [
-        for (final (index, label) in [
-          'Ahora',
-          'Resultados',
-          'Diseño',
-          'Problemas',
-          'Actividad'
-        ].indexed)
-          ChoiceChip(
-              label: Text(label),
-              selected: _tab == index,
-              onSelected: (_) => setState(() => _tab = index)),
-      ]),
-      const SizedBox(height: 16),
-      if (_tab == 0) ..._now(data),
-      if (_tab == 1) ..._advance(data),
-      if (_tab == 2) ..._visual(data),
-      if (_tab == 3) ..._issues(data),
-      if (_tab == 4) ..._team(data),
+        _empty(Icons.pause_circle_outline, 'Hay una dependencia externa',
+            'El equipo registró un impedimento. El detalle técnico conserva el motivo y el siguiente paso.'),
+      if (issues.isEmpty)
+        _empty(Icons.check_circle_outline, 'Sin problemas abiertos registrados',
+            'Esto no reemplaza la verificación de las entregas.'),
+      for (final issue in issues)
+        _surface(
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          _pill('Corrección pendiente', color: const Color(0xFFEBC581)),
+          const SizedBox(height: 12),
+          Text(
+              '${tasks.where((t) => t['id'] == issue['unit']).firstOrNull?['title'] ?? 'Revisión del proyecto'}',
+              style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 8),
+          Text('Responsable: ${_role(issue['owner'])}'),
+          const SizedBox(height: 8),
+          const Text(
+              'La revisión pidió ajustes antes de aceptar esta entrega.'),
+        ]))
     ];
   }
 
-  List<Widget> _now(Map<String, dynamic> data) {
-    final active = _rows(data['jobs'])
-        .where((j) => ['running', 'starting', 'launching', 'pending'].contains(j['status']))
-        .toList();
-    final units = _rows(data['units']);
-    return [
-      Text('En qué está trabajando el equipo',
-          style: Theme.of(context).textTheme.titleLarge),
-      const SizedBox(height: 12),
-      if (active.isEmpty)
-        Text(data['status'] == 'completed'
-            ? 'La ejecución terminó. Consultá los resultados y sus evidencias.'
-            : 'No hay una tarea activa registrada en esta consulta.'),
-      for (final job in active)
-        Builder(builder: (context) {
-          final unit = units.where((u) => u['id'] == job['unit']).firstOrNull;
-          return Card(
-              child: Padding(
-                  padding: const EdgeInsets.all(18),
-                  child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(children: [
-                          const Icon(Icons.bolt_outlined),
-                          const SizedBox(width: 8),
-                          Expanded(
-                              child: Text(_label(job['role']),
-                                  style:
-                                      Theme.of(context).textTheme.titleLarge)),
-                          _badge(_label(job['status']))
-                        ]),
-                        const SizedBox(height: 12),
-                        Text(
-                            unit?['objective'] as String? ??
-                                'Preparar y revisar el objetivo del proyecto',
-                            maxLines: 3,
-                            overflow: TextOverflow.ellipsis),
-                        const SizedBox(height: 8),
-                        Text('Desde ${_date(job['started_at'])}',
-                            style: Theme.of(context).textTheme.bodySmall),
-                        ExpansionTile(
-                            title: const Text('Contexto y dependencias'),
-                            children: [
-                              ListTile(
-                                  title: const Text('Historias asignadas'),
-                                  subtitle: Text(
-                                      (unit?['stories'] as List? ?? [])
-                                          .join(' · '))),
-                              ListTile(
-                                  title: const Text('Depende de'),
-                                  subtitle: Text(
-                                      (unit?['depends_on'] as List? ?? [])
-                                          .join(' · '))),
-                              for (final source in _rows((job['context'] as Map?)?['sources']))
-                ListTile(leading: const Icon(Icons.description_outlined),
-                  title: Text('${source['name']}'),
-                  subtitle: const Text('Referenciado en el encargo · lectura sin acreditar')),
-              const ListTile(
-                                  title: Text('Lecturas del agente'),
-                                  subtitle: Text(
-                                      'Todavía no hay registro verificable de los documentos consultados.')),
-                            ]),
-                      ])));
-        }),
-      const SizedBox(height: 16),
-      Text('Próximas tareas', style: Theme.of(context).textTheme.titleMedium),
-      for (final unit in units
-          .where((u) => ['ready', 'pending'].contains(u['state']))
-          .take(3))
-        ListTile(
-            leading: const Icon(Icons.arrow_forward),
-            title: Text('${unit['objective']}',
-                maxLines: 2, overflow: TextOverflow.ellipsis),
-            subtitle: Text(_label(unit['owner']))),
-    ];
-  }
-
+  String _role(dynamic role) =>
+      const {
+        'generator': 'Construcción',
+        'ux': 'Diseño',
+        'reviewer': 'Verificación',
+        'ux_review': 'Revisión visual',
+        'requirements': 'Planificación',
+        'security': 'Seguridad',
+        'recovery': 'Resolución'
+      }[role] ??
+      'Equipo';
+  void _technical(Map<String, dynamic> data) => showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => SafeArea(
+          child: SizedBox(
+              height: MediaQuery.sizeOf(context).height * .8,
+              child: ListView(padding: const EdgeInsets.all(20), children: [
+                Text('Registro técnico',
+                    style: Theme.of(context).textTheme.headlineSmall),
+                Text(
+                    '${data['calls']} / ${data['max_calls']} llamadas · ${_date(data['updated_at'])}'),
+                const Text('Integrado no significa publicado'),
+                for (final job in _rows(data['jobs']).reversed)
+                  ListTile(
+                      title: Text(
+                          '${_role(job['role'])} · ${_label(job['status'])}'),
+                      subtitle: Text(
+                          '${job['unit'] ?? 'Proyecto'} · ${_date(job['started_at'])}'),
+                      trailing: job['session_id'] != null &&
+                              widget.onOpenChat != null &&
+                              data['can_open_chats'] == true
+                          ? IconButton(
+                              icon: const Icon(Icons.open_in_new),
+                              tooltip: 'Abrir chat del agente',
+                              onPressed: () async {
+                                Navigator.of(context).pop();
+                                Navigator.of(this.context).pop();
+                                await widget
+                                    .onOpenChat!(job['session_id'] as String);
+                              })
+                          : null),
+                for (final issue in _rows(data['issues']))
+                  ListTile(
+                      title: Text('${issue['summary']}'),
+                      subtitle: Text('${issue['observed']}')),
+              ]))));
   String _date(dynamic value) {
     final date = DateTime.tryParse('$value')?.toLocal();
-    if (date == null) return 'Sin registro';
-    return '${date.day}/${date.month} ${TimeOfDay.fromDateTime(date).format(context)}';
+    return date == null
+        ? 'Sin registro'
+        : '${date.day}/${date.month} ${TimeOfDay.fromDateTime(date).format(context)}';
   }
 
-  List<Widget> _advance(Map<String, dynamic> data) => [
-        for (final unit in _rows(data['units']))
-          Card(
-              child: ListTile(
-                  leading: Icon(unit['state'] == 'accepted'
-                      ? Icons.task_alt
-                      : Icons.pending_actions),
-                  title: Text('${unit['objective']}'),
-                  subtitle: Text(
-                      '${_label(unit['owner'])} · ${_label(unit['state'])}\n${(unit['stories'] as List? ?? []).join(' · ')}'),
-                  isThreeLine: true)),
-        const SizedBox(height: 16),
-        Text('Historias y aceptación',
-            style: Theme.of(context).textTheme.titleMedium),
-        for (final story in _rows(data['stories']))
-          ExpansionTile(
-              title: Text('${story['id']} · ${story['priority']}'),
-              subtitle: Text('${story['role']} · ${_label(story['state'])}'),
-              children: [
-                for (final criterion in story['acceptance'] as List? ?? [])
-                  ListTile(
-                      leading: const Icon(Icons.rule_outlined),
-                      title: Text('$criterion'))
-              ]),
-      ];
-  List<Widget> _team(Map<String, dynamic> data) => [
-        const Text('Actividad y revisiones · más recientes primero'),
-        for (final job in _rows(data['jobs']).reversed)
-          Card(
-              child: ListTile(
-            leading: Icon(job['role'] == 'ux' || job['role'] == 'ux_review'
-                ? Icons.palette_outlined
-                : Icons.account_tree_outlined),
-            title: Text('${_label(job['role'])} · ${_label(job['status'])}'),
-            subtitle: Text(
-                '${job['unit'] ?? 'Objetivo completo'} · ${_date(job['finished_at'] ?? job['started_at'])}\n${job['verdict'] != null ? _label(job['verdict']) : job['phase'] ?? ''}'),
-            trailing: job['session_id'] != null &&
-                    widget.onOpenChat != null &&
-                    data['can_open_chats'] == true
-                ? IconButton(
-                    tooltip: 'Abrir chat del agente',
-                    icon: const Icon(Icons.open_in_new),
-                    onPressed: () async {
-                      Navigator.of(context).pop();
-                      await widget.onOpenChat!(job['session_id'] as String);
-                    })
-                : null,
-          )),
-        if (data['can_open_chats'] != true)
-          const Text('Las conversaciones del equipo están en Bridge PROD.'),
-      ];
   List<Widget> _visual(Map<String, dynamic> data) {
     final images = _rows(data['images']);
     return [
-      const Text(
-          'Capturas registradas por revisión. Cada imagen conserva su commit.'),
+      const Text('Propuestas y pantallas del producto.'),
       if (images.isEmpty)
         const Padding(
             padding: EdgeInsets.all(32),
@@ -526,9 +562,11 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       ListTile(
-                          title: Text('${image['label']}'),
+                          title: Text(image['reviewed'] == true
+                              ? 'Pantalla revisada'
+                              : 'Propuesta visual'),
                           subtitle: Text(
-                              '${image['reviewed'] == true ? 'Con revisión registrada' : 'Propuesta · sin revisar'} · ${image['commit'] == data['commit'] ? 'Commit actual' : 'Otro commit'} · ${image['commit']}',
+                              '${image['reviewed'] == true ? 'Con revisión registrada' : 'Sin revisión todavía'} · ${image['commit'] == data['commit'] ? 'Versión actual' : 'Versión anterior'}',
                               maxLines: 2)),
                       InkWell(
                           onTap: () => showDialog<void>(
@@ -557,34 +595,4 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
           errorBuilder: (context, error, stackTrace) => const Center(
               child:
                   Text('Evidencia no disponible. Actualizá para reintentar.')));
-  List<Widget> _issues(Map<String, dynamic> data) {
-    final issues = _rows(data['issues']);
-    final open = issues.where((i) => i['status'] == 'open').length;
-    return [
-      Text('$open abiertos · ${issues.length - open} resueltos',
-          style: Theme.of(context).textTheme.titleMedium),
-      if (issues.isEmpty)
-        const Padding(
-            padding: EdgeInsets.all(32),
-            child: Text(
-                'Sin hallazgos registrados. La verificación se indica arriba.')),
-      for (final issue in issues)
-        Card(
-            child: ExpansionTile(
-          leading: Icon(issue['status'] == 'resolved'
-              ? Icons.check_circle_outline
-              : Icons.build_circle_outlined),
-          title: Text('${issue['summary']}'),
-          subtitle: Text(
-              '${_label(issue['owner'])} · ${_label(issue['status'])} · ${issue['severity']}'),
-          childrenPadding: const EdgeInsets.all(16),
-          expandedCrossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Esperado: ${issue['expected']}'),
-            const SizedBox(height: 8),
-            Text('Observado: ${issue['observed']}')
-          ],
-        )),
-    ];
-  }
 }

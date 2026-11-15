@@ -9,6 +9,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+from .team_communication import presentation
 
 
 def text(value, limit=1500):
@@ -66,6 +67,7 @@ class ObjectiveTeamView:
                   "active_agents": [{"role": j.get("role"), "phase": text(j.get("runtime_phase")),
                                      "unit": j.get("unit")} for j in s.get("jobs", [])
                                     if j.get("status") in ("running", "starting", "launching", "pending")]}
+        result["presentation"] = presentation(s, self.root)
         if not detail:
             return result
         blocker = s.get("external_blocker") or {}

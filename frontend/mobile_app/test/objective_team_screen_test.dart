@@ -56,17 +56,14 @@ void main() {
       expect(node.flagsCollection.isButton, isTrue);
       expect(node.getSemanticsData().hasAction(ui.SemanticsAction.tap), isTrue);
       semantics.dispose();
-      await tester.tap(find.text('Crear una app útil'));
+      await tester.tap(find.byKey(ValueKey('objective-run-${'a' * 24}')));
       await tester.pumpAndSettle();
-      expect(find.text('Integrado no significa publicado', findRichText: true),
-          findsNothing);
-      expect(find.textContaining('Integrado no significa publicado'),
-          findsOneWidget);
-      expect(find.byIcon(Icons.radio_button_unchecked), findsNWidgets(2));
+      expect(find.text('En marcha'), findsOneWidget);
+      expect(find.textContaining('scripts/'), findsNothing);
+      await tester.ensureVisible(find.text('Diseño'));
       await tester.tap(find.text('Diseño'));
       await tester.pumpAndSettle();
-      expect(find.textContaining('Todavía no hay capturas verificadas'),
-          findsOneWidget);
+      expect(find.textContaining('Todavía no hay capturas verificadas'), findsOneWidget);
       fail = true;
       await tester.tap(find.byTooltip('Actualizar'));
       await tester.pumpAndSettle();
