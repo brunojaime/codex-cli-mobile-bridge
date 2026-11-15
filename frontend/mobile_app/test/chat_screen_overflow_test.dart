@@ -1438,7 +1438,7 @@ void main() {
       find.descendant(
         of: drawer,
         matching: find.text(
-          'Archived chats across your pinned projects',
+          'Ver ejecuciones del equipo',
           skipOffstage: false,
         ),
       ),
