@@ -795,6 +795,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       spacing: 4,
                       children: <Widget>[
                         IconButton(
+                          tooltip: 'Equipo por objetivos',
+                          icon: const Icon(Icons.hub_outlined),
+                          onPressed: () async {
+                            Navigator.of(context).pop();
+                            await _openObjectiveTeam();
+                          },
+                        ),
+                        IconButton(
                           onPressed: () async {
                             await _toggleSidebarExpanded();
                           },
@@ -819,14 +827,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                         ),
                       ],
                     ),
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.hub_outlined),
-                    title: const Text('Equipo por objetivos'),
-                    onTap: () async {
-                      Navigator.of(context).pop();
-                      await _openObjectiveTeam();
-                    },
                   ),
                   const Divider(height: 1),
                   Padding(
