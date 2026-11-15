@@ -9,6 +9,87 @@ import 'package:codex_mobile_frontend/src/services/objective_team_client.dart';
 
 void main() {
   for (final width in [360.0, 1200.0]) {
+    testWidgets('planning activity, pause and stale data at $width',
+        (tester) async {
+      tester.view.physicalSize = Size(width, 1100);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      var offline = false;
+      final run = <String, dynamic>{
+        'id': 'b' * 24,
+        'project': 'Proyecto nuevo',
+        'status': 'planning',
+        'total_units': 0,
+        'accepted_units': 0,
+        'active_agents': [
+          {'role': 'requirements', 'phase': 'Drafting reply', 'unit': null}
+        ],
+        'jobs': [
+          {
+            'role': 'requirements',
+            'phase': 'Drafting reply',
+            'unit': null,
+            'status': 'running',
+            'started_at': DateTime.now()
+                .subtract(const Duration(minutes: 7))
+                .toIso8601String()
+          }
+        ],
+        'presentation': {
+          'verified': 0,
+          'active': 0,
+          'issues': 0,
+          'tasks': [],
+          'communication': 'pending'
+        }
+      };
+      final client = ObjectiveTeamClient('http://bridge',
+          client: MockClient((request) async {
+        if (offline) return http.Response('', 503);
+        return http.Response(
+            jsonEncode(request.url.path == '/objective-team'
+                ? {
+                    'runs': [run]
+                  }
+                : run),
+            200);
+      }));
+      addTearDown(client.close);
+      await tester
+          .pumpWidget(MaterialApp(home: ObjectiveTeamScreen(client: client)));
+      await tester.pumpAndSettle();
+      expect(find.text('1 agente activo'), findsOneWidget);
+      expect(find.textContaining('0 entregas verificadas'), findsNothing);
+      await tester.tap(find.byKey(ValueKey('objective-run-${'b' * 24}')));
+      await tester.pumpAndSettle();
+      expect(find.text('Preparando el plan'), findsOneWidget);
+      expect(find.text('Preparar el plan de trabajo'), findsOneWidget);
+      expect(find.text('1 agente activo'), findsOneWidget);
+      expect(find.text('En curso'), findsNothing);
+      expect(find.text('Por resolver'), findsNothing);
+      expect(find.text('Inició hace 7 min'), findsOneWidget);
+      expect(
+          find.textContaining('El comunicador está preparando'), findsNothing);
+      offline = true;
+      await tester.tap(find.byTooltip('Actualizar'));
+      await tester.pumpAndSettle();
+      expect(
+          find.textContaining('pueden estar desactualizados'), findsOneWidget);
+      expect(find.text('Preparar el plan de trabajo'), findsOneWidget);
+      offline = false;
+      run['status'] = 'paused';
+      run['jobs'] = [];
+      run['active_agents'] = [];
+      await tester.tap(find.byTooltip('Actualizar'));
+      await tester.pumpAndSettle();
+      expect(find.text('Ejecución pausada'), findsOneWidget);
+      expect(find.text('Preparar el plan de trabajo'), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+  for (final width in [360.0, 1200.0]) {
     testWidgets('real navigation, evidence empty and honest delivery at $width',
         (tester) async {
       tester.view.physicalSize = Size(width, 1000);
@@ -20,14 +101,32 @@ void main() {
         'project': 'Proyecto',
         'objective': 'Crear scripts/objective-tests.mjs',
         'presentation': {
-          'name': 'Proyecto', 'purpose': 'Organizar las reservas del negocio.',
-          'communication': 'current', 'verified': 0, 'active': 1, 'issues': 0,
-          'tasks': [{'id':'u1', 'title':'Comprobar las reservas',
-            'purpose':'Evitar que dos personas ocupen el mismo lugar.',
-            'outcome':'Poder reservar con disponibilidad confiable.',
-            'status':'reviewing', 'owner':'Verificación', 'dependencies':[]}],
-          'capabilities':[{'title':'Agenda del negocio','purpose':'Organizar la disponibilidad.',
-            'status':'reviewing','verified':0,'total':1}]
+          'name': 'Proyecto',
+          'purpose': 'Organizar las reservas del negocio.',
+          'communication': 'current',
+          'verified': 0,
+          'active': 1,
+          'issues': 0,
+          'tasks': [
+            {
+              'id': 'u1',
+              'title': 'Comprobar las reservas',
+              'purpose': 'Evitar que dos personas ocupen el mismo lugar.',
+              'outcome': 'Poder reservar con disponibilidad confiable.',
+              'status': 'reviewing',
+              'owner': 'Verificación',
+              'dependencies': []
+            }
+          ],
+          'capabilities': [
+            {
+              'title': 'Agenda del negocio',
+              'purpose': 'Organizar la disponibilidad.',
+              'status': 'reviewing',
+              'verified': 0,
+              'total': 1
+            }
+          ]
         },
         'status': 'final_review',
         'total_units': 2,
@@ -84,7 +183,8 @@ void main() {
       await tester.ensureVisible(find.text('Diseño'));
       await tester.tap(find.text('Diseño'));
       await tester.pumpAndSettle();
-      expect(find.textContaining('Todavía no hay capturas verificadas'), findsOneWidget);
+      expect(find.textContaining('Todavía no hay capturas verificadas'),
+          findsOneWidget);
       fail = true;
       await tester.tap(find.byTooltip('Actualizar'));
       await tester.pumpAndSettle();

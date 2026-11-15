@@ -3,12 +3,14 @@ import 'package:flutter/material.dart';
 import '../services/objective_team_client.dart';
 
 const _labels = {
-  'planning': 'Definiendo alcance',
+  'planning': 'Preparando el plan',
   'executing': 'En construcción',
   'final_review': 'Revisión final',
   'completed': 'Completado',
   'needs_attention': 'Necesita atención',
   'paused': 'En pausa',
+  'cancelled': 'Cancelado',
+  'budget_exhausted': 'Límite de ejecución alcanzado',
   'blocked': 'Bloqueado',
   'accepted': 'Aceptado',
   'pending': 'Pendiente',
@@ -185,6 +187,86 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
 
   Map<String, dynamic> _product(Map<String, dynamic> data) =>
       Map<String, dynamic>.from(data['presentation'] as Map? ?? {});
+  bool _beforePlan(Map<String, dynamic> data) =>
+      data['status'] == 'planning' ||
+      (data['total_units'] == 0 && _rows(_product(data)['tasks']).isEmpty);
+  List<Map<String, dynamic>> _agents(Map<String, dynamic> data) {
+    const active = ['running', 'starting', 'launching', 'pending'];
+    final jobs =
+        _rows(data['jobs']).where((j) => active.contains(j['status'])).toList();
+    return jobs.isNotEmpty ? jobs : _rows(data['active_agents']);
+  }
+
+  String _agentCount(Map<String, dynamic> data) {
+    final count = _agents(data).length;
+    return '$count ${count == 1 ? 'agente activo' : 'agentes activos'}';
+  }
+
+  String _stagePurpose(Map<String, dynamic> data) {
+    if (data['status'] == 'paused') {
+      return 'La ejecución está pausada. El trabajo realizado se conserva.';
+    }
+    if (data['status'] == 'needs_attention' || data['status'] == 'blocked') {
+      return 'Hay un impedimento registrado antes de continuar.';
+    }
+    if (data['status'] == 'cancelled') {
+      return 'La ejecución fue cancelada.';
+    }
+    if (data['status'] == 'budget_exhausted') {
+      return 'Se alcanzó el límite de ejecución; el trabajo realizado se conserva.';
+    }
+    if (data['status'] == 'completed') {
+      return 'La ejecución finalizó. Consultá los resultados disponibles.';
+    }
+    return 'Organizando las historias, dependencias y primeros incrementos.';
+  }
+
+  Widget _agentCard(Map<String, dynamic> agent) {
+    final role = agent['role'];
+    final title = const {
+          'requirements': 'Preparar el plan de trabajo',
+          'recovery': 'Resolver el impedimento',
+          'reviewer': 'Comprobar las entregas',
+          'security': 'Verificar la protección de datos y accesos',
+          'ux': 'Diseñar la experiencia',
+          'ux_review': 'Revisar las pantallas',
+          'generator': 'Construir el siguiente incremento',
+        }[role] ??
+        'Trabajar en la etapa actual';
+    final detail = agent['phase'] == 'Drafting reply' ||
+            agent['phase'] == 'Finalizing'
+        ? 'Preparando la entrega de esta etapa.'
+        : role == 'requirements'
+            ? 'Organiza el relevamiento en tareas y criterios que el equipo pueda comprobar.'
+            : 'La entrega aparecerá como verificada cuando supere la revisión.';
+    final start = DateTime.tryParse('${agent['started_at'] ?? ''}');
+    final elapsed =
+        start == null ? null : DateTime.now().difference(start).inMinutes;
+    return _surface(
+        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Wrap(spacing: 8, runSpacing: 8, children: [
+        _pill(_role(role)),
+        _pill('Actividad registrada', color: const Color(0xFF72DAC4)),
+      ]),
+      const SizedBox(height: 14),
+      Text(title,
+          style: Theme.of(context)
+              .textTheme
+              .titleLarge
+              ?.copyWith(fontWeight: FontWeight.w700)),
+      const SizedBox(height: 8),
+      Text(detail, style: const TextStyle(color: Color(0xFFB9C5D9))),
+      if (elapsed != null && elapsed >= 0) ...[
+        const SizedBox(height: 12),
+        Text(
+            elapsed == 0
+                ? 'Inició hace menos de un minuto'
+                : 'Inició hace $elapsed min',
+            style: const TextStyle(fontSize: 12, color: Color(0xFFAAB8D0))),
+      ],
+    ]));
+  }
+
   String _status(dynamic value) =>
       const {
         'verified': 'Verificado',
@@ -270,14 +352,17 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
                             color: Color(0xFF72DAC4))
                       ]),
                       const SizedBox(height: 12),
-                      Text(
-                          '${_product(run)['purpose'] ?? 'Preparando el plan de trabajo.'}'),
+                      Text(_beforePlan(run)
+                          ? _stagePurpose(run)
+                          : '${_product(run)['purpose'] ?? 'Preparando el plan de trabajo.'}'),
                       const SizedBox(height: 18),
                       Wrap(spacing: 10, runSpacing: 8, children: [
                         _pill(_label(run['status'])),
-                        _pill(
-                            '${_product(run)['verified'] ?? run['accepted_units'] ?? 0} entregas verificadas',
-                            color: const Color(0xFF72DAC4))
+                        _pill(_agentCount(run)),
+                        if (!_beforePlan(run))
+                          _pill(
+                              '${_product(run)['verified'] ?? run['accepted_units'] ?? 0} entregas verificadas',
+                              color: const Color(0xFF72DAC4))
                       ])
                     ]))))
     ];
@@ -304,17 +389,24 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
                     .headlineMedium
                     ?.copyWith(fontWeight: FontWeight.w800)),
             const SizedBox(height: 10),
-            Text(
-                '${product['purpose'] ?? 'El equipo está preparando el plan de trabajo.'}'),
+            Text(_beforePlan(data)
+                ? _stagePurpose(data)
+                : '${product['purpose'] ?? 'El equipo está preparando el plan de trabajo.'}'),
             const SizedBox(height: 20),
-            Wrap(spacing: 18, runSpacing: 12, children: [
-              _metric('${product['verified'] ?? data['accepted_units'] ?? 0}',
-                  'Verificadas'),
-              _metric('${product['active'] ?? 0}', 'En curso'),
-              _metric('${product['issues'] ?? 0}', 'Por resolver'),
-            ]),
+            if (_beforePlan(data)) ...[
+              _pill(_agentCount(data), color: const Color(0xFF72DAC4)),
+              const SizedBox(height: 10),
+              const Text('Aún no hay entregas para verificar.',
+                  style: TextStyle(color: Color(0xFFAAB8D0))),
+            ] else
+              Wrap(spacing: 18, runSpacing: 12, children: [
+                _metric('${product['verified'] ?? data['accepted_units'] ?? 0}',
+                    'Verificadas'),
+                _metric('${_agents(data).length}', 'Agentes activos'),
+                _metric('${product['issues'] ?? 0}', 'Por resolver'),
+              ]),
           ])),
-      if (product['communication'] != 'current')
+      if (!_beforePlan(data) && product['communication'] != 'current')
         Padding(
             padding: const EdgeInsets.only(top: 12),
             child: Text(
@@ -366,17 +458,32 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
         .where((t) => ['building', 'reviewing'].contains(t['status']))
         .toList();
     final waiting = tasks.where((t) => t['status'] == 'waiting').toList();
+    final agents = _agents(data);
+    final independent = agents
+        .where((a) =>
+            a['unit'] == null || !active.any((t) => t['id'] == a['unit']))
+        .toList();
     return [
       _heading('En marcha', 'Responsables, propósito y siguiente entrega.'),
-      if (active.isEmpty)
+      for (final agent in independent) _agentCard(agent),
+      if (active.isEmpty && agents.isEmpty)
         _empty(
             Icons.timelapse_outlined,
-            data['status'] == 'completed'
-                ? 'Trabajo finalizado'
-                : 'Sin tarea activa registrada',
+            data['status'] == 'cancelled' ||
+                    data['status'] == 'budget_exhausted'
+                ? _label(data['status'])
+                : data['status'] == 'paused'
+                    ? 'Ejecución pausada'
+                    : data['status'] == 'completed'
+                        ? 'Trabajo finalizado'
+                        : _beforePlan(data)
+                            ? 'Esperando actividad de planificación'
+                            : 'Sin tarea activa registrada',
             data['status'] == 'completed'
                 ? 'Revisá las entregas y sus comprobaciones.'
-                : 'El equipo puede estar preparando o revisando el siguiente paso.'),
+                : data['status'] == 'paused'
+                    ? 'No se registran agentes activos.'
+                    : 'La última consulta no registra un agente trabajando. El panel se actualizará con la próxima actividad.'),
       for (final task in active) _task(task),
       if (waiting.isNotEmpty) ...[
         _heading('Lo que sigue', 'Estas tareas esperan una etapa anterior.'),
@@ -420,8 +527,12 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
       _heading('El mapa del producto',
           'Qué tendrá la aplicación y cómo avanza cada área.'),
       if (areas.isEmpty)
-        _empty(Icons.grid_view_outlined, 'Organizando las capacidades',
-            'El mapa aparecerá cuando el comunicador termine de describir el plan.'),
+        _empty(
+            Icons.grid_view_outlined,
+            'Organizando las capacidades',
+            _beforePlan(data)
+                ? 'Primero se organiza y valida el plan de trabajo.'
+                : 'El mapa aparecerá cuando el comunicador termine de describir el plan.'),
       for (final area in areas)
         _surface(
             Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
