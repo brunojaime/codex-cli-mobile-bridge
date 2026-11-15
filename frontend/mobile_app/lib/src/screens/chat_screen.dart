@@ -1,3 +1,5 @@
+import 'objective_team_screen.dart';
+import '../services/objective_team_client.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
@@ -412,6 +414,7 @@ const Key kChatScreenBodyScrollViewKey = ValueKey<String>(
 );
 
 enum _AppBarOverflowAction {
+  objectiveTeam,
   deployments,
   notifications,
   work,
@@ -816,6 +819,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                         ),
                       ],
                     ),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.hub_outlined),
+                    title: const Text('Equipo por objetivos'),
+                    onTap: () async {
+                      Navigator.of(context).pop();
+                      await _openObjectiveTeam();
+                    },
                   ),
                   const Divider(height: 1),
                   Padding(
@@ -4395,6 +4406,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
             unawaited(_handleAppBarOverflowAction(action));
           },
           itemBuilder: (context) => <PopupMenuEntry<_AppBarOverflowAction>>[
+            _buildAppBarOverflowMenuItem(action: _AppBarOverflowAction.objectiveTeam, icon: Icons.hub_outlined, label: 'Equipo por objetivos'),
             _buildAppBarOverflowMenuItem(action: _AppBarOverflowAction.deployments,
               icon: Icons.cloud_outlined, label: 'Deploys · Workspace'),
             _buildAppBarOverflowMenuItem(action: _AppBarOverflowAction.notifications,
@@ -4609,6 +4621,14 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     );
   }
 
+  Future<void> _openObjectiveTeam() async {
+    final client = ObjectiveTeamClient(_activeServer?.baseUrl ?? widget.initialApiBaseUrl);
+    try {
+      await Navigator.of(context).push<void>(MaterialPageRoute(builder: (_) => ObjectiveTeamScreen(
+        client: client, onOpenChat: (id) => _chatController.selectSession(id))));
+    } finally { client.close(); }
+  }
+
   Future<void> _openDeployments([Workspace? workspace]) async {
     final client = WorkClient(_activeServer?.baseUrl ?? widget.initialApiBaseUrl);
     try {
@@ -4640,6 +4660,9 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
 
   Future<void> _handleAppBarOverflowAction(_AppBarOverflowAction action) async {
     switch (action) {
+      case _AppBarOverflowAction.objectiveTeam:
+        await _openObjectiveTeam();
+        return;
       case _AppBarOverflowAction.deployments:
         await _openDeployments();
         return;

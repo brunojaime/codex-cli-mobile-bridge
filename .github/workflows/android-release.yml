@@ -195,6 +195,7 @@ jobs:
           bridge_url="${{ steps.release_channel.outputs.api_base_url }}"
           args=()
           args+=(--dart-define=API_BASE_URL="$bridge_url")
+          args+=(--dart-define=CODEX_OBJECTIVE_TEAM_GATEWAY="${{ vars.CODEX_OBJECTIVE_TEAM_GATEWAY }}")
           args+=(--dart-define=APP_UPDATER_ENABLED=true)
           args+=(--dart-define=CODEX_APP_UPDATER_ENABLED=true)
           args+=(--dart-define=CODEX_APP_UPDATER_BRIDGE_URL="$bridge_url")
