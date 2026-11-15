@@ -215,48 +215,80 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
       for (final run in runs)
         Padding(
             padding: const EdgeInsets.only(bottom: 14),
-            child: Card(
-                clipBehavior: Clip.antiAlias,
-                child: InkWell(
-                    onTap: () => _select(run['id'] as String),
-                    child: Padding(
-                        padding: const EdgeInsets.all(20),
-                        child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Wrap(
-                                  spacing: 12,
-                                  runSpacing: 8,
-                                  crossAxisAlignment: WrapCrossAlignment.center,
-                                  children: [
-                                    Text('${run['project']}',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .titleLarge),
-                                    _badge(_label(run['status']))
-                                  ]),
-                              const SizedBox(height: 12),
-                              Text('${run['objective']}',
-                                  maxLines: 3, overflow: TextOverflow.ellipsis),
-                              const SizedBox(height: 18),
-                              _progress(run),
-                              const SizedBox(height: 12),
-                              Wrap(
-                                spacing: 10,
-                                runSpacing: 8,
+            child: Semantics(
+                key: ValueKey('objective-run-${run['id']}'),
+                container: true,
+                button: true,
+                excludeSemantics: true,
+                label:
+                    'Abrir ejecución: ${run['project']}. ${run['objective']}. ${_label(run['status'])}. ${run['accepted_units']} de ${run['total_units']} incrementos aceptados.',
+                onTap: () => _select(run['id'] as String),
+                child: Card(
+                    clipBehavior: Clip.antiAlias,
+                    child: InkWell(
+                        onTap: () => _select(run['id'] as String),
+                        child: Padding(
+                            padding: const EdgeInsets.all(20),
+                            child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  for (final agent
-                                      in _rows(run['active_agents']))
-                                    _badge(_label(agent['role']), Icons.bolt),
-                                  const Icon(Icons.arrow_forward_rounded)
-                                ],
-                              ),
-                            ]))))),
+                                  Wrap(
+                                      spacing: 12,
+                                      runSpacing: 8,
+                                      crossAxisAlignment:
+                                          WrapCrossAlignment.center,
+                                      children: [
+                                        Text('${run['project']}',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .titleLarge),
+                                        _badge(_label(run['status']))
+                                      ]),
+                                  const SizedBox(height: 12),
+                                  Text('${run['objective']}',
+                                      maxLines: 3,
+                                      overflow: TextOverflow.ellipsis),
+                                  const SizedBox(height: 18),
+                                  _progress(run),
+                                  const SizedBox(height: 12),
+                                  Wrap(
+                                    spacing: 10,
+                                    runSpacing: 8,
+                                    children: [
+                                      for (final agent
+                                          in _rows(run['active_agents']))
+                                        _badge(
+                                            _label(agent['role']), Icons.bolt),
+                                      const Icon(Icons.arrow_forward_rounded)
+                                    ],
+                                  ),
+                                ])))))),
     ];
   }
 
-  Widget _badge(String label, [IconData? icon]) => Chip(
-      avatar: icon == null ? null : Icon(icon, size: 16), label: Text(label));
+  Widget _badge(String label, [IconData? icon]) {
+    final status = icon == Icons.check_circle
+        ? '$label: sí'
+        : icon == Icons.radio_button_unchecked
+            ? '$label: pendiente'
+            : label;
+    return Semantics(
+        label: status,
+        excludeSemantics: true,
+        child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(12)),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              if (icon != null) ...[
+                Icon(icon, size: 16),
+                const SizedBox(width: 6)
+              ],
+              Text(label),
+            ])));
+  }
+
   Widget _progress(Map<String, dynamic> data) {
     final total = (data['total_units'] as num? ?? 0).toInt();
     final accepted = (data['accepted_units'] as num? ?? 0).toInt();

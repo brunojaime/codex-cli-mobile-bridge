@@ -101,3 +101,24 @@ def test_ux_proposal_is_visible_but_not_claimed_reviewed(rig):
     images = rig.client.get('/objective-team/' + rig.id).json()['images']
     assert len(images) == 1 and images[0]['reviewed'] is False
     assert images[0]['commit'] == 'c' * 40
+
+
+def test_monitor_caches_discovery_but_always_reads_current_progress(rig, monkeypatch):
+    import io
+    from backend.app import objective_team_server as server
+    calls = []
+    class Opener:
+        def open(self, url, timeout):
+            calls.append(url)
+            return io.BytesIO(json.dumps([{'path': rig.state['request']['workspace'],
+                                          'name': 'Proyecto'}]).encode())
+    monkeypatch.setattr(server, 'build_opener', lambda *args: Opener())
+    client = TestClient(server.create_monitor(rig.root, 8000, 'prod'))
+    assert client.get('/objective-team/' + rig.id).json()['status'] == 'final_review'
+    rig.state['status'] = 'completed'
+    rig.file.write_text(json.dumps(rig.state))
+    assert client.get('/objective-team/' + rig.id).json()['status'] == 'completed'
+    assert len(calls) == 1
+    monkeypatch.setattr(server, 'monotonic', lambda: float('inf'))
+    assert client.get('/objective-team').status_code == 200
+    assert len(calls) == 2

@@ -8,6 +8,8 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.request import build_opener, ProxyHandler
+from threading import Lock
+from time import monotonic
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,12 +30,21 @@ def create_monitor(root, backend_port, environment):
         'https://batata-default-string.tail0302c4.ts.net:8443',
     ], allow_methods=['GET'], allow_headers=['Content-Type'])
 
+    registry = {'expires': 0, 'workspaces': []}
+    registry_lock = Lock()
+
     def view():
         try:
-            opener = build_opener(ProxyHandler({}))
-            with opener.open(f'http://127.0.0.1:{backend_port}/workspaces', timeout=10) as response:
-                items = json.load(response)
-            workspaces = [SimpleNamespace(path=w['path'], name=w['name']) for w in items]
+            # Cache only the discovery registry, not execution state. Gallery
+            # requests must not rescan every Git workspace for each thumbnail.
+            with registry_lock:
+                if monotonic() >= registry['expires']:
+                    opener = build_opener(ProxyHandler({}))
+                    with opener.open(f'http://127.0.0.1:{backend_port}/workspaces', timeout=10) as response:
+                        items = json.load(response)
+                    registry['workspaces'] = [SimpleNamespace(path=w['path'], name=w['name']) for w in items]
+                    registry['expires'] = monotonic() + 30
+                workspaces = registry['workspaces']
         except Exception:
             raise HTTPException(503, 'No se pudo consultar el registro de proyectos del Bridge') from None
         return ObjectiveTeamView(root, workspaces)

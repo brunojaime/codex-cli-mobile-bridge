@@ -1,3 +1,4 @@
+import 'dart:ui' as ui;
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -49,6 +50,12 @@ void main() {
       await tester
           .pumpWidget(MaterialApp(home: ObjectiveTeamScreen(client: client)));
       await tester.pumpAndSettle();
+      final semantics = tester.ensureSemantics();
+      final node = tester
+          .getSemantics(find.byKey(ValueKey('objective-run-${'a' * 24}')));
+      expect(node.flagsCollection.isButton, isTrue);
+      expect(node.getSemanticsData().hasAction(ui.SemanticsAction.tap), isTrue);
+      semantics.dispose();
       await tester.tap(find.text('Crear una app útil'));
       await tester.pumpAndSettle();
       expect(find.text('Integrado no significa publicado', findRichText: true),
