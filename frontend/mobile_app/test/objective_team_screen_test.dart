@@ -18,7 +18,17 @@ void main() {
       final run = {
         'id': 'a' * 24,
         'project': 'Proyecto',
-        'objective': 'Crear una app útil',
+        'objective': 'Crear scripts/objective-tests.mjs',
+        'presentation': {
+          'name': 'Proyecto', 'purpose': 'Organizar las reservas del negocio.',
+          'communication': 'current', 'verified': 0, 'active': 1, 'issues': 0,
+          'tasks': [{'id':'u1', 'title':'Comprobar las reservas',
+            'purpose':'Evitar que dos personas ocupen el mismo lugar.',
+            'outcome':'Poder reservar con disponibilidad confiable.',
+            'status':'reviewing', 'owner':'Verificación', 'dependencies':[]}],
+          'capabilities':[{'title':'Agenda del negocio','purpose':'Organizar la disponibilidad.',
+            'status':'reviewing','verified':0,'total':1}]
+        },
         'status': 'final_review',
         'total_units': 2,
         'accepted_units': 1,
@@ -60,6 +70,17 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('En marcha'), findsOneWidget);
       expect(find.textContaining('scripts/'), findsNothing);
+      expect(find.text('Comprobar las reservas'), findsOneWidget);
+      expect(find.text('En revisión'), findsOneWidget);
+      await tester.ensureVisible(find.text('Producto'));
+      await tester.tap(find.text('Producto'));
+      await tester.pumpAndSettle();
+      expect(find.text('Agenda del negocio'), findsOneWidget);
+      await tester.ensureVisible(find.text('Resultados'));
+      await tester.tap(find.text('Resultados'));
+      await tester.pumpAndSettle();
+      expect(find.text('Todavía no hay entregas verificadas'), findsOneWidget);
+      expect(find.text('Comprobar las reservas'), findsNothing);
       await tester.ensureVisible(find.text('Diseño'));
       await tester.tap(find.text('Diseño'));
       await tester.pumpAndSettle();

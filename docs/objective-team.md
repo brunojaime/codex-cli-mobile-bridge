@@ -22,7 +22,7 @@ El diseño no agrega controles para iniciar/pausar ejecuciones: se conserva el l
 
 ## Vista de trabajo
 
-La ejecución abre Ahora (agentes activos, tarea, dependencias y próximas tareas), Resultados, Diseño, Problemas y Actividad. Los workspaces con el patrón exacto del coordinador se omiten de Projects y del selector de nuevo chat; los chats siguen accesibles desde Actividad. La fuente de contexto es el handoff persistido: sólo acredita referencias incluidas, no lectura ni aplicación. No se expone el prompt ni rutas privadas. Si falta el registro se indica explícitamente.
+La ejecución abre Ahora (responsables, propósito, entrega esperada y dependencias), Producto (capacidades), Resultados (trabajos aceptados), Diseño y Atención. Los workspaces con el patrón exacto del coordinador se omiten de Projects y del selector de nuevo chat; los chats y datos internos quedan en Detalle técnico. Las referencias de contexto proceden del handoff persistido: acreditan referencias incluidas, no lectura ni aplicación.
 
 Pendiente de instrumentación: lecturas efectivas, uso de herramientas, costes y exportación OpenTelemetry/MLflow. Esta vista no declara disponer de esas señales.
 
@@ -31,3 +31,5 @@ Pendiente de instrumentación: lecturas efectivas, uso de herramientas, costes y
 Worker independiente: python -m backend.app.team_communicator. Sólo escribe en STATE/communication; lock, timeout 240 segundos, reintento mínimo 180 segundos y límite 24 llamadas por ejecución. Codex read-only, Apps/MCP apagados. Redacta nombre, propósito, tareas, entregas esperadas y capacidades una vez por versión del plan. Estados y contadores se calculan directamente desde el coordinador, sin nuevas llamadas al modelo. No narra cada comando.
 
 Contrato con cobertura completa de tareas y relaciones, texto acotado y sin campos de estado o publicación. Un plan diferente invalida la explicación; la ausencia de texto muestra pendiente, nunca instrucciones técnicas. La validación estructural no certifica la semántica de cada frase: se presentan expectativas y se deriva aceptación del estado canónico. UI: Ahora, Producto, Resultados, Diseño y Atención. Chats y registro técnico opt-in. Sin evidencia de despliegue en el contrato, publicación permanece sin acreditar. OpenTelemetry/MLflow y lecturas/herramientas siguen pendientes.
+
+En Batata, `nienfos-team-communicator.timer` invoca el servicio independiente cada 60 segundos después de finalizar. Código en `~/.local/share/nienfos-communicator`; salida privada en `STATE/communication`. No requiere reiniciar el backend. El timer no genera llamadas si la huella del plan no cambió; los fallos no detienen la ejecución.
