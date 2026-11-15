@@ -122,3 +122,18 @@ def test_monitor_caches_discovery_but_always_reads_current_progress(rig, monkeyp
     monkeypatch.setattr(server, 'monotonic', lambda: float('inf'))
     assert client.get('/objective-team').status_code == 200
     assert len(calls) == 2
+
+
+def test_context_attests_handoff_references_not_document_reads(rig):
+    key = 'c' * 24
+    rig.state['request']['sources'] = [{'path': '/private/brief.md', 'sha256': 'd' * 64}]
+    rig.state['jobs'] = [{'key': key, 'role': 'ux', 'status': 'running'}]
+    rig.file.write_text(json.dumps(rig.state))
+    assert not rig.view.project(rig.state)['jobs'][0]['context']['available']
+    (rig.run / ('handoff-' + key + '.md')).write_text('Refer to /private/brief.md. PRIVATE PROMPT')
+    result = rig.view.project(rig.state)
+    context = result['jobs'][0]['context']
+    assert context['available'] and not context['reads_recorded']
+    assert context['sources'][0]['name'] == 'brief.md'
+    assert context['sources'][0]['status'] == 'referenced'
+    assert '/private/' not in json.dumps(result) and 'PRIVATE PROMPT' not in json.dumps(result)

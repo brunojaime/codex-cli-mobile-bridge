@@ -21,3 +21,13 @@ class Workspace {
     };
   }
 }
+
+/// Coordinator worktrees are implementation details, not user projects.
+bool isTeamWorkspace(String path) =>
+    RegExp(r'^nienfos-team-[a-f0-9]{24}-[0-9]+-[a-z_]+(?:-scratch)?$').hasMatch(
+        path
+                .replaceAll('\\', '/')
+                .split('/')
+                .where((s) => s.isNotEmpty)
+                .lastOrNull ??
+            '');

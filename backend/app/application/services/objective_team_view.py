@@ -65,7 +65,7 @@ class ObjectiveTeamView:
                   "delivery": {k: delivery.get(k) is True for k in ("implemented", "verified", "applied")},
                   "active_agents": [{"role": j.get("role"), "phase": text(j.get("runtime_phase")),
                                      "unit": j.get("unit")} for j in s.get("jobs", [])
-                                    if j.get("status") in ("running", "launching", "pending")]}
+                                    if j.get("status") in ("running", "starting", "launching", "pending")]}
         if not detail:
             return result
         blocker = s.get("external_blocker") or {}
@@ -85,7 +85,8 @@ class ObjectiveTeamView:
             result["jobs"].append({k: j.get(k) for k in ("role", "unit", "status", "started_at", "finished_at")}
                                   | {"phase": text(j.get("runtime_phase")),
                                      "session_id": ticket.get("session_id"),
-                                     "verdict": (j.get("result") or {}).get("verdict")})
+                                     "verdict": (j.get("result") or {}).get("verdict"),
+                                     "context": self.job_context(s, j)})
         result["issues"] = [{k: text(i.get(k)) for k in
                              ("id", "status", "severity", "summary", "expected", "observed", "owner", "unit")}
                             for i in s.get("issues", {}).values()]
@@ -96,6 +97,27 @@ class ObjectiveTeamView:
                              "reviewed": reviewed}
                             for key, path, commit, _, reviewed in self.images(s)]
         return result
+
+    def job_context(self, s, job):
+        """Only attest references present in the persisted handoff, never reads."""
+        key = job.get('key', '')
+        if not isinstance(key, str) or not re.fullmatch(r'[a-f0-9]{24}', key):
+            return {'available': False, 'sources': [], 'reads_recorded': False}
+        root = self.root / 'runs' / s['id']
+        path = root / ('handoff-' + key + '.md')
+        if not path.resolve().is_relative_to(root.resolve()) or not path.is_file() or path.stat().st_size > 2_000_000:
+            return {'available': False, 'sources': [], 'reads_recorded': False}
+        content = path.read_text()
+        sources = []
+        for source in s['request'].get('sources', []):
+            if not isinstance(source, dict):
+                continue
+            location = source.get('path')
+            digest = source.get('sha256', '')
+            if isinstance(location, str) and location in content and re.fullmatch(r'[a-f0-9]{64}', digest):
+                sources.append({'name': Path(location).name, 'sha256': digest, 'status': 'referenced'})
+        return {'available': True, 'handoff_sha256': hashlib.sha256(content.encode()).hexdigest(),
+                'sources': sources, 'reads_recorded': False}
 
     def images(self, s):
         root = self.root / "runs" / s["id"] / "evidence"

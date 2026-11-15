@@ -312,7 +312,9 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
               .headlineMedium
               ?.copyWith(fontWeight: FontWeight.w800)),
       const SizedBox(height: 8),
-      SelectableText('${data['objective']}'),
+      ExpansionTile(
+          title: const Text('Objetivo y alcance'),
+          children: [SelectableText('${data['objective']}')]),
       const SizedBox(height: 16),
       Wrap(spacing: 10, runSpacing: 8, children: [
         _badge(_label(data['status'])),
@@ -350,18 +352,101 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
                     ]))),
       const SizedBox(height: 22),
       Wrap(spacing: 8, runSpacing: 8, children: [
-        for (final (index, label)
-            in ['Avance', 'Equipo', 'UX', 'Hallazgos'].indexed)
+        for (final (index, label) in [
+          'Ahora',
+          'Resultados',
+          'Diseño',
+          'Problemas',
+          'Actividad'
+        ].indexed)
           ChoiceChip(
               label: Text(label),
               selected: _tab == index,
               onSelected: (_) => setState(() => _tab = index)),
       ]),
       const SizedBox(height: 16),
-      if (_tab == 0) ..._advance(data),
-      if (_tab == 1) ..._team(data),
+      if (_tab == 0) ..._now(data),
+      if (_tab == 1) ..._advance(data),
       if (_tab == 2) ..._visual(data),
       if (_tab == 3) ..._issues(data),
+      if (_tab == 4) ..._team(data),
+    ];
+  }
+
+  List<Widget> _now(Map<String, dynamic> data) {
+    final active = _rows(data['jobs'])
+        .where((j) => ['running', 'starting', 'launching', 'pending'].contains(j['status']))
+        .toList();
+    final units = _rows(data['units']);
+    return [
+      Text('En qué está trabajando el equipo',
+          style: Theme.of(context).textTheme.titleLarge),
+      const SizedBox(height: 12),
+      if (active.isEmpty)
+        Text(data['status'] == 'completed'
+            ? 'La ejecución terminó. Consultá los resultados y sus evidencias.'
+            : 'No hay una tarea activa registrada en esta consulta.'),
+      for (final job in active)
+        Builder(builder: (context) {
+          final unit = units.where((u) => u['id'] == job['unit']).firstOrNull;
+          return Card(
+              child: Padding(
+                  padding: const EdgeInsets.all(18),
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(children: [
+                          const Icon(Icons.bolt_outlined),
+                          const SizedBox(width: 8),
+                          Expanded(
+                              child: Text(_label(job['role']),
+                                  style:
+                                      Theme.of(context).textTheme.titleLarge)),
+                          _badge(_label(job['status']))
+                        ]),
+                        const SizedBox(height: 12),
+                        Text(
+                            unit?['objective'] as String? ??
+                                'Preparar y revisar el objetivo del proyecto',
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis),
+                        const SizedBox(height: 8),
+                        Text('Desde ${_date(job['started_at'])}',
+                            style: Theme.of(context).textTheme.bodySmall),
+                        ExpansionTile(
+                            title: const Text('Contexto y dependencias'),
+                            children: [
+                              ListTile(
+                                  title: const Text('Historias asignadas'),
+                                  subtitle: Text(
+                                      (unit?['stories'] as List? ?? [])
+                                          .join(' · '))),
+                              ListTile(
+                                  title: const Text('Depende de'),
+                                  subtitle: Text(
+                                      (unit?['depends_on'] as List? ?? [])
+                                          .join(' · '))),
+                              for (final source in _rows((job['context'] as Map?)?['sources']))
+                ListTile(leading: const Icon(Icons.description_outlined),
+                  title: Text('${source['name']}'),
+                  subtitle: const Text('Referenciado en el encargo · lectura sin acreditar')),
+              const ListTile(
+                                  title: Text('Lecturas del agente'),
+                                  subtitle: Text(
+                                      'Todavía no hay registro verificable de los documentos consultados.')),
+                            ]),
+                      ])));
+        }),
+      const SizedBox(height: 16),
+      Text('Próximas tareas', style: Theme.of(context).textTheme.titleMedium),
+      for (final unit in units
+          .where((u) => ['ready', 'pending'].contains(u['state']))
+          .take(3))
+        ListTile(
+            leading: const Icon(Icons.arrow_forward),
+            title: Text('${unit['objective']}',
+                maxLines: 2, overflow: TextOverflow.ellipsis),
+            subtitle: Text(_label(unit['owner']))),
     ];
   }
 

@@ -63,7 +63,7 @@ void main() {
       expect(find.textContaining('Integrado no significa publicado'),
           findsOneWidget);
       expect(find.byIcon(Icons.radio_button_unchecked), findsNWidgets(2));
-      await tester.tap(find.text('UX'));
+      await tester.tap(find.text('Diseño'));
       await tester.pumpAndSettle();
       expect(find.textContaining('Todavía no hay capturas verificadas'),
           findsOneWidget);

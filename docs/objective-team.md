@@ -19,3 +19,9 @@ Mantener el acceso privado de Tailscale. No publicar este monitor mediante Funne
 Se muestran hasta 200 estados, 100 jobs recientes y 60 imágenes por ejecución; la lista avisa si se truncó. La lectura de imágenes no acredita su estética ni pruebas nuevas. Las propuestas aparecen cuando UX devuelve evidencia `kind: screenshot` o `browser` con ruta real dentro de su workspace y SHA de commit; los PNG de revisión aparecen con revisión registrada. No se fabrican propuestas a partir del relato del agente.
 
 El diseño no agrega controles para iniciar/pausar ejecuciones: se conserva el lanzamiento por chat/operador del coordinador. La instalación en un teléfono y recepción de una actualización requieren comprobarse allí; publicar APK no demuestra instalación.
+
+## Vista de trabajo
+
+La ejecución abre Ahora (agentes activos, tarea, dependencias y próximas tareas), Resultados, Diseño, Problemas y Actividad. Los workspaces con el patrón exacto del coordinador se omiten de Projects y del selector de nuevo chat; los chats siguen accesibles desde Actividad. La fuente de contexto es el handoff persistido: sólo acredita referencias incluidas, no lectura ni aplicación. No se expone el prompt ni rutas privadas. Si falta el registro se indica explícitamente.
+
+Pendiente de instrumentación: lecturas efectivas, uso de herramientas, costes y exportación OpenTelemetry/MLflow. Esta vista no declara disponer de esas señales.

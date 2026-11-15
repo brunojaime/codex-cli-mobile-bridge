@@ -784,12 +784,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 children: <Widget>[
                   ListTile(
                     title: const Text('Projects'),
-                    subtitle: Text(
-                      _showArchivedChatsInSidebar
-                          ? 'Archived chats across your pinned projects'
-                          : _sidebarExpanded
-                              ? 'Expanded sidebar: more room for projects and chats'
-                              : 'Choose a project or open a chat',
+                    subtitle: InkWell(
+                      onTap: () async {
+                        Navigator.of(context).pop();
+                        await _openObjectiveTeam();
+                      },
+                      child: const Padding(padding: EdgeInsets.symmetric(vertical: 8),
+                        child: Text('Ver ejecuciones del equipo', style: TextStyle(color: Color(0xFF55D6BE)))),
                     ),
                     trailing: Wrap(
                       spacing: 4,
@@ -3528,7 +3529,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
         ? _chatController.agentProfiles
         : <AgentProfile>[_fallbackAgentProfile()];
     final sheet = _NewChatSheet(
-      workspaces: _chatController.workspaces,
+      workspaces: _chatController.workspaces.where((w) => !isTeamWorkspace(w.path)).toList(),
       agentProfiles: availableProfiles,
       pinnedWorkspacePaths:
           _sidebarWorkspaces.map((workspace) => workspace.path).toSet(),
@@ -5045,12 +5046,13 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     final sessionGroups = <Widget>[];
 
     for (final session in _chatController.sessions) {
+      if (isTeamWorkspace(session.workspacePath)) continue;
       groupedSessions
           .putIfAbsent(session.workspacePath, () => <ChatSessionSummary>[])
           .add(session);
     }
 
-    final visibleWorkspaces = <Workspace>[..._sidebarWorkspaces];
+    final visibleWorkspaces = _sidebarWorkspaces.where((w) => !isTeamWorkspace(w.path)).toList();
     final visibleWorkspacePaths =
         visibleWorkspaces.map((workspace) => workspace.path).toSet();
     final knownWorkspacesByPath = <String, Workspace>{
