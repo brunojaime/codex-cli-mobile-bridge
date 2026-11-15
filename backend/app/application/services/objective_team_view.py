@@ -101,7 +101,7 @@ class ObjectiveTeamView:
     def job_context(self, s, job):
         """Only attest references present in the persisted handoff, never reads."""
         key = job.get('key', '')
-        if not isinstance(key, str) or not re.fullmatch(r'[a-f0-9]{24}', key):
+        if not isinstance(key, str) or not re.fullmatch(r'[a-f0-9]{24}(?:-[0-9]+-[a-z_]+)?', key):
             return {'available': False, 'sources': [], 'reads_recorded': False}
         root = self.root / 'runs' / s['id']
         path = root / ('handoff-' + key + '.md')

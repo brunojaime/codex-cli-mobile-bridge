@@ -125,7 +125,7 @@ def test_monitor_caches_discovery_but_always_reads_current_progress(rig, monkeyp
 
 
 def test_context_attests_handoff_references_not_document_reads(rig):
-    key = 'c' * 24
+    key = 'c' * 24 + '-6-generator'
     rig.state['request']['sources'] = [{'path': '/private/brief.md', 'sha256': 'd' * 64}]
     rig.state['jobs'] = [{'key': key, 'role': 'ux', 'status': 'running'}]
     rig.file.write_text(json.dumps(rig.state))
