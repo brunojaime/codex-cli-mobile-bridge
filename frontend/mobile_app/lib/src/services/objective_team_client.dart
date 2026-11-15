@@ -19,33 +19,39 @@ class ObjectiveTeamClient {
   // These are operator chats, not coordinator runs. Never infer a run link from
   // a project name or claim that a particular setup step already succeeded.
   Future<List<Map<String, dynamic>>> preparations() async {
-    final activity = await _bridgeGet('/maintenance/drain');
-    final active = (activity['active_jobs'] as List? ?? [])
+    final page = await _bridgeGet('/sessions/page?limit=100&archived=false');
+    final cards = (page['items'] as List? ?? [])
         .whereType<Map<String, dynamic>>()
-        .where((job) {
-      final text = '${job['message'] ?? ''}'.toLowerCase();
-      return RegExp(r'equipo\s+por\s+objetivos|objective[ -]team')
-              .hasMatch(text) &&
-          RegExp(r'inici[aá]|cre[aá]|arranc|lanz|start|launch|create')
-              .hasMatch(text) &&
-          job['session_id'] is String &&
-          job['job_id'] is String;
-    }).toList();
+        .where((card) =>
+            card['has_pending_messages'] == true &&
+            card['archived_at'] == null &&
+            !'${card['workspace_name']}'.startsWith('nienfos-team-'));
+    final active = <Map<String, dynamic>>[];
+    for (final card in cards) {
+      final session = await _bridgeGet(
+          '/sessions/${Uri.encodeComponent(card['id'] as String)}?transcript=window&limit=10');
+      for (final message in (session['messages'] as List? ?? [])
+          .whereType<Map<String, dynamic>>()) {
+        if (message['job_id'] is! String ||
+            !['pending', 'running'].contains(message['job_status'])) {
+          continue;
+        }
+        final job = await _bridgeGet(
+            '/response/${Uri.encodeComponent(message['job_id'] as String)}');
+        final text = '${job['message'] ?? ''}'.toLowerCase();
+        if (RegExp(r'equipo\s+por\s+objetivos|objective[ -]team')
+                .hasMatch(text) &&
+            RegExp(r'inici[aá]|cre[aá]|arranc|lanz|start|launch|create')
+                .hasMatch(text)) {
+          active.add({...job, 'title': card['title'] ?? 'Nuevo proyecto'});
+        }
+      }
+    }
     final activeIds = active.map((j) => j['job_id']).toSet();
     final next = <String, Map<String, dynamic>>{};
     for (final job in active) {
       final id = job['job_id'] as String;
-      var previous = _preparations[id];
-      if (previous == null) {
-        final session = await _bridgeGet(
-            '/sessions/${Uri.encodeComponent(job['session_id'] as String)}?transcript=window&limit=1');
-        if (session['archived_at'] != null ||
-            '${session['workspace_name']}'.startsWith('nienfos-team-')) {
-          continue;
-        }
-        previous = {'title': session['title'] ?? 'Nuevo proyecto'};
-      }
-      next[id] = {...previous, ...job};
+      next[id] = {...?_preparations[id], ...job};
     }
     for (final entry in _preparations.entries) {
       if (activeIds.contains(entry.key)) continue;

@@ -35,28 +35,34 @@ void main() {
         expect(r.url.host, 'configured-server');
         Object data;
         switch (r.url.path) {
-          case '/maintenance/drain':
+          case '/sessions/page':
             if (offline) return http.Response('', 503);
             data = {
-              'active_jobs': active
+              'items': active
                   ? [
-                      job,
                       {
-                        ...job,
-                        'job_id': 'unrelated',
-                        'message': 'Corregí el botón de guardar.'
-                      }
+                        'id': 'chat-1',
+                        'title': 'Inventario nuevo',
+                        'has_pending_messages': true,
+                        'workspace_name': 'gestion'
+                      },
+                      {
+                        'id': 'internal',
+                        'has_pending_messages': true,
+                        'workspace_name': 'nienfos-team-abc'
+                      },
+                      {'id': 'idle', 'has_pending_messages': false}
                     ]
                   : []
             };
           case '/sessions/chat-1':
             data = {
-              'title': 'Inventario nuevo',
-              'workspace_name': 'gestion',
-              'archived_at': null
+              'messages': [
+                {'job_id': 'setup-1', 'job_status': 'running'}
+              ]
             };
           case '/response/setup-1':
-            data = {...job, 'status': outcome};
+            data = {...job, 'status': active ? 'running' : outcome};
           default:
             data = {'runs': []};
         }
@@ -71,7 +77,7 @@ void main() {
       expect(find.text('Inventario nuevo'), findsOneWidget);
       expect(find.text('Todavía no hay ejecuciones'), findsNothing);
       expect(find.textContaining('0 entregas'), findsNothing);
-      expect(requests.where((r) => r.contains('/sessions/')).length, 1);
+      expect(requests.where((r) => r.endsWith('/sessions/chat-1')).length, 1);
       offline = true;
       await tester.tap(find.byTooltip('Actualizar'));
       await tester.pumpAndSettle();
