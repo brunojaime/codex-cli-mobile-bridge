@@ -4638,7 +4638,11 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
           }
           await _pinWorkspaceToSidebar(matches.single);
           // Existing outbox handles submission and uncertain responses; never retry here.
-          await _chatController.sendMessage(message, sessionIdOverride: session.id, workspacePathOverride: session.workspacePath);
+          final saved = await _chatController.sendMessage(message, sessionIdOverride: session.id, workspacePathOverride: session.workspacePath);
+          if (!saved) throw StateError('El pedido no se pudo guardar para envío');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(duration: Duration(seconds: 8), content: Text('Pedido guardado para envío. Consultá el envío y la respuesta en este chat. La alerta seguirá hasta resolver el impedimento.')));
+          }
         })));
     } finally { client.close(); }
   }

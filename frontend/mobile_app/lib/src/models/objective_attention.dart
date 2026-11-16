@@ -6,6 +6,11 @@ class ObjectiveAttention {
   factory ObjectiveAttention.fromData(Map<String, dynamic> data) {
     final blocker = data['blocker'] as Map? ?? {};
     final reason = '${blocker['reason'] ?? ''}';
+    if (blocker['error_code'] == 'usage_limit_exceeded' || reason.contains('usage_limit_exceeded')) {
+      return const ObjectiveAttention('El proveedor agotó su cupo',
+          'La ejecución está detenida por el límite de uso del proveedor. Tu indicación puede llegar al chat y aun así quedar este impedimento pendiente.',
+          'Si ya restableciste el acceso, pedí revalidarlo y conciliar los intentos fallidos. La respuesta debe confirmar si hay trabajo activo o explicar qué decisión falta.', true);
+    }
     if (reason.contains('Recovery budget exhausted')) {
       return const ObjectiveAttention(
           'La recuperación necesita un nuevo plan',

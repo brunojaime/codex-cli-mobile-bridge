@@ -2,6 +2,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:codex_mobile_frontend/src/models/objective_attention.dart';
 
 void main() {
+  test('provider limit distinguishes request from resolution', () {
+    final a = ObjectiveAttention.fromData({'blocker': {'error_code':'usage_limit_exceeded'}});
+    expect(a.title, contains('cupo'));
+    expect(a.explanation, contains('llegar al chat'));
+    expect(a.needsDecision, true);
+  });
   test('internal recovery limit is not an external authorization', () {
     final a = ObjectiveAttention.fromData({
       'status': 'needs_attention',

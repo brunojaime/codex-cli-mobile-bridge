@@ -845,6 +845,8 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
         Text(attention.title, style: Theme.of(context).textTheme.titleLarge),
         const SizedBox(height: 10),
         Text(attention.explanation),
+        const SizedBox(height: 10),
+        const Text('Enviar una indicación abre un chat: consultá allí el envío y la respuesta. La alerta permanece mientras el impedimento siga pendiente.'),
         const SizedBox(height: 12),
         const Text('Cómo seguir',
             style: TextStyle(fontWeight: FontWeight.bold)),
