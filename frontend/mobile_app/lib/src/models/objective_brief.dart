@@ -53,7 +53,7 @@ class ObjectiveBrief {
         ? 'las entregas del proyecto'
         : titles.take(2).join(' y ');
     final now =
-        '${onlyReviews ? 'Estamos revisando' : correcting ? 'Estamos corrigiendo' : 'Estamos trabajando en'} $subject${titles.length > 2 ? ' y otras tareas' : ''}.';
+        '${onlyReviews ? 'Estamos revisando' : correcting ? 'Estamos corrigiendo' : 'Estamos trabajando en'}: $subject${titles.length > 2 ? ' y otras tareas' : ''}.';
     final remaining = onlyReviews
         ? 'Terminar la revisión de ${active.map((a) => reviews[a['role']]).toSet().join(', ')}. Puede aprobar o pedir ajustes.'
         : 'Completar este trabajo y pasar la revisión independiente.';

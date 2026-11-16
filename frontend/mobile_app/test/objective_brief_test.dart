@@ -34,7 +34,7 @@ void main() {
   test('current review, queued correction, no claim of current approvals', () {
     final s = state();
     final b = ObjectiveBrief.fromData(s);
-    expect(b.now, 'Estamos revisando Inicio y cuenta.');
+    expect(b.now, 'Estamos revisando: Inicio y cuenta.');
     expect(b.remaining, contains('diseño'));
     expect(b.remaining, isNot(contains('seguridad')));
     expect(b.next, contains('Mejorar la composición visual'));
