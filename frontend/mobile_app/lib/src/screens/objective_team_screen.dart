@@ -3,6 +3,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/material.dart';
 import '../services/objective_team_client.dart';
 import '../models/objective_progress.dart';
+import '../models/objective_brief.dart';
 
 const _labels = {
   'planning': 'Preparando el plan',
@@ -457,9 +458,40 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
     ];
   }
 
+  Widget _briefLine(IconData icon, String label, String value) => Padding(
+      padding: const EdgeInsets.only(top: 14),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Icon(icon, size: 20, color: const Color(0xFF72DAC4)),
+        const SizedBox(width: 10),
+        Expanded(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(label,
+              style: const TextStyle(
+                  fontWeight: FontWeight.w600, color: Color(0xFF72DAC4))),
+          const SizedBox(height: 3),
+          Text(value),
+        ])),
+      ]));
+
+  String _trySummary() {
+    if (_publicationError) {
+      return 'No pudimos consultar la publicación. No podemos confirmar qué está disponible.';
+    }
+    if (_publications == null) {
+      return 'Estamos consultando si hay una versión publicada.';
+    }
+    final records = _rows(_publications?['records']);
+    if (records.isEmpty) {
+      return 'Todavía no hay una publicación acreditada. Las capturas de diseño no equivalen a una app publicada.';
+    }
+    return 'Hay ${records.length == 1 ? 'una versión registrada' : 'versiones registradas'} del proyecto. No implica que incluya estos cambios; consultá el detalle en Resultados.';
+  }
+
   List<Widget> _detail(Map<String, dynamic> data) {
     final product = _product(data);
     final progress = ObjectiveProgress.fromData(data);
+    final brief = ObjectiveBrief.fromData(data);
     return [
       Container(
           padding: const EdgeInsets.all(22),
@@ -478,39 +510,29 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
                     .textTheme
                     .headlineMedium
                     ?.copyWith(fontWeight: FontWeight.w800)),
-            const SizedBox(height: 10),
-            Text(progress.summary),
-            const SizedBox(height: 16),
-            const Text('Próximo paso',
-                style: TextStyle(
-                    color: Color(0xFF72DAC4), fontWeight: FontWeight.w600)),
-            const SizedBox(height: 5),
-            Text(progress.next),
-            const SizedBox(height: 14),
-            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Icon(Icons.person_outline_rounded,
-                  size: 20, color: Color(0xFF9EAEFF)),
-              const SizedBox(width: 8),
-              Expanded(child: Text(progress.action)),
+            const SizedBox(height: 18),
+            Text(brief.now,
+                style:
+                    const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+            _briefLine(
+                Icons.pending_actions_outlined, 'Qué falta', brief.remaining),
+            _briefLine(Icons.arrow_forward_rounded, 'Qué sigue', brief.next),
+            _briefLine(Icons.open_in_new, 'Qué podés probar', _trySummary()),
+            _briefLine(Icons.person_outline_rounded, '¿Necesitás hacer algo?',
+                brief.action),
+            const SizedBox(height: 12),
+            Wrap(spacing: 8, runSpacing: 8, children: [
+              if (_rows(_publications?['records']).any((r) => r['url'] != null))
+                FilledButton.icon(
+                    onPressed: () => _openPublished(
+                        '${_rows(_publications?['records']).firstWhere((r) => r['url'] != null)['url']}'),
+                    icon: const Icon(Icons.open_in_new),
+                    label: const Text('Abrir app')),
+              OutlinedButton.icon(
+                  onPressed: () => setState(() => _tab = 3),
+                  icon: const Icon(Icons.photo_library_outlined),
+                  label: const Text('Ver diseño')),
             ]),
-            const SizedBox(height: 20),
-            if (_beforePlan(data)) ...[
-              _pill(_agentCount(data), color: const Color(0xFF72DAC4)),
-              const SizedBox(height: 10),
-              const Text('Aún no hay entregas para verificar.',
-                  style: TextStyle(color: Color(0xFFAAB8D0))),
-            ] else
-              Wrap(spacing: 8, runSpacing: 8, children: [
-                _pill(
-                    '${product['verified'] ?? data['accepted_units'] ?? 0} etapas aprobadas'),
-                _pill(_agentCount(data)),
-              ]),
-            if (!_beforePlan(data)) ...[
-              const SizedBox(height: 12),
-              const Text(
-                  'Las etapas aprobadas no equivalen a funciones listas.',
-                  style: TextStyle(fontSize: 12, color: Color(0xFFAAB8D0))),
-            ],
           ])),
       if (!_beforePlan(data) && product['communication'] != 'current')
         Padding(
@@ -537,11 +559,7 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
                       onSelected: (_) => setState(() => _tab = index))),
           ])),
       const SizedBox(height: 20),
-      if (_tab == 0) ...[
-        if (!_beforePlan(data)) ..._availability(data),
-        if (!_beforePlan(data)) ..._latest(data),
-        ..._now(data)
-      ],
+      if (_tab == 0) ...[..._now(data)],
       if (_tab == 1) ..._capabilities(data),
       if (_tab == 2) ..._results(data),
       if (_tab == 3) ..._visual(data),
@@ -566,7 +584,15 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
             a['unit'] == null || !active.any((t) => t['id'] == a['unit']))
         .toList();
     return [
-      _heading('En marcha', 'Responsables, propósito y siguiente entrega.'),
+      _heading(
+          agents.length > 1
+              ? 'Trabajo en paralelo'
+              : agents.length == 1
+                  ? 'Una tarea en marcha'
+                  : 'Actividad del equipo',
+          agents.length > 1
+              ? '${agents.length} agentes activos · ${agents.map((a) => a['unit'] ?? a['role']).toSet().length == 1 ? 'sobre la misma entrega' : '${agents.map((a) => a['unit'] ?? a['role']).toSet().length} tareas distintas'}.'
+              : 'Sólo se muestra como activo lo que está ejecutándose.'),
       for (final agent in independent) _agentCard(agent),
       if (active.isEmpty && agents.isEmpty)
         _empty(
@@ -587,9 +613,17 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
                     ? 'No se registran agentes activos.'
                     : 'La última consulta no registra un agente trabajando. El panel se actualizará con la próxima actividad.'),
       for (final task in active)
-        _task(task, activity: ObjectiveProgress.activity(data, task['id'])),
+        _task({
+          ...task,
+          'owner': agents
+              .where((a) => a['unit'] == task['id'])
+              .map((a) => _role(a['role']))
+              .toSet()
+              .join(' · ')
+        }, activity: ObjectiveProgress.activity(data, task['id'])),
       if (waiting.isNotEmpty) ...[
-        _heading('Lo que sigue', 'Estas tareas esperan una etapa anterior.'),
+        _heading('En espera',
+            'Todavía no están ejecutándose. No indica un orden confirmado.'),
         for (final task in waiting.take(3)) _task(task, compact: true),
       ],
     ];
@@ -788,6 +822,7 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
       _heading('Entregas verificadas',
           'Sólo aparecen trabajos aceptados por la revisión.'),
       ..._availability(data),
+      ..._latest(data),
       if (tasks.isEmpty)
         _empty(Icons.fact_check_outlined, 'Todavía no hay entregas verificadas',
             'El trabajo en curso aparece en Ahora. Una tarea iniciada no es un resultado.'),

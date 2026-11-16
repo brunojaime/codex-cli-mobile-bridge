@@ -40,7 +40,6 @@ class ObjectiveProgress {
     final active = agents(data);
     final status = data['status'];
     final blocker = data['blocker'] as Map? ?? {};
-    final product = data['presentation'] as Map? ?? {};
     const none = 'Sin acción solicitada a vos';
     if ('${blocker['reason'] ?? ''}'.trim().isNotEmpty) {
       return const ObjectiveProgress(
@@ -92,9 +91,11 @@ class ObjectiveProgress {
           'Esperar la próxima actualización o revisar Atención.',
           none);
     }
-    final correcting =
-        _rows(data['issues']).any((i) => i['status'] == 'open') ||
-            (product['issues'] as num? ?? 0) > 0;
+    final correcting = _rows(data['issues']).any((i) =>
+        i['status'] == 'open' &&
+        active.any((a) =>
+            a['unit'] == i['unit'] &&
+            !['reviewer', 'ux_review', 'security'].contains(a['role'])));
     if (correcting) {
       return const ObjectiveProgress(
           'Correcciones en curso',

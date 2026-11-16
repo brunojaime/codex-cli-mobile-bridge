@@ -64,8 +64,11 @@ void main() {
       await tester.tap(find.byKey(ValueKey('objective-run-${'b' * 24}')));
       await tester.pumpAndSettle();
       expect(find.text('Preparando el plan'), findsOneWidget);
+      expect(find.text('Qué falta'), findsOneWidget);
+      await tester.scrollUntilVisible(
+          find.text('Preparar el plan de trabajo'), 160,
+          scrollable: find.byType(Scrollable).first);
       expect(find.text('Preparar el plan de trabajo'), findsOneWidget);
-      expect(find.text('1 agente activo'), findsOneWidget);
       expect(find.text('En curso'), findsNothing);
       expect(find.text('Por resolver'), findsNothing);
       expect(find.text('Inició hace 7 min'), findsOneWidget);
@@ -169,16 +172,24 @@ void main() {
       semantics.dispose();
       await tester.tap(find.byKey(ValueKey('objective-run-${'a' * 24}')));
       await tester.pumpAndSettle();
-      expect(find.text('Para ver y probar'), findsOneWidget);
+      expect(find.text('Qué podés probar'), findsOneWidget);
       expect(find.text('Abrir app'), findsNothing);
-      await tester.scrollUntilVisible(find.text('En marcha'), 160,
+      await tester.scrollUntilVisible(find.text('Una tarea en marcha'), 160,
           scrollable: find.byType(Scrollable).first);
-      expect(find.text('En marcha'), findsOneWidget);
+      expect(find.text('Una tarea en marcha'), findsOneWidget);
       expect(find.textContaining('scripts/'), findsNothing);
       await tester.scrollUntilVisible(find.text('Comprobar las reservas'), 160,
           scrollable: find.byType(Scrollable).first);
       expect(find.text('Comprobar las reservas'), findsOneWidget);
       expect(find.text('Verificando la entrega'), findsOneWidget);
+      (run['active_agents'] as List).add({'role': 'security', 'unit': 'u1'});
+      await tester.tap(find.byTooltip('Actualizar'));
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(find.text('Trabajo en paralelo'), -120,
+          scrollable: find.byType(Scrollable).first);
+      expect(find.text('2 agentes activos · sobre la misma entrega.'),
+          findsOneWidget);
+      expect(find.text('Verificación · Seguridad'), findsOneWidget);
       await tester.scrollUntilVisible(find.text('Producto'), -200,
           scrollable: find.byType(Scrollable).first);
       await tester.tap(find.text('Producto'));
