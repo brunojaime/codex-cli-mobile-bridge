@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/objective_team_client.dart';
+import '../models/objective_progress.dart';
 
 const _labels = {
   'planning': 'Preparando el plan',
@@ -225,25 +226,6 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
     return '$count ${count == 1 ? 'agente activo' : 'agentes activos'}';
   }
 
-  String _stagePurpose(Map<String, dynamic> data) {
-    if (data['status'] == 'paused') {
-      return 'La ejecución está pausada. El trabajo realizado se conserva.';
-    }
-    if (data['status'] == 'needs_attention' || data['status'] == 'blocked') {
-      return 'Hay un impedimento registrado antes de continuar.';
-    }
-    if (data['status'] == 'cancelled') {
-      return 'La ejecución fue cancelada.';
-    }
-    if (data['status'] == 'budget_exhausted') {
-      return 'Se alcanzó el límite de ejecución; el trabajo realizado se conserva.';
-    }
-    if (data['status'] == 'completed') {
-      return 'La ejecución finalizó. Consultá los resultados disponibles.';
-    }
-    return 'Organizando las historias, dependencias y primeros incrementos.';
-  }
-
   Widget _agentCard(Map<String, dynamic> agent) {
     final role = agent['role'];
     final title = const {
@@ -428,16 +410,14 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
                             color: Color(0xFF72DAC4))
                       ]),
                       const SizedBox(height: 12),
-                      Text(_beforePlan(run)
-                          ? _stagePurpose(run)
-                          : '${_product(run)['purpose'] ?? 'Preparando el plan de trabajo.'}'),
+                      Text(ObjectiveProgress.fromData(run).summary),
                       const SizedBox(height: 18),
                       Wrap(spacing: 10, runSpacing: 8, children: [
-                        _pill(_label(run['status'])),
+                        _pill(ObjectiveProgress.fromData(run).title),
                         _pill(_agentCount(run)),
                         if (!_beforePlan(run))
                           _pill(
-                              '${_product(run)['verified'] ?? run['accepted_units'] ?? 0} entregas verificadas',
+                              '${_product(run)['verified'] ?? run['accepted_units'] ?? 0} etapas aprobadas',
                               color: const Color(0xFF72DAC4))
                       ])
                     ]))))
@@ -446,6 +426,7 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
 
   List<Widget> _detail(Map<String, dynamic> data) {
     final product = _product(data);
+    final progress = ObjectiveProgress.fromData(data);
     return [
       Container(
           padding: const EdgeInsets.all(22),
@@ -457,7 +438,7 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
               borderRadius: BorderRadius.circular(24)),
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            _pill(_label(data['status']), color: const Color(0xFF72DAC4)),
+            _pill(progress.title, color: const Color(0xFF72DAC4)),
             const SizedBox(height: 16),
             Text('${product['name'] ?? data['project']}',
                 style: Theme.of(context)
@@ -465,9 +446,20 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
                     .headlineMedium
                     ?.copyWith(fontWeight: FontWeight.w800)),
             const SizedBox(height: 10),
-            Text(_beforePlan(data)
-                ? _stagePurpose(data)
-                : '${product['purpose'] ?? 'El equipo está preparando el plan de trabajo.'}'),
+            Text(progress.summary),
+            const SizedBox(height: 16),
+            const Text('Próximo paso',
+                style: TextStyle(
+                    color: Color(0xFF72DAC4), fontWeight: FontWeight.w600)),
+            const SizedBox(height: 5),
+            Text(progress.next),
+            const SizedBox(height: 14),
+            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Icon(Icons.person_outline_rounded,
+                  size: 20, color: Color(0xFF9EAEFF)),
+              const SizedBox(width: 8),
+              Expanded(child: Text(progress.action)),
+            ]),
             const SizedBox(height: 20),
             if (_beforePlan(data)) ...[
               _pill(_agentCount(data), color: const Color(0xFF72DAC4)),
@@ -475,12 +467,17 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
               const Text('Aún no hay entregas para verificar.',
                   style: TextStyle(color: Color(0xFFAAB8D0))),
             ] else
-              Wrap(spacing: 18, runSpacing: 12, children: [
-                _metric('${product['verified'] ?? data['accepted_units'] ?? 0}',
-                    'Verificadas'),
-                _metric('${_agents(data).length}', 'Agentes activos'),
-                _metric('${product['issues'] ?? 0}', 'Por resolver'),
+              Wrap(spacing: 8, runSpacing: 8, children: [
+                _pill(
+                    '${product['verified'] ?? data['accepted_units'] ?? 0} etapas aprobadas'),
+                _pill(_agentCount(data)),
               ]),
+            if (!_beforePlan(data)) ...[
+              const SizedBox(height: 12),
+              const Text(
+                  'Las etapas aprobadas no equivalen a funciones listas.',
+                  style: TextStyle(fontSize: 12, color: Color(0xFFAAB8D0))),
+            ],
           ])),
       if (!_beforePlan(data) && product['communication'] != 'current')
         Padding(
@@ -520,18 +517,10 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
     ];
   }
 
-  Widget _metric(String number, String label) => SizedBox(
-      width: 86,
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(number,
-            style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800)),
-        Text(label,
-            style: const TextStyle(fontSize: 12, color: Color(0xFFAAB8D0)))
-      ]));
   List<Widget> _now(Map<String, dynamic> data) {
     final tasks = _rows(_product(data)['tasks']);
     final active = tasks
-        .where((t) => ['building', 'reviewing'].contains(t['status']))
+        .where((t) => _agents(data).any((a) => a['unit'] == t['id']))
         .toList();
     final waiting = tasks.where((t) => t['status'] == 'waiting').toList();
     final agents = _agents(data);
@@ -560,7 +549,8 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
                 : data['status'] == 'paused'
                     ? 'No se registran agentes activos.'
                     : 'La última consulta no registra un agente trabajando. El panel se actualizará con la próxima actividad.'),
-      for (final task in active) _task(task),
+      for (final task in active)
+        _task(task, activity: ObjectiveProgress.activity(data, task['id'])),
       if (waiting.isNotEmpty) ...[
         _heading('Lo que sigue', 'Estas tareas esperan una etapa anterior.'),
         for (final task in waiting.take(3)) _task(task, compact: true),
@@ -568,35 +558,44 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
     ];
   }
 
-  Widget _task(Map<String, dynamic> task, {bool compact = false}) => _surface(
-      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Wrap(spacing: 8, runSpacing: 8, children: [
-          _pill('${task['owner']}'),
-          _pill(_status(task['status']), color: _tone(task['status']))
-        ]),
-        const SizedBox(height: 14),
-        Text('${task['title']}',
-            style: Theme.of(context)
-                .textTheme
-                .titleLarge
-                ?.copyWith(fontWeight: FontWeight.w700)),
-        const SizedBox(height: 8),
-        Text('${task['purpose']}',
-            style: const TextStyle(color: Color(0xFFB9C5D9))),
-        if (!compact) ...[
-          const SizedBox(height: 16),
-          const Text('Entrega esperada',
-              style: TextStyle(fontSize: 12, color: Color(0xFF72DAC4))),
-          const SizedBox(height: 5),
-          Text('${task['outcome']}')
-        ],
-        if ((task['dependencies'] as List? ?? []).isNotEmpty) ...[
-          const SizedBox(height: 12),
-          Text('Espera: ${(task['dependencies'] as List).join(' · ')}',
-              style: const TextStyle(fontSize: 12, color: Color(0xFFEBC581)))
-        ],
-      ]),
-      accent: _tone(task['status']));
+  Widget _task(Map<String, dynamic> task,
+          {bool compact = false, String? activity}) =>
+      _surface(
+          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Wrap(spacing: 8, runSpacing: 8, children: [
+              _pill('${task['owner']}'),
+              _pill(activity ?? _status(task['status']),
+                  color: _tone(task['status']))
+            ]),
+            const SizedBox(height: 14),
+            Text('${task['title']}',
+                style: Theme.of(context)
+                    .textTheme
+                    .titleLarge
+                    ?.copyWith(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 8),
+            Text(
+                activity == 'Corrigiendo observaciones'
+                    ? 'La revisión pidió cambios en esta etapa. El equipo los está resolviendo.'
+                    : activity == 'Ajustando una entrega revisada'
+                        ? 'Se están ajustando cambios sobre una etapa revisada; deberán comprobarse nuevamente.'
+                        : '${task['purpose']}',
+                style: const TextStyle(color: Color(0xFFB9C5D9))),
+            if (!compact && activity == null) ...[
+              const SizedBox(height: 16),
+              const Text('Entrega esperada',
+                  style: TextStyle(fontSize: 12, color: Color(0xFF72DAC4))),
+              const SizedBox(height: 5),
+              Text('${task['outcome']}')
+            ],
+            if ((task['dependencies'] as List? ?? []).isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Text('Espera: ${(task['dependencies'] as List).join(' · ')}',
+                  style:
+                      const TextStyle(fontSize: 12, color: Color(0xFFEBC581)))
+            ],
+          ]),
+          accent: _tone(task['status']));
   List<Widget> _capabilities(Map<String, dynamic> data) {
     final areas = _rows(_product(data)['capabilities']);
     return [
@@ -624,7 +623,7 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
           const SizedBox(height: 14),
           Wrap(spacing: 10, runSpacing: 8, children: [
             _pill(_status(area['status']), color: _tone(area['status'])),
-            Text('${area['verified']} de ${area['total']} entregas verificadas')
+            Text('${area['verified']} de ${area['total']} etapas aprobadas')
           ]),
         ]))
     ];

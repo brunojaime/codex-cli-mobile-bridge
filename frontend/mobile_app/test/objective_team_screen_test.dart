@@ -131,7 +131,9 @@ void main() {
         'status': 'final_review',
         'total_units': 2,
         'accepted_units': 1,
-        'active_agents': [],
+        'active_agents': [
+          {'role': 'reviewer', 'unit': 'u1'}
+        ],
         'delivery': {'implemented': true, 'verified': false, 'applied': false},
         'calls': 8,
         'max_calls': 32,
@@ -169,8 +171,10 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('En marcha'), findsOneWidget);
       expect(find.textContaining('scripts/'), findsNothing);
+      await tester.scrollUntilVisible(find.text('Comprobar las reservas'), 160,
+          scrollable: find.byType(Scrollable).first);
       expect(find.text('Comprobar las reservas'), findsOneWidget);
-      expect(find.text('En revisión'), findsOneWidget);
+      expect(find.text('Verificando la entrega'), findsOneWidget);
       await tester.ensureVisible(find.text('Producto'));
       await tester.tap(find.text('Producto'));
       await tester.pumpAndSettle();
