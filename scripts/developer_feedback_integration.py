@@ -81,6 +81,9 @@ class AppReport:
 
 
 def main() -> int:
+    if any(arg == "--project" or arg.startswith("--project=") for arg in sys.argv[1:]):
+        from feedback_conformance import main as conformance_main
+        return conformance_main()
     parser = argparse.ArgumentParser(
         description=(
             "Validate app-side Codex developer feedback wrapper integration. "

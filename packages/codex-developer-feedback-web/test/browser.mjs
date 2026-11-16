@@ -22,6 +22,7 @@ try {
     await context.route('**/*', async route => {
       const url = new URL(route.request().url());
       if (url.hostname === 'bridge.test') {
+        if (url.pathname === '/feedback-contract') return route.fulfill({json:{kind:'codex.feedbackContract',supportedExecutionModes:['execute','backlog'],supportedBatchVersions:[1,3],idempotentSubmissions:true,submissionPath:'/feedback-batches/start-session'}});
         if (url.pathname === '/feedback-workflow-presets') return route.fulfill({ json: { default_preset_id: 'default', presets: [{ id: 'default', name: 'Generador' }] } });
         assert.equal(url.pathname, '/feedback-batches/start-session');
         posts.push(route.request().postDataJSON());
@@ -96,7 +97,7 @@ try {
     assert.equal(posts.length, 2);
     if (app.sourceApp === 'proyecto-inmobiliaria') {
       assert.equal(posts[1].executionMode, 'backlog');
-      assert.equal(posts[0].batchId, posts[1].batchId);
+      assert.deepEqual(posts[0], posts[1]);
     }
     assert.equal(posts[1].sourceApp, app.sourceApp);
     assert.equal(posts[1].releaseWhenComplete, false);

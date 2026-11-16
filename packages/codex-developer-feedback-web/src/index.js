@@ -60,7 +60,7 @@ export function mountFeedback(config) {
   bridgeUrl(config.bridgeUrl);
   if (document.querySelector('[data-codex-feedback]')) return () => {};
   const host = document.createElement('div');
-  host.dataset.codexFeedback = '0.7.0';
+  host.dataset.codexFeedback = '0.8.0-dev.3';
   host.setAttribute('data-html2canvas-ignore', 'true');
   const root = host.attachShadow({ mode: 'open' });
   root.innerHTML = `<style>${css}</style>
@@ -128,6 +128,7 @@ export function mountFeedback(config) {
         <div class="actions"><button id="save" class="primary" type="button">Guardar en la cola</button><button id="discard" type="button">Descartar captura</button></div>
       </section>
       <label id="queue-label">Capturas y recorridos pendientes</label><div id="queue" aria-labelledby="queue-label"></div>
+      <label id="legacy-review" hidden><input type="checkbox" id="legacy-reviewed">Revisé estos pendientes antiguos en Codex Mobile y confirmé que todavía deben enviarse.</label>
       <label for="preset">Flujo de trabajo</label><select id="preset"><option value="generator_only">Generador</option><option value="generator_reviewer">Generador + revisor</option></select>
       <p class="muted">Conectá Tailscale para enviar. Sólo se envía al tocar «Enviar a Codex».</p>
       <label>Cuándo ejecutar<select id="execution-mode"><option value="execute">Ejecutar ahora</option><option value="backlog">Añadir al backlog</option></select></label><div class="actions"><button id="send" class="primary" type="button">Enviar a Codex</button></div>
@@ -136,11 +137,39 @@ export function mountFeedback(config) {
   document.body.append(host);
   const el = id => root.getElementById(id);
   const dialog = el('feedback-dialog'), editor = el('editor'), launch = root.querySelector('.launcher');
+  if (config.launcherLabel) {
+    const label = document.createElement('span'); label.textContent = config.launcherLabel;
+    launch.append(label); launch.style.width = 'auto'; launch.style.borderRadius = '24px';
+  }
+  if (config.position === 'top-right') {
+    launch.style.top = `${config.offset ?? 8}px`; launch.style.bottom = 'auto';
+    el('dock').style.top = `${(config.offset ?? 8) + 64}px`; el('dock').style.bottom = 'auto';
+    el('dock').style.maxHeight = 'calc(100dvh - 80px)'; el('dock').style.overflow = 'auto';
+  }
+  if (Number.isFinite(config.compactBottomOffset) && config.compactBottomOffset >= 0) {
+    const style = document.createElement('style');
+    style.textContent = `@media(max-width:359px){.launcher{bottom:calc(${config.compactBottomOffset}px + env(safe-area-inset-bottom,0px))}.dock{bottom:calc(${config.compactBottomOffset + 68}px + env(safe-area-inset-bottom,0px))}}`;
+    root.append(style);
+  }
   el('app').textContent = config.sourceDisplayName;
+  // Native app dialogs make background elements inert. Keep the same host and
+  // queue in the current modal; consumers never need to touch its Shadow DOM.
+  const place = () => {
+    const dialogs = [...document.querySelectorAll('dialog:modal')];
+    const target = dialogs.at(-1) || document.body;
+    if (host.parentElement !== target) target.append(host);
+    const suspended = (config.suspendWhen || []).some(selector => document.querySelector(selector));
+    host.inert = suspended;
+    if (suspended) host.style.visibility = 'hidden';
+    else if (host.inert !== true) host.style.visibility = '';
+  };
+  const placement = new MutationObserver(place);
+  placement.observe(document.body, {subtree: true, childList: true, attributes: true, attributeFilter: ['open', 'class']});
+  place();
   const key = queueKey(config);
   const queueStore = createQueueStore(key);
   let items = [], snapshot = null, strokes = [], active = null, pointerId = null, tool = 'pen';
-  let busy = false, disposed = false, frame = 0, presetLoaded = false;
+  let busy = false, disposed = false, frame = 0, presetLoaded = false, presetsPromise = null;
   let traceDraft = null, reviewItem = null, audioUrl = null;
   let pathname = '', width = 0, height = 0, queueError = false;
   const status = (message, error = false) => {
@@ -148,6 +177,7 @@ export function mountFeedback(config) {
   };
   const dock = open => { el('dock').hidden = !open; launch.setAttribute('aria-expanded', String(open)); };
   const renderQueue = () => {
+    el('legacy-review').hidden = !items.some(item => item.version !== 3);
     el('queue').replaceChildren();
     if (!items.length) el('queue').textContent = 'Todavía no guardaste capturas ni recorridos.';
     for (const item of items) {
@@ -260,6 +290,8 @@ export function mountFeedback(config) {
   dialog.addEventListener('close', () => { void captureNotes.stop(); captureNotes.pause(); if (!editor.open) launch.focus(); });
   const loadPresets = async () => {
     if (presetLoaded) return;
+    if (presetsPromise) return presetsPromise;
+    presetsPromise = (async () => {
     try {
       const response = await fetch(`${bridgeUrl(config.bridgeUrl)}/feedback-workflow-presets`, { credentials: 'omit', signal: AbortSignal.timeout(8000) });
       if (!response.ok) throw new Error();
@@ -268,6 +300,8 @@ export function mountFeedback(config) {
       el('preset').replaceChildren(...data.presets.map(p => new Option(p.name, p.id)));
       el('preset').value = data.default_preset_id || data.defaultPresetId || data.presets[0].id; presetLoaded = true;
     } catch { if (!disposed && !queueError) status('Podés guardar sin conexión. Para enviar, conectá Tailscale y verificá el Bridge.', true); }
+    })();
+    try { await presetsPromise; } finally { presetsPromise = null; }
   };
   launch.onclick = () => { dock(el('dock').hidden); void loadPresets(); };
   el('pending').onclick = () => { dock(false); showComment(); void loadPresets(); };
@@ -299,9 +333,11 @@ export function mountFeedback(config) {
   };
   el('send').onclick = async () => {
     if (busy || !items.length) return;
+    if (items.some(item => item.version !== 3) && !el('legacy-reviewed').checked) { status('La cola anterior se conservó. Revisá en Codex Mobile si ya se recibió y confirmá antes de enviarla.', true); return; }
     if (snapshot || traceDraft) { status('Guardá o descartá la captura o recorrido actual antes de enviar.', true); return; }
     setBusy(true); status('Enviando a Codex…');
     try {
+      await loadPresets();
       const result = await submitBatch(config, items, el('preset').value, fetch, el('execution-mode').value);
       items = [];
       try { await queueStore.save([]); } catch { queueError = true; }
@@ -381,5 +417,5 @@ export function mountFeedback(config) {
   el('live-undo').onclick = () => liveDrawing.undo(); el('live-clear').onclick = () => liveDrawing.clear();
   el('stop-trace').onclick = () => void recorder.stop(); el('capture-step').onclick = () => void recorder.capture();
   el('cancel-trace').onclick = () => { recorder.cancel(); recordingEnded(); };
-  return () => { disposed = true; captureNotes.dispose(); traceNotes.dispose(); queuedNotes.dispose(); void queueStore.close(); liveDrawing.dispose(); recorder.cancel(); releaseAudio(); drawingFloat.dispose(); recordingFloat.dispose(); resize.disconnect(); if (frame) cancelAnimationFrame(frame); host.remove(); };
+  return () => { disposed = true; placement.disconnect(); captureNotes.dispose(); traceNotes.dispose(); queuedNotes.dispose(); void queueStore.close(); liveDrawing.dispose(); recorder.cancel(); releaseAudio(); drawingFloat.dispose(); recordingFloat.dispose(); resize.disconnect(); if (frame) cancelAnimationFrame(frame); host.remove(); };
 }

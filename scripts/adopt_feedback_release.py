@@ -1,0 +1,148 @@
+"""Install an exact approved artifact; never edits product UI or publishes."""
+
+import argparse
+import hashlib
+import json
+from pathlib import Path, PurePosixPath
+import re
+import shutil
+import tarfile
+
+
+def adopt(root, release_path):
+    root = root.resolve()
+
+    def inside(relative):
+        path = root / relative
+        if (
+            Path(relative).is_absolute()
+            or ".." in Path(relative).parts
+            or not path.resolve().is_relative_to(root)
+        ):
+            raise ValueError("Consumer path escapes workspace")
+        return path
+
+    manifest = json.loads((root / "feedback.project.json").read_text())
+    release = json.loads(release_path.read_text())
+    if manifest["release"] != release["id"]:
+        raise ValueError("Release identity mismatch")
+    if release.get('status') not in ('approved-development', 'candidate'):
+        raise ValueError('Unsupported release status')
+    flutter = manifest["platform"] == "flutter"
+    package = release["packages"]["flutter" if flutter else "web"]
+    source = release_path.parent / package["artifact"]
+    if hashlib.sha256(source.read_bytes()).hexdigest() != package["sha256"]:
+        raise ValueError("Artifact hash mismatch")
+    target = inside(manifest["artifact"])
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists() and target.read_bytes() != source.read_bytes():
+        raise ValueError("Refusing to replace different artifact bytes")
+    if source.resolve() != target.resolve():
+        shutil.copyfile(source, target)
+    dependency = inside(manifest["packageManifest"])
+    if flutter:
+        destination = inside(manifest["packageRoot"])
+        destination.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(source) as archive:
+            for member in archive.getmembers():
+                rel = PurePosixPath(member.name)
+                if rel.is_absolute() or ".." in rel.parts or not member.isfile():
+                    raise ValueError("Unsafe package member")
+                expected = package["files"].get(member.name)
+                if expected is None:
+                    raise ValueError("Unapproved package file")
+                data = archive.extractfile(member).read()
+                if hashlib.sha256(data).hexdigest() != expected:
+                    raise ValueError("Snapshot hash mismatch")
+                file = destination / member.name
+                if not file.resolve().is_relative_to(destination.resolve()):
+                    raise ValueError('Snapshot member escapes destination')
+                if file.exists() and file.read_bytes() != data:
+                    raise ValueError("Refusing to overwrite a patched package")
+                file.parent.mkdir(parents=True, exist_ok=True)
+                file.write_bytes(data)
+        relative = (destination / "codex_developer_feedback_template").relative_to(root)
+        import os
+
+        path = os.path.relpath(root / relative, dependency.parent)
+        block = re.compile(
+            r"(?m)^  codex_developer_feedback_template:\s*\n(?:    .*(?:\n|$))+"
+        )
+        text = dependency.read_text()
+        replacement = f"  codex_developer_feedback_template:\n    path: {path}\n"
+        if not block.search(text):
+            raise ValueError("Existing dependency block required")
+        text = block.sub(replacement, text)
+        for name in ["codex_app_updater", "codex_bridge_workbench"]:
+            related = re.compile(r"(?m)^  " + name + r":\s*\n(?:    .*(?:\n|$))+")
+            related_path = os.path.relpath(destination / name, dependency.parent)
+            if related.search(text):
+                text = related.sub(f"  {name}:\n    path: {related_path}\n", text)
+        dependency.write_text(text)
+    else:
+        import os
+
+        text = json.loads(dependency.read_text())
+        text.setdefault("dependencies", {})["@codex/developer-feedback-web"] = (
+            "file:" + os.path.relpath(target, dependency.parent)
+        )
+        dependency.write_text(json.dumps(text, indent=2) + "\n")
+    # One generated bootstrap for every platform. Trust is pinned here, outside
+    # the request bundle. The verifier remains the single packaged engine.
+    import os
+    descriptor = root / 'feedback.release.json'
+    descriptor.write_bytes(release_path.read_bytes())
+    engine = (destination / 'tools/feedback_conformance.py') if flutter else dependency.parent / 'node_modules/@codex/developer-feedback-web/tools/feedback_conformance.py'
+    bootstrap = root / 'tools/check-feedback.py'
+    bootstrap.parent.mkdir(parents=True, exist_ok=True)
+    if flutter:
+        engine_candidates = [os.path.relpath(engine, root)]
+    else:
+        engine_candidates = []
+        folder = dependency.parent
+        while folder == root or root in folder.parents:
+            engine_candidates.append(os.path.relpath(folder / 'node_modules/@codex/developer-feedback-web/tools/feedback_conformance.py', root))
+            if folder == root:
+                break
+            folder = folder.parent
+    engine_hash = package['files']['tools/feedback_conformance.py']
+    release_hash = hashlib.sha256(descriptor.read_bytes()).hexdigest()
+    bootstrap.write_text('''# Generated by the official Bridge adopter; commit with the release descriptor.
+from pathlib import Path
+import hashlib, subprocess, sys
+root = Path(__file__).resolve().parents[1]
+candidates = [root / relative for relative in %r]
+engine = next((candidate for candidate in candidates if candidate.is_file()), candidates[0])
+release = root / 'feedback.release.json'
+for path, expected in [(engine, %r), (release, %r)]:
+    if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+        raise SystemExit('Feedback gate: missing or modified trusted release/verifier')
+raise SystemExit(subprocess.call([sys.executable,str(engine),'--project',str(root),'--release',str(release)]))
+''' % (engine_candidates, engine_hash, release_hash))
+    if not flutter:
+        config = json.loads(dependency.read_text())
+        command = 'python3 ' + os.path.relpath(bootstrap, dependency.parent)
+        scripts = config.setdefault('scripts', {})
+        scripts['feedback:check'] = command
+        for target_script in ('build','build:dev','typecheck'):
+            if target_script in scripts:
+                hook = 'pre' + target_script
+                previous = scripts.get(hook)
+                if previous != 'npm run feedback:check' and not (previous or '').startswith('npm run feedback:check && '):
+                    scripts[hook] = 'npm run feedback:check' + (' && ' + previous if previous else '')
+        dependency.write_text(json.dumps(config, indent=2)+'\n')
+    return {
+        "ok": True,
+        "sourceApp": manifest["sourceApp"],
+        "release": release["id"],
+        "dependenciesResolved": False,
+        "deployed": False,
+    }
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--project", type=Path, required=True)
+    parser.add_argument("--release", type=Path, required=True)
+    args = parser.parse_args()
+    print(json.dumps(adopt(args.project, args.release)))

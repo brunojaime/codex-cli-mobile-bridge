@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:crypto/crypto.dart' as hashing;
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -13,6 +14,8 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 import 'developer_feedback_audio_recorder.dart';
 import 'developer_feedback_audio_recorder_contract.dart';
+import 'feedback_queue_storage.dart';
+export 'feedback_queue_storage.dart';
 
 export 'codex_local_demo.dart';
 
@@ -579,6 +582,8 @@ class DeveloperFeedbackTemplate extends StatefulWidget {
     this.guidedTraceMaxEvents = 160,
     this.guidedTraceMaxDuration = const Duration(minutes: 2),
     this.initialSddSpecTarget,
+    this.queueScope = 'legacy-operator',
+    this.environment = 'dev',
     super.key,
   });
 
@@ -587,6 +592,8 @@ class DeveloperFeedbackTemplate extends StatefulWidget {
   final String sourceApp;
   final String sourceDisplayName;
   final String bridgeUrl;
+  final String queueScope;
+  final String environment;
   final GlobalKey<NavigatorState>? navigatorKey;
   final GlobalKey<ScaffoldMessengerState>? scaffoldMessengerKey;
   final DeveloperFeedbackRecorderFactory recorderFactory;
@@ -654,6 +661,8 @@ class CodexDeveloperFeedbackTemplate extends DeveloperFeedbackTemplate {
     super.bridgeSubmit,
     super.bridgeSubmitBatch,
     super.contextMetadataBuilder,
+    super.queueScope,
+    super.environment,
     super.domainWorkspacePath,
     super.domainWorkspaceLabel,
     super.codexCliWorkspacePath,
@@ -682,6 +691,65 @@ class CodexDeveloperFeedbackTemplate extends DeveloperFeedbackTemplate {
 }
 
 class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
+  late DeveloperFeedbackQueueStorage _queueStorage;
+  Future<void> _queueWrites = Future.value();
+  bool _queueLoaded = false;
+  String? _queueError;
+  String get _queueKey =>
+      'codex-feedback:v1:${widget.sourceApp}:${widget.environment}:${widget.queueScope}';
+
+  Future<void> _restoreQueue() async {
+    final key = _queueKey;
+    try {
+      final raw = await _queueStorage.read(key);
+      final saved = raw == null ? <dynamic>[] : jsonDecode(raw) as List;
+      final items = saved
+          .map(
+            (x) => DeveloperFeedbackItem.fromJson(
+              Map<String, Object?>.from(x as Map),
+            ),
+          )
+          .toList();
+      if (items.any((x) => x.sourceApp != widget.sourceApp))
+        throw const FormatException('Queue source mismatch');
+      if (!mounted || key != _queueKey) return;
+      setState(() {
+        _items
+          ..clear()
+          ..addAll(items);
+        _queueLoaded = true;
+        _queueError = null;
+      });
+    } catch (_) {
+      if (!mounted || key != _queueKey) return;
+      setState(() {
+        _queueError =
+            'No se pudo abrir la cola guardada. Los originales se conservaron.';
+      });
+    }
+  }
+
+  Future<void> _saveQueue(List<DeveloperFeedbackItem> next) async {
+    if (!_queueLoaded)
+      throw StateError(_queueError ?? 'La cola todavía se está abriendo.');
+    final key = _queueKey;
+    final value = jsonEncode(next.map((x) => x.toJson()).toList());
+    final write = _queueWrites.then((_) => _queueStorage.write(key, value));
+    _queueWrites = write.catchError((Object _) {});
+    await write;
+  }
+
+  Future<void> _persistQueue() async {
+    try {
+      await _saveQueue(List.of(_items));
+    } catch (_) {
+      if (mounted)
+        _showMessage(
+          'No se pudo guardar la cola. Conservá esta pantalla y reintentá.',
+        );
+    }
+  }
+
   final _captureKey = GlobalKey();
   final _toolbarMeasureKey = GlobalKey();
   final List<DeveloperFeedbackItem> _items = <DeveloperFeedbackItem>[];
@@ -714,6 +782,8 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   @override
   void initState() {
     super.initState();
+    _queueStorage = developerFeedbackQueueStorageFactory();
+    unawaited(_restoreQueue());
     _editMode = widget.initialEditMode;
     _toolbarExpanded = widget.initialToolbarExpanded;
   }
@@ -725,6 +795,14 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     final bridgeChanged =
         _effectiveBridgeUrlFor(oldWidget) != _effectiveBridgeUrl;
     final sourceChanged = oldWidget.sourceApp != widget.sourceApp;
+    if (sourceChanged ||
+        oldWidget.queueScope != widget.queueScope ||
+        oldWidget.environment != widget.environment) {
+      _items.clear();
+      _queueLoaded = false;
+      _queueError = null;
+      unawaited(_restoreQueue());
+    }
     final contextChanged =
         bridgeChanged ||
         sourceChanged ||
@@ -1232,6 +1310,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
   }
 
   Future<void> _openFeedbackDialog(List<Offset> points) async {
+    final queueContext = _queueKey;
     if (points.isEmpty) return;
     final screenshotPngBase64 = await _captureMarkedScreenshot(points);
     if (!mounted) return;
@@ -1255,6 +1334,10 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
             contextMetadata: _currentContextMetadata(),
             sddSpecTarget: widget.initialSddSpecTarget,
           );
+          if (queueContext != _queueKey)
+            throw StateError('Feedback identity changed');
+          await _saveQueue([..._items, item]);
+          if (!mounted || queueContext != _queueKey) return;
           setState(() {
             _items.add(item);
             _drawing = <Offset>[];
@@ -1859,11 +1942,12 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     _showMessage('Recorrido descartado.');
   }
 
-  void _queueGuidedTrace({
+  Future<void> _queueGuidedTrace({
     required DeveloperFeedbackGuidedTrace trace,
     required DeveloperFeedbackAudioClip? audio,
     required String comment,
-  }) {
+  }) async {
+    final queueContext = _queueKey;
     final now = DateTime.now().toUtc();
     final fallbackScreenshot = trace.frames.isEmpty
         ? _transparentPngBase64
@@ -1882,6 +1966,15 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
       guidedTrace: trace,
       sddSpecTarget: widget.initialSddSpecTarget,
     );
+    try {
+      await _saveQueue([..._items, item]);
+    } catch (_) {
+      _showMessage(
+        'No se pudo guardar el recorrido. No se eliminó la cola anterior.',
+      );
+      return;
+    }
+    if (!mounted || queueContext != _queueKey) return;
     setState(() => _items.add(item));
     _showMessage('Recorrido agregado a la cola.');
   }
@@ -2082,6 +2175,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     String executionMode = 'execute',
   }) async {
     if (_items.isEmpty) return false;
+    final queueContext = _queueKey;
     final groups = _executionGroupsForItems(
       _items,
     ).where((group) => group.items.isNotEmpty).toList();
@@ -2089,6 +2183,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     final sentItemIds = <String>{};
     final submittedBatches = <_SubmittedFeedbackBatch>[];
     for (final group in groups) {
+      if (!mounted || queueContext != _queueKey) return false;
       final submittedBatch = await _submitFeedbackExecutionGroupToBridge(
         group,
         workflowPresetId: workflowPresetId,
@@ -2109,31 +2204,19 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
       sentItemIds.addAll(group.items.map((item) => item.id));
       submittedBatches.add(submittedBatch);
     }
-    if (!mounted) return true;
+    if (!mounted || queueContext != _queueKey) return true;
     setState(() {
       _items.removeWhere((item) => sentItemIds.contains(item.id));
       _pendingQuickAskId = null;
       _submittedBatches.insertAll(0, submittedBatches.reversed);
     });
+    await _persistQueue();
     _showMessage(
       executionMode == 'backlog' ? 'Guardado en backlog. Se ejecutará al completar el trabajo anterior.' : groups.length == 1
           ? 'Feedback enviado a ${groups.single.target.label}.'
           : 'Feedback enviado a ${groups.length} destinos.',
     );
     return true;
-  }
-
-  String _backlogIdentity(_FeedbackExecutionGroup group) {
-    // Stable across retries/reloads; backend also verifies immutable batch content.
-    final text =
-        '${group.target.workspacePath}:${group.items.map((item) => '${item.id}:${item.comment}').join('|')}';
-    var first = 2166136261;
-    var second = 5381;
-    for (final unit in text.codeUnits) {
-      first = ((first ^ unit) * 16777619) & 0xffffffff;
-      second = ((second * 33) ^ unit) & 0xffffffff;
-    }
-    return 'feedback-backlog-${first.toRadixString(16)}-${second.toRadixString(16)}';
   }
 
   Future<_SubmittedFeedbackBatch?> _submitFeedbackExecutionGroupToBridge(
@@ -2144,21 +2227,24 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     required bool includeQuickAskId,
   }) async {
     final batch = DeveloperFeedbackBatch(
-      batchId: executionMode == 'backlog'
-          ? _backlogIdentity(group)
-          : 'feedback-batch-${DateTime.now().toUtc().microsecondsSinceEpoch}',
+      batchId:
+          'feedback-${hashing.sha256.convert(utf8.encode(jsonEncode({'source': widget.sourceApp, 'workspace': group.target.workspacePath, 'flow': workflowPresetId, 'mode': executionMode, 'release': executionMode == 'backlog' ? false : releaseWhenComplete, 'items': group.items.map((x) => x.toBridgeJson()).toList()})))}',
       sourceApp: widget.sourceApp,
       sourceDisplayName: widget.sourceDisplayName,
       workflowPresetId: workflowPresetId,
       executionMode: executionMode,
-      releaseWhenComplete: releaseWhenComplete,
+      releaseWhenComplete: executionMode == 'backlog' ? false : releaseWhenComplete,
       quickAskId: includeQuickAskId ? _pendingQuickAskId : null,
       workspacePath: group.target.workspacePath,
       releaseTarget: _releaseTargetMetadata(),
       items: List.of(group.items),
     );
     final customBatchSubmit = widget.bridgeSubmitBatch;
-    if (customBatchSubmit != null && executionMode != 'backlog') {
+    if (customBatchSubmit != null) {
+      if (executionMode == 'backlog') {
+        _showMessage('Este adaptador no confirma backlogId. El feedback sigue guardado.');
+        return null;
+      }
       try {
         await customBatchSubmit(batch);
         return _SubmittedFeedbackBatch.local();
@@ -2197,6 +2283,18 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     final ownsClient = widget.httpClient == null;
     final client = widget.httpClient ?? http.Client();
     try {
+      if (executionMode == 'backlog') {
+        final advertised = await client.get(Uri.parse('$baseUrl/feedback-contract'));
+        if (advertised.statusCode != 200) throw Exception('Bridge sin contrato de backlog');
+        final contract = jsonDecode(advertised.body) as Map<String, Object?>;
+        if (contract['kind'] != 'codex.feedbackContract' ||
+            contract['idempotentSubmissions'] != true ||
+            contract['submissionPath'] != '/feedback-batches/start-session' ||
+            !(contract['supportedBatchVersions'] is List && (contract['supportedBatchVersions'] as List).contains(3)) ||
+            !(contract['supportedExecutionModes'] is List && (contract['supportedExecutionModes'] as List).contains('backlog'))) {
+          throw Exception('Bridge sin soporte de backlog');
+        }
+      }
       final response = await client.post(
         Uri.parse('$baseUrl/feedback-batches/start-session'),
         headers: const <String, String>{'Content-Type': 'application/json'},
@@ -2205,10 +2303,11 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw Exception('HTTP ${response.statusCode}: ${response.body}');
       }
-      return _SubmittedFeedbackBatch.fromStartResponse(
-            jsonDecode(response.body) as Map<String, Object?>,
-          ) ??
-          _SubmittedFeedbackBatch.local();
+      final decoded = jsonDecode(response.body) as Map<String, Object?>;
+      if (executionMode == 'backlog' && (decoded['backlogId'] is! String || (decoded['backlogId'] as String).trim().isEmpty)) throw Exception('Bridge sin backlogId');
+      final receipt = _SubmittedFeedbackBatch.fromStartResponse(decoded);
+      if (receipt == null) throw Exception('El Bridge no confirmó el envío.');
+      return receipt;
     } catch (_) {
       _showMessage(
         'Guardado local; no se pudo enviar a ${group.target.label}.',
@@ -2614,6 +2713,9 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                                                       : () {
                                                           setState(() {
                                                             _items.remove(item);
+                                                            unawaited(
+                                                              _persistQueue(),
+                                                            );
                                                             if (_items
                                                                 .isEmpty) {
                                                               _pendingQuickAskId =
@@ -2983,6 +3085,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                       : () {
                           setState(() {
                             _items.clear();
+                            unawaited(_persistQueue());
                             _pendingQuickAskId = null;
                           });
                           setDialogState(() {});
@@ -3030,6 +3133,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
                       : () {
                           setState(() {
                             _items.clear();
+                            unawaited(_persistQueue());
                             _pendingQuickAskId = null;
                           });
                           setDialogState(() {});
@@ -3087,6 +3191,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
     setState(() {
       final index = _items.indexWhere((candidate) => candidate.id == item.id);
       if (index != -1) _items[index] = item.copyWith(comment: updated);
+      unawaited(_persistQueue());
     });
   }
 
@@ -3103,6 +3208,7 @@ class _DeveloperFeedbackTemplateState extends State<DeveloperFeedbackTemplate> {
       final index = _items.indexWhere((candidate) => candidate.id == item.id);
       if (index != -1) {
         _items[index] = item.copyWith(selectionPoints: updated);
+        unawaited(_persistQueue());
       }
     });
   }
@@ -5101,12 +5207,25 @@ class _FeedbackDialogState extends State<_FeedbackDialog> {
               ? null
               : () async {
                   setState(() => _saving = true);
-                  await widget.onSave(
-                    _FeedbackDraft(
-                      comment: _commentController.text.trim(),
-                      audio: _audio,
-                    ),
-                  );
+                  try {
+                    await widget.onSave(
+                      _FeedbackDraft(
+                        comment: _commentController.text.trim(),
+                        audio: _audio,
+                      ),
+                    );
+                  } catch (_) {
+                    if (!context.mounted) return;
+                    setState(() => _saving = false);
+                    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                          'No se pudo guardar. El comentario y audio siguen abiertos.',
+                        ),
+                      ),
+                    );
+                    return;
+                  }
                   if (!context.mounted) return;
                   Navigator.of(context).pop();
                 },
@@ -6585,7 +6704,81 @@ class DeveloperFeedbackItem {
     this.imageCapture,
     this.guidedTrace,
     this.sddSpecTarget,
-  });
+    Map<String, Object?>? restoredPayload,
+  }) : _restoredPayload = restoredPayload;
+
+  final Map<String, Object?>? _restoredPayload;
+
+  factory DeveloperFeedbackItem.fromJson(Map<String, Object?> json) {
+    Map<String, Object?> map(Object? x) =>
+        Map<String, Object?>.from((x as Map?) ?? {});
+    final rawTrace = json['guidedTrace'];
+    final trace = map(rawTrace);
+    final recording = map(trace['recording']);
+    final spec = map(json['specTarget']);
+    return DeveloperFeedbackItem(
+      id: json['id'] as String,
+      createdAt: DateTime.parse(json['createdAt'] as String),
+      sourceApp: json['sourceApp'] as String,
+      sourceDisplayName: json['sourceDisplayName'] as String? ?? '',
+      comment: json['comment'] as String? ?? '',
+      screenshotPngBase64: json['screenshotPngBase64'] as String,
+      selectionPoints: ((json['selectionPoints'] as List?) ?? []).map((x) {
+        final point = map(x);
+        return Offset(
+          (point['x'] as num).toDouble(),
+          (point['y'] as num).toDouble(),
+        );
+      }).toList(),
+      audio: json['audioBase64'] == null
+          ? null
+          : DeveloperFeedbackAudioClip(
+              bytes: base64Decode(json['audioBase64'] as String),
+              mimeType: json['audioMimeType'] as String,
+              durationMs: (json['audioDurationMs'] as num?)?.toInt() ?? 0,
+            ),
+      contextMetadata: map(json['contextMetadata']),
+      sddSpecTarget: spec.isEmpty
+          ? null
+          : DeveloperFeedbackSddSpecTarget(
+              mode: spec['mode'] as String,
+              specId: spec['specId'] as String?,
+              artifact: spec['artifact'] as String? ?? 'auto',
+            ),
+      guidedTrace: rawTrace == null
+          ? null
+          : DeveloperFeedbackGuidedTrace(
+              id: trace['id'] as String,
+              startedAt: DateTime.parse(trace['startedAt'] as String),
+              endedAt: trace['endedAt'] == null
+                  ? null
+                  : DateTime.parse(trace['endedAt'] as String),
+              durationMs: (recording['durationMs'] as num?)?.toInt(),
+              frames: ((trace['frames'] as List?) ?? []).map((x) {
+                final frame = map(x);
+                return DeveloperFeedbackTraceFrame(
+                  id: frame['id'] as String,
+                  attachmentId: frame['attachmentId'] as String,
+                  atMs: (frame['atMs'] as num).toInt(),
+                  screenshotPngBase64: frame['screenshotPngBase64'] as String?,
+                  screenshotMimeType: frame['screenshotMimeType'] as String?,
+                );
+              }).toList(),
+              timeline: ((trace['timeline'] as List?) ?? []).map((x) {
+                final event = map(x);
+                return DeveloperFeedbackTraceEvent(
+                  id: event['id'] as String,
+                  type: event['type'] as String,
+                  atMs: (event['atMs'] as num).toInt(),
+                  data: event,
+                );
+              }).toList(),
+            ),
+      // Retain every nested field verbatim for export/transmission, including
+      // future trace metadata that this UI does not interpret.
+      restoredPayload: Map.unmodifiable(json),
+    );
+  }
 
   final String id;
   final DateTime createdAt;
@@ -6633,10 +6826,24 @@ class DeveloperFeedbackItem {
       imageCapture: imageCapture ?? this.imageCapture,
       guidedTrace: guidedTrace ?? this.guidedTrace,
       sddSpecTarget: sddSpecTarget ?? this.sddSpecTarget,
+      restoredPayload: _restoredPayload,
     );
   }
 
   Map<String, Object?> toJson() {
+    if (_restoredPayload != null)
+      return {
+        ..._restoredPayload,
+        'comment': comment,
+        if (contextMetadata.isNotEmpty ||
+            _restoredPayload.containsKey('contextMetadata'))
+          'contextMetadata': contextMetadata,
+        'selectionPoints': selectionPoints
+            .map((p) => {'x': p.dx, 'y': p.dy})
+            .toList(),
+        'selectionBounds': selectionBounds,
+        if (sddSpecTarget != null) 'specTarget': sddSpecTarget!.toJson(),
+      };
     final bounds = _selectionBounds(selectionPoints);
     final hasAudioBytes = audio != null && audio!.bytes.isNotEmpty;
     return <String, Object?>{
@@ -6670,6 +6877,7 @@ class DeveloperFeedbackItem {
   }
 
   Map<String, Object?> toBridgeJson() {
+    if (_restoredPayload != null) return toJson();
     final hasAudioBytes = audio != null && audio!.bytes.isNotEmpty;
     return <String, Object?>{
       'kind': 'codex.developerFeedback',
