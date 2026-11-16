@@ -767,7 +767,9 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
           Text('${_role(job['role'])} · ${_date(job['finished_at'])}'),
           Text(job['verdict'] == 'changes'
               ? 'La revisión pidió ajustes.'
-              : job['verdict'] == 'pass'
+              : job['verdict'] == 'pass' &&
+                      ['reviewer', 'ux_review', 'security']
+                          .contains(job['role'])
                   ? 'Esta revisión fue aprobada. No confirma publicación.'
                   : 'Terminó esta intervención. La aceptación de la etapa se muestra en Resultados.'),
           TextButton(

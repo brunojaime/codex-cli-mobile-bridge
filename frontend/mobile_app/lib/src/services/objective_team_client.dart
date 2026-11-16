@@ -32,6 +32,7 @@ class ObjectiveTeamClient {
       final current = env['current'];
       if (current is! Map || current['status'] != 'published') continue;
       final record = Map<String, dynamic>.from(current);
+      record.remove('url'); // Only attach a separately validated access URL.
       record['environment'] = env['name'];
       final id = '${record['id']}';
       if (id.startsWith('preview:')) {
