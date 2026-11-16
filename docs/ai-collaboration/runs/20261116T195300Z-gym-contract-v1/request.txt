@@ -1,0 +1,19 @@
+Destino obligatorio: https://chatgpt.com/g/g-p-6aea4404bac4819180e6443dc3f2a5d4/project
+Crear un chat NUEVO dentro de ese proyecto. No enviar en el chat general ni en otro proyecto.
+Origen: Codex Bridge DEV. El alcance de implementación posterior es DEV; no ampliar a producción.
+Usar ChatGPT en modo Pro, sin investigación profunda.
+Estrategia: consultation/v1. Objetivo: Convertir todo el relevamiento de Gym de codex-folder/gim_app al contrato nienfos.app-spec/1.0.0 y devolver archivos nuevos a la misma carpeta, preservando alcance y originales
+Responde al objetivo concreto del usuario usando las fuentes pertinentes y GitHub cuando corresponda. Distingue hechos, hipótesis y límites de acceso; cita las fuentes consultadas. No conviertas una consulta general en auditoría visual ni investigación profunda. No ejecutes comandos, cambies el producto ni despliegues durante la consulta. Devuelve conclusiones y próximos pasos verificables según la tarea.
+Repositorio: brunojaime/codex-cli-mobile-bridge. Commit de entrada: f39f9c590606ce9a2e3764e66d0be4844cc31e52.
+Solicitud: docs/ai-collaboration/runs/20261116T195300Z-gym-contract-v1/request.json en la rama collaboration/20261116T195300Z-gym-contract-v1.
+Lee esa solicitud y la evidencia indicada mediante GitHub; no uses una ficha antigua como sustituto.
+Alcance: Preparacion documental y escritura de entregables en codex-folder/gim_app autorizadas; sin implementar, desplegar ni reiniciar Gym. No ejecutes comandos ni cambies el producto.
+Entrega result.md con citas, cobertura y acciones verificables en docs/ai-collaboration/runs/20261116T195300Z-gym-contract-v1/result.md.
+Si la escritura GitHub está habilitada, escribe allí y publica AL FINAL docs/ai-collaboration/runs/20261116T195300Z-gym-contract-v1/result.json
+con schema codex-chatgpt/result/v1, run_id 20261116T195300Z-gym-contract-v1, request_digest 8621ac1f0279e0d57755a827204c808665c18e1f36b07d9c1085ef13ad4e86cd,
+input_commit f39f9c590606ce9a2e3764e66d0be4844cc31e52, status completed, producer chatgpt, completed_at ISO8601,
+conversation_url y artifacts [{"path":"docs/ai-collaboration/runs/20261116T195300Z-gym-contract-v1/result.md","sha256":"HASH_SHA256_REAL_DEL_ARCHIVO"}].
+Escribe únicamente en collaboration/20261116T195300Z-gym-contract-v1; no modifiques otra rama ni el código del producto.
+No inventes hashes ni acredites lectura de imágenes sólo por ver sus enlaces.
+Si no puedes escribir o verificar un hash, entrega la respuesta completa y declara esa limitación;
+Codex la exportará con producer codex-export. No declares entrega GitHub sin verificarla.
