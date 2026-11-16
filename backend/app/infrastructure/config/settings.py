@@ -25,11 +25,6 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    push_notifications_enabled: bool = True
-    push_node_binary: str | None = None
-    push_origin_host: str = "batata-default-string.tail0302c4.ts.net"
-    codex_prod_firebase_service_account_json: SecretStr | None = None
-    codex_dev_firebase_service_account_json: SecretStr | None = None
     app_name: str = "Codex Mobile Bridge"
     server_name: str = socket.gethostname()
     backend_mode: Literal["local", "lambda"] = "local"
@@ -37,6 +32,7 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     work_hub_url: str = ""
+    work_hub_environment: Literal["dev", "prod"] = "prod"
     api_base_url: str = "http://localhost:8000"
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
     codex_command: str = "codex"

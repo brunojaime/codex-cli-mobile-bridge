@@ -124,21 +124,25 @@ class HttpGitHubReleaseClient:
         self._timeout_seconds = timeout_seconds
 
     def list_releases(self, repo: str) -> list[GitHubRelease]:
-        url = f"https://api.github.com/repos/{repo}/releases"
-        try:
-            response = httpx.get(
-                url,
-                headers=self._headers(accept="application/vnd.github+json"),
-                timeout=self._timeout_seconds,
-            )
-            response.raise_for_status()
-        except httpx.HTTPError as exc:
-            raise GitHubReleaseError(str(exc)) from exc
+        url: str | None = f"https://api.github.com/repos/{repo}/releases"
+        releases: list[GitHubRelease] = []
+        while url:
+            try:
+                response = httpx.get(
+                    url,
+                    headers=self._headers(accept="application/vnd.github+json"),
+                    timeout=self._timeout_seconds,
+                )
+                response.raise_for_status()
+            except httpx.HTTPError as exc:
+                raise GitHubReleaseError(str(exc)) from exc
 
-        payload = response.json()
-        if not isinstance(payload, list):
-            raise GitHubReleaseError("GitHub releases response was not a list.")
-        return [_release_from_json(item) for item in payload]
+            payload = response.json()
+            if not isinstance(payload, list):
+                raise GitHubReleaseError("GitHub releases response was not a list.")
+            releases.extend(_release_from_json(item) for item in payload)
+            url = response.links.get("next", {}).get("url")
+        return releases
 
     def open_asset_stream(self, repo: str, asset: GitHubAsset) -> GitHubAssetStream:
         del repo
