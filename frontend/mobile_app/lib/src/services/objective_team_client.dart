@@ -16,6 +16,52 @@ class ObjectiveTeamClient {
     return jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
   }
 
+  // Use the existing deployment ledger; never derive a URL from project text.
+  Future<Map<String, dynamic>> publications(String project) async {
+    final ledger = await _bridgeGet('/work/deployments');
+    final matches = (ledger['projects'] as List? ?? [])
+        .whereType<Map<String, dynamic>>()
+        .where((p) => p['name'] == project)
+        .toList();
+    if (matches.length != 1) {
+      return {'records': <Map<String, dynamic>>[], 'unmatched': true};
+    }
+    final match = matches.single;
+    final records = <Map<String, dynamic>>[];
+    for (final env in (match['environments'] as List? ?? [])) {
+      final current = env['current'];
+      if (current is! Map || current['status'] != 'published') continue;
+      final record = Map<String, dynamic>.from(current);
+      record['environment'] = env['name'];
+      final id = '${record['id']}';
+      if (id.startsWith('preview:')) {
+        try {
+          final preview = await _bridgeGet(
+              '/web-previews/${Uri.encodeComponent(id.substring(8))}');
+          final expires = DateTime.tryParse('${preview['expires_at']}');
+          final uri = Uri.tryParse('${preview['preview_url']}');
+          if (preview['project_path'] == match['workspace_path'] &&
+              preview['status'] == 'active' &&
+              (expires == null || expires.isAfter(DateTime.now())) &&
+              uri != null &&
+              ['https', 'http'].contains(uri.scheme) &&
+              uri.host.isNotEmpty &&
+              uri.userInfo.isEmpty) {
+            record['url'] = uri.toString();
+          }
+        } catch (_) {
+          record['link_unavailable'] = true;
+        }
+      }
+      records.add(record);
+    }
+    return {
+      'records': records,
+      'errors': match['errors'] ?? [],
+      'observed_at': ledger['observed_at']
+    };
+  }
+
   // These are operator chats, not coordinator runs. Never infer a run link from
   // a project name or claim that a particular setup step already succeeded.
   Future<List<Map<String, dynamic>>> preparations() async {

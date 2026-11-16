@@ -169,22 +169,31 @@ void main() {
       semantics.dispose();
       await tester.tap(find.byKey(ValueKey('objective-run-${'a' * 24}')));
       await tester.pumpAndSettle();
+      expect(find.text('Para ver y probar'), findsOneWidget);
+      expect(find.text('Abrir app'), findsNothing);
+      await tester.scrollUntilVisible(find.text('En marcha'), 160,
+          scrollable: find.byType(Scrollable).first);
       expect(find.text('En marcha'), findsOneWidget);
       expect(find.textContaining('scripts/'), findsNothing);
       await tester.scrollUntilVisible(find.text('Comprobar las reservas'), 160,
           scrollable: find.byType(Scrollable).first);
       expect(find.text('Comprobar las reservas'), findsOneWidget);
       expect(find.text('Verificando la entrega'), findsOneWidget);
-      await tester.ensureVisible(find.text('Producto'));
+      await tester.scrollUntilVisible(find.text('Producto'), -200,
+          scrollable: find.byType(Scrollable).first);
       await tester.tap(find.text('Producto'));
       await tester.pumpAndSettle();
       expect(find.text('Agenda del negocio'), findsOneWidget);
       await tester.ensureVisible(find.text('Resultados'));
       await tester.tap(find.text('Resultados'));
       await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+          find.text('Todavía no hay entregas verificadas'), 160,
+          scrollable: find.byType(Scrollable).first);
       expect(find.text('Todavía no hay entregas verificadas'), findsOneWidget);
       expect(find.text('Comprobar las reservas'), findsNothing);
-      await tester.ensureVisible(find.text('Diseño'));
+      await tester.scrollUntilVisible(find.text('Diseño'), -200,
+          scrollable: find.byType(Scrollable).first);
       await tester.tap(find.text('Diseño'));
       await tester.pumpAndSettle();
       expect(find.textContaining('Todavía no hay capturas verificadas'),

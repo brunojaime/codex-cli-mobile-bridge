@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter/material.dart';
 import '../services/objective_team_client.dart';
 import '../models/objective_progress.dart';
@@ -55,6 +56,9 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
   DateTime? _received;
   List<Map<String, dynamic>> _preparations = [];
   String? _preparationError;
+  Map<String, dynamic>? _publications;
+  bool _publicationError = false;
+  DateTime? _publicationChecked;
 
   @override
   void initState() {
@@ -100,6 +104,12 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
           _error = null;
           _received = DateTime.now();
         });
+        if (selected != null &&
+            (_publicationChecked == null ||
+                DateTime.now().difference(_publicationChecked!).inSeconds >=
+                    60)) {
+          unawaited(_loadPublications(selected, '${data['project']}'));
+        }
       }
     } catch (_) {
       if (mounted && selected == _selected) {
@@ -132,9 +142,32 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
     }
   }
 
+  Future<void> _loadPublications(String selected, String project) async {
+    _publicationChecked = DateTime.now();
+    try {
+      final result = await widget.client.publications(project);
+      if (mounted && selected == _selected) {
+        setState(() {
+          _publications = result;
+          _publicationError = false;
+        });
+      }
+    } catch (_) {
+      if (mounted && selected == _selected) {
+        setState(() {
+          _publicationError = true;
+          _publications = null;
+        });
+      }
+    }
+  }
+
   void _select(String? id) {
     setState(() {
       _selected = id;
+      _publications = null;
+      _publicationError = false;
+      _publicationChecked = null;
       _data = null;
       _error = null;
       _received = null;
@@ -504,7 +537,11 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
                       onSelected: (_) => setState(() => _tab = index))),
           ])),
       const SizedBox(height: 20),
-      if (_tab == 0) ..._now(data),
+      if (_tab == 0) ...[
+        if (!_beforePlan(data)) ..._availability(data),
+        if (!_beforePlan(data)) ..._latest(data),
+        ..._now(data)
+      ],
       if (_tab == 1) ..._capabilities(data),
       if (_tab == 2) ..._results(data),
       if (_tab == 3) ..._visual(data),
@@ -629,6 +666,118 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
     ];
   }
 
+  List<Widget> _availability(Map<String, dynamic> data) {
+    final records = _rows(_publications?['records']);
+    final images = _rows(data['images']);
+    return [
+      _heading('Para ver y probar',
+          'La app publicada y el trabajo del equipo se muestran por separado.'),
+      _surface(Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(Icons.rocket_launch_outlined, color: Color(0xFF72DAC4)),
+          const SizedBox(width: 12),
+          Expanded(
+              child: Text(
+                  _publicationError
+                      ? 'No pudimos consultar la publicación'
+                      : _publications == null
+                          ? 'Consultando publicaciones…'
+                          : records.isEmpty
+                              ? 'Sin publicación acreditada'
+                              : 'Publicaciones del proyecto',
+                  style: Theme.of(context).textTheme.titleLarge))
+        ]),
+        const SizedBox(height: 12),
+        if (records.isEmpty)
+          Text(_publicationError
+              ? 'Reintentamos automáticamente. No podemos confirmar qué versión está disponible.'
+              : 'Las etapas aprobadas son avance interno; no confirman una app disponible.'),
+        for (final record in records) ...[
+          Text(
+              '${record['environment'] == 'prod' ? 'Producción' : record['environment'] == 'qa' ? 'Pruebas' : 'Desarrollo'} · ${_date(record['deployed_at'])}',
+              style: const TextStyle(fontWeight: FontWeight.w600)),
+          Text(record['release'] != null
+              ? 'Versión: ${record['release']}'
+              : record['commit'] != null
+                  ? 'Versión: ${'${record['commit']}'.substring(0, 8)}'
+                  : 'Versión de código sin identificar'),
+          Text(record['commit'] != null && record['commit'] == data['commit']
+              ? 'Coincide con el código actual del equipo.'
+              : 'No confirma que incluya los últimos cambios del equipo.'),
+          if (!_publicationError && record['url'] != null)
+            FilledButton.icon(
+                onPressed: () => _openPublished('${record['url']}'),
+                icon: const Icon(Icons.open_in_new),
+                label: const Text('Abrir app'))
+          else
+            const Text('Sin enlace de acceso acreditado.'),
+          const SizedBox(height: 12),
+        ],
+        if ((_publications?['errors'] as List? ?? []).isNotEmpty)
+          const Text(
+              'Hay registros que no se pudieron leer. La información puede estar incompleta.'),
+        const Divider(),
+        OutlinedButton.icon(
+            onPressed: () => setState(() => _tab = 3),
+            icon: const Icon(Icons.photo_library_outlined),
+            label: const Text('Ver diseño')),
+        Text(images.isEmpty
+            ? 'Aún no hay capturas disponibles.'
+            : '${images.length} capturas del trabajo visual. No acreditan publicación.'),
+      ])),
+    ];
+  }
+
+  Future<void> _openPublished(String url) async {
+    try {
+      if (await launchUrl(Uri.parse(url),
+          mode: LaunchMode.externalApplication)) {
+        return;
+      }
+    } catch (_) {/* Show a recoverable error below. */}
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('No se pudo abrir la app. Intentá nuevamente.')));
+    }
+  }
+
+  List<Widget> _latest(Map<String, dynamic> data) {
+    final jobs = _rows(data['jobs'])
+        .where((j) =>
+            j['status'] == 'completed' &&
+            DateTime.tryParse('${j['finished_at']}') != null)
+        .toList()
+      ..sort((a, b) => DateTime.parse('${b['finished_at']}')
+          .compareTo(DateTime.parse('${a['finished_at']}')));
+    final job = jobs.firstOrNull;
+    final task = _rows(_product(data)['tasks'])
+        .where((t) => job != null && t['id'] == job['unit'])
+        .firstOrNull;
+    return [
+      _heading('Última actividad completada',
+          'Lo más reciente registrado por el equipo.'),
+      _surface(Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(
+            job == null
+                ? 'Todavía no hay una actividad completada registrada'
+                : '${task?['title'] ?? _role(job['role'])}',
+            style: Theme.of(context).textTheme.titleLarge),
+        if (job != null) ...[
+          const SizedBox(height: 8),
+          Text('${_role(job['role'])} · ${_date(job['finished_at'])}'),
+          Text(job['verdict'] == 'changes'
+              ? 'La revisión pidió ajustes.'
+              : job['verdict'] == 'pass'
+                  ? 'Esta revisión fue aprobada. No confirma publicación.'
+                  : 'Terminó esta intervención. La aceptación de la etapa se muestra en Resultados.'),
+          TextButton(
+              onPressed: () => setState(() => _tab = 2),
+              child: const Text('Ver resultados')),
+        ],
+      ])),
+    ];
+  }
+
   List<Widget> _results(Map<String, dynamic> data) {
     final tasks = _rows(_product(data)['tasks'])
         .where((t) => t['status'] == 'verified')
@@ -636,8 +785,7 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
     return [
       _heading('Entregas verificadas',
           'Sólo aparecen trabajos aceptados por la revisión.'),
-      _empty(Icons.public_outlined, 'Publicación sin acreditar',
-          'La integración de código no confirma que ya esté disponible para usar.'),
+      ..._availability(data),
       if (tasks.isEmpty)
         _empty(Icons.fact_check_outlined, 'Todavía no hay entregas verificadas',
             'El trabajo en curso aparece en Ahora. Una tarea iniciada no es un resultado.'),
@@ -733,7 +881,8 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
   List<Widget> _visual(Map<String, dynamic> data) {
     final images = _rows(data['images']);
     return [
-      const Text('Propuestas y pantallas del producto.'),
+      const Text(
+          'Capturas del trabajo de diseño. Pueden ser propuestas o pantallas piloto; no acreditan la versión publicada.'),
       if (images.isEmpty)
         const Padding(
             padding: EdgeInsets.all(32),
