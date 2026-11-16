@@ -21,7 +21,9 @@ class ObjectiveBrief {
         .toSet();
     final terminal = ['paused', 'cancelled', 'budget_exhausted', 'completed']
         .contains(data['status']);
-    final blocked = '${(data['blocker'] as Map?)?['reason'] ?? ''}'.isNotEmpty;
+    final blocked =
+        '${(data['blocker'] as Map?)?['reason'] ?? ''}'.isNotEmpty ||
+            ['needs_attention', 'blocked'].contains(data['status']);
     if (terminal ||
         blocked ||
         active.isEmpty ||

@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import '../services/objective_team_client.dart';
 import '../models/objective_progress.dart';
 import '../models/objective_brief.dart';
+import '../models/objective_attention.dart';
+import '../widgets/objective_flow_graph.dart';
 
 const _labels = {
   'planning': 'Preparando el plan',
@@ -39,9 +41,15 @@ List<Map<String, dynamic>> _rows(dynamic value) =>
     (value as List? ?? []).whereType<Map<String, dynamic>>().toList();
 
 class ObjectiveTeamScreen extends StatefulWidget {
-  const ObjectiveTeamScreen({super.key, required this.client, this.onOpenChat});
+  const ObjectiveTeamScreen(
+      {super.key,
+      required this.client,
+      this.onOpenChat,
+      this.onRequestAttention});
   final ObjectiveTeamClient client;
   final Future<void> Function(String)? onOpenChat;
+  final Future<void> Function(String project, String message)?
+      onRequestAttention;
   @override
   State<ObjectiveTeamScreen> createState() => _ObjectiveTeamScreenState();
 }
@@ -53,6 +61,7 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
   String? _error;
   bool _loading = false;
   int _tab = 0;
+  bool _openingAttention = false;
   Timer? _timer;
   DateTime? _received;
   List<Map<String, dynamic>> _preparations = [];
@@ -493,59 +502,26 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
     final progress = ObjectiveProgress.fromData(data);
     final brief = ObjectiveBrief.fromData(data);
     return [
-      Container(
-          padding: const EdgeInsets.all(22),
-          decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                  colors: [Color(0xFF213455), Color(0xFF18233D)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight),
-              borderRadius: BorderRadius.circular(24)),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            _pill(progress.title, color: const Color(0xFF72DAC4)),
-            const SizedBox(height: 16),
-            Text('${product['name'] ?? data['project']}',
-                style: Theme.of(context)
-                    .textTheme
-                    .headlineMedium
-                    ?.copyWith(fontWeight: FontWeight.w800)),
-            const SizedBox(height: 18),
-            Text(brief.now,
-                style:
-                    const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-            _briefLine(
-                Icons.pending_actions_outlined, 'Qué falta', brief.remaining),
-            _briefLine(Icons.arrow_forward_rounded, 'Qué sigue', brief.next),
-            _briefLine(Icons.open_in_new, 'Qué podés probar', _trySummary()),
-            _briefLine(Icons.person_outline_rounded, '¿Necesitás hacer algo?',
-                brief.action),
-            const SizedBox(height: 12),
-            Wrap(spacing: 8, runSpacing: 8, children: [
-              if (_rows(_publications?['records']).any((r) => r['url'] != null))
-                FilledButton.icon(
-                    onPressed: () => _openPublished(
-                        '${_rows(_publications?['records']).firstWhere((r) => r['url'] != null)['url']}'),
-                    icon: const Icon(Icons.open_in_new),
-                    label: const Text('Abrir app')),
-              OutlinedButton.icon(
-                  onPressed: () => setState(() => _tab = 3),
-                  icon: const Icon(Icons.photo_library_outlined),
-                  label: const Text('Ver diseño')),
-            ]),
-          ])),
-      if (!_beforePlan(data) && product['communication'] != 'current')
-        Padding(
-            padding: const EdgeInsets.only(top: 12),
-            child: Text(
-                'El comunicador está preparando la explicación. El equipo puede seguir trabajando.',
-                style: Theme.of(context).textTheme.bodySmall)),
-      const SizedBox(height: 20),
+      Text('${product['name'] ?? data['project']}',
+          style: Theme.of(context)
+              .textTheme
+              .headlineSmall
+              ?.copyWith(fontWeight: FontWeight.w800)),
+      const SizedBox(height: 10),
+      Wrap(spacing: 8, runSpacing: 8, children: [
+        _pill(progress.title),
+        if (ObjectiveAttention.fromData(data).needsDecision)
+          FilledButton.icon(
+              onPressed: () => setState(() => _tab = 4),
+              icon: const Icon(Icons.front_hand_outlined),
+              label: const Text('Atender ahora')),
+      ]),
+      const SizedBox(height: 16),
       SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: Row(children: [
             for (final (index, label) in [
-              'Ahora',
+              'Mapa',
               'Producto',
               'Resultados',
               'Diseño',
@@ -559,7 +535,34 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
                       onSelected: (_) => setState(() => _tab = index))),
           ])),
       const SizedBox(height: 20),
-      if (_tab == 0) ...[..._now(data)],
+      if (_tab == 0) ...[
+        ObjectiveFlowGraph(
+            data: data, onAttention: () => setState(() => _tab = 4)),
+        const SizedBox(height: 16),
+        ExpansionTile(title: const Text('Resumen en palabras'), children: [
+          Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(brief.now),
+                    _briefLine(Icons.pending_actions_outlined, 'Qué falta',
+                        brief.remaining),
+                    _briefLine(
+                        Icons.arrow_forward_rounded, 'Qué sigue', brief.next),
+                    _briefLine(
+                        Icons.open_in_new, 'Qué podés probar', _trySummary()),
+                    _briefLine(Icons.person_outline_rounded,
+                        '¿Necesitás hacer algo?', brief.action),
+                  ])),
+        ]),
+        OutlinedButton.icon(
+            onPressed: () => setState(() => _tab = 3),
+            icon: const Icon(Icons.photo_library_outlined),
+            label: const Text('Ver diseño')),
+        ExpansionTile(
+            title: const Text('Detalle de actividad'), children: _now(data)),
+      ],
       if (_tab == 1) ..._capabilities(data),
       if (_tab == 2) ..._results(data),
       if (_tab == 3) ..._visual(data),
@@ -834,14 +837,30 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
     final issues =
         _rows(data['issues']).where((i) => i['status'] == 'open').toList();
     final tasks = _rows(_product(data)['tasks']);
-    final blocker = data['blocker'] as Map? ?? {};
+    final attention = ObjectiveAttention.fromData(data);
     return [
       _heading('Lo que necesita atención',
           'Las correcciones del equipo y las dependencias pendientes.'),
-      if ('${blocker['reason'] ?? ''}'.isNotEmpty)
-        _empty(Icons.pause_circle_outline, 'Hay una dependencia externa',
-            'El equipo registró un impedimento. El detalle técnico conserva el motivo y el siguiente paso.'),
-      if (issues.isEmpty)
+      _surface(Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(attention.title, style: Theme.of(context).textTheme.titleLarge),
+        const SizedBox(height: 10),
+        Text(attention.explanation),
+        const SizedBox(height: 12),
+        const Text('Cómo seguir',
+            style: TextStyle(fontWeight: FontWeight.bold)),
+        Text(attention.suggestion),
+        const SizedBox(height: 14),
+        FilledButton.icon(
+            onPressed: widget.onRequestAttention == null || _openingAttention
+                ? null
+                : () => _requestAttention(data),
+            icon: const Icon(Icons.chat_bubble_outline),
+            label: const Text('Resolver con el agente')),
+        const Text(
+            'Podés pedir un diagnóstico o dar una indicación. El envío no aprueba permisos ni aumenta límites automáticamente.',
+            style: TextStyle(fontSize: 12)),
+      ])),
+      if (issues.isEmpty && !attention.needsDecision)
         _empty(Icons.check_circle_outline, 'Sin problemas abiertos registrados',
             'Esto no reemplaza la verificación de las entregas.'),
       for (final issue in issues)
@@ -855,10 +874,75 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
           const SizedBox(height: 8),
           Text('Responsable: ${_role(issue['owner'])}'),
           const SizedBox(height: 8),
-          const Text(
-              'La revisión pidió ajustes antes de aceptar esta entrega.'),
+          Text('${issue['summary']}'),
+          if ('${issue['expected'] ?? ''}'.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text('Qué falta: ${issue['expected']}')
+          ],
         ]))
     ];
+  }
+
+  Future<void> _requestAttention(Map<String, dynamic> data) async {
+    if (_openingAttention) return;
+    setState(() => _openingAttention = true);
+    try {
+      // Revalidate before preparing an operator action; never act on a stale banner.
+      final latest = await widget.client.get('/${data['id']}');
+      if (!mounted || _selected != data['id']) return;
+      setState(() => _data = latest);
+      final attention = ObjectiveAttention.fromData(latest);
+      var input = '';
+      final decision = await showDialog<String>(
+          context: context,
+          builder: (context) => AlertDialog(
+                title: const Text('¿Cómo querés seguir?'),
+                content: SingleChildScrollView(
+                    child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                      Text(attention.title),
+                      const SizedBox(height: 8),
+                      Text(attention.suggestion),
+                      const SizedBox(height: 16),
+                      TextField(
+                          onChanged: (value) => input = value,
+                          maxLines: 4,
+                          maxLength: 1500,
+                          decoration: const InputDecoration(
+                              labelText: 'Tu indicación (opcional)',
+                              hintText:
+                                  'Por ejemplo: explicame las opciones antes de hacer cambios.')),
+                      const Text(
+                          'Se abrirá un chat para atender esta ejecución. No se reinicia el proyecto ni se considera resuelto el problema por enviar el pedido.'),
+                    ])),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Cancelar')),
+                  FilledButton(
+                      onPressed: () => Navigator.pop(
+                          context,
+                          input.trim().isEmpty
+                              ? 'Diagnosticá el impedimento actual y resolvé lo reversible dentro del alcance autorizado. Si hace falta una decisión mía, explicame las opciones.'
+                              : input.trim()),
+                      child: const Text('Enviar al agente'))
+                ],
+              ));
+      if (decision == null || !mounted) return;
+      await widget.onRequestAttention!(
+          '${latest['project']}', ObjectiveAttention.request(latest, decision));
+      if (mounted) Navigator.of(context).pop();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text(
+                'No se pudo completar el pedido. Revisá el chat y la conexión antes de volver a enviarlo.')));
+      }
+    } finally {
+      if (mounted) setState(() => _openingAttention = false);
+    }
   }
 
   String _role(dynamic role) =>

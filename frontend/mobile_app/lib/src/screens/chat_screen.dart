@@ -4626,7 +4626,20 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     final client = ObjectiveTeamClient(_activeServer?.baseUrl ?? widget.initialApiBaseUrl);
     try {
       await Navigator.of(context).push<void>(MaterialPageRoute(builder: (_) => ObjectiveTeamScreen(
-        client: client, onOpenChat: (id) => _chatController.selectSession(id))));
+        client: client, onOpenChat: (id) => _chatController.selectSession(id),
+        onRequestAttention: (project, message) async {
+          final matches = _chatController.workspaces.where((w) => w.name == project && !isTeamWorkspace(w.path)).toList();
+          if (matches.length != 1) throw StateError('No se pudo identificar un único proyecto');
+          final previous = _chatController.currentSession?.id;
+          await _chatController.createNewSession(workspacePath: matches.single.path, title: 'Atender ejecución · $project');
+          final session = _chatController.currentSession;
+          if (session == null || session.id == previous || session.workspacePath != matches.single.path || _chatController.errorText != null) {
+            throw StateError('No se pudo crear la consulta');
+          }
+          await _pinWorkspaceToSidebar(matches.single);
+          // Existing outbox handles submission and uncertain responses; never retry here.
+          await _chatController.sendMessage(message, sessionIdOverride: session.id, workspacePathOverride: session.workspacePath);
+        })));
     } finally { client.close(); }
   }
 
