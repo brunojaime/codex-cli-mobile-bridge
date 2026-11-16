@@ -1,0 +1,41 @@
+{
+  "schema": "codex-chatgpt/request/v1",
+  "run_id": "20261116T195300Z-gym-contract-v1",
+  "strategy": "consultation/v1",
+  "repository": "brunojaime/codex-cli-mobile-bridge",
+  "input_commit": "f39f9c590606ce9a2e3764e66d0be4844cc31e52",
+  "goal": "Convertir todo el relevamiento de Gym de codex-folder/gim_app al contrato nienfos.app-spec/1.0.0 y devolver archivos nuevos a la misma carpeta, preservando alcance y originales",
+  "acceptance": [
+    "Leer contrato y dominio completos; preservar todas las historias y CA; no inventar estados ni decisiones",
+    "Entregar bundle.json exacto, resumen y cobertura; escribir nuevos archivos en Drive o declarar limitacion"
+  ],
+  "evidence": [
+    "docs/ai-collaboration/runs/20261116T195300Z-gym-contract-v1/NIENFOS_APP_CONTRACT_1.0.0.md",
+    "docs/ai-collaboration/runs/20261116T195300Z-gym-contract-v1/TASK.md",
+    "docs/ai-collaboration/runs/20261116T195300Z-gym-contract-v1/SOURCE_INDEX.md"
+  ],
+  "scope": "Preparacion documental y escritura de entregables en codex-folder/gim_app autorizadas; sin implementar, desplegar ni reiniciar Gym",
+  "max_rounds": 3,
+  "strategy_contract": {
+    "status": "defined",
+    "reference": "protocol.md",
+    "required_inputs": [
+      "task_objective",
+      "relevant_context",
+      "acceptance_criteria"
+    ],
+    "requires_evidence": false,
+    "instructions": "Responde al objetivo concreto del usuario usando las fuentes pertinentes y GitHub cuando corresponda. Distingue hechos, hipótesis y límites de acceso; cita las fuentes consultadas. No conviertas una consulta general en auditoría visual ni investigación profunda. No ejecutes comandos, cambies el producto ni despliegues durante la consulta. Devuelve conclusiones y próximos pasos verificables según la tarea.",
+    "closure": [
+      "requested_question_answered",
+      "sources_and_uncertainty_explicit",
+      "actionable_handoff_when_applicable"
+    ]
+  },
+  "created_at": "2026-11-16T19:51:22.379300+00:00",
+  "bridge_environment": "dev",
+  "project_id": "codex-cli-mobile-bridge",
+  "chatgpt_project_id": "g-p-6aea4404bac4819180e6443dc3f2a5d4",
+  "chatgpt_project_url": "https://chatgpt.com/g/g-p-6aea4404bac4819180e6443dc3f2a5d4/project",
+  "request_digest": "8621ac1f0279e0d57755a827204c808665c18e1f36b07d9c1085ef13ad4e86cd"
+}
