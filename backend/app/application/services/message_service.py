@@ -2255,7 +2255,11 @@ class MessageService:
             codex_options=codex_options,
             serial_key=serial_key,
             submission_token=submission_token,
-            workdir=session.workspace_path,
+            workdir=(
+                self._work_coordinator.execution_workspace_for(session)
+                if getattr(self, "_work_coordinator", None) is not None
+                else session.workspace_path
+            ),
         )
         return Job(
             id=job_id,

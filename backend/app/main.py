@@ -17,6 +17,7 @@ from backend.app.api.agent_proposal_routes import router as agent_proposal_route
 from backend.app.api.work_routes import router as work_router, get_work
 from backend.app.api.work_hub import install_work_hub
 from backend.app.application.services.work_coordinator import WorkspaceBusy
+from backend.app.api.meeting_intake_routes import router as meeting_intake_router
 from backend.app.application.services.message_service import MaintenanceModeError
 from backend.app.container import AppContainer, build_container
 from backend.app.infrastructure.config.settings import Settings
@@ -44,6 +45,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(agent_proposal_router, prefix="/api/v1")
     app.include_router(work_router)
     app.include_router(work_router, prefix="/api/v1")
+    app.include_router(meeting_intake_router)
+    app.include_router(meeting_intake_router, prefix="/api/v1")
     return app
 
 

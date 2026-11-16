@@ -3853,7 +3853,12 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     try {
       final healthFuture = client.getHealth();
       final capabilitiesFuture = client.getCapabilities();
-      final prodUpdateFuture = client.getProdUpdateStatus();
+      // Handle the optional request immediately; DEV may reject it
+      // before the health and capabilities requests complete.
+      final prodUpdateFuture = client.getProdUpdateStatus().then<ProdUpdateStatus?>(
+        (value) => value,
+        onError: (Object _, StackTrace __) => null,
+      );
       final initializeFuture = _chatController.initialize();
       final health = await healthFuture;
       final capabilities = await capabilitiesFuture;

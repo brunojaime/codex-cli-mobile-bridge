@@ -1,7 +1,7 @@
 from __future__ import annotations
+from backend.app.application.services.feedback_submission import FeedbackSubmissions, SubmissionConflict
 
 import base64
-from backend.app.application.services.feedback_submission import FeedbackSubmissions, SubmissionConflict
 import binascii
 import json
 import os
@@ -4622,12 +4622,6 @@ def _feedback_workspace_path_for_source(
             container.settings.feedback_source_workspace_alias_map.items()
         )
     }
-    # Product IDs do not have to equal workspace directory names. Keep this
-    # mapping server-owned; consumers must not patch fetch to route a batch.
-    registry = Path(__file__).parents[1] / "infrastructure/config/feedback_consumers.json"
-    registered = json.loads(registry.read_text())["aliases"]
-    for source, folder in registered.items():
-        aliases.setdefault(_normalize_feedback_workspace_key(source), str(Path(container.settings.projects_root) / folder))
     for candidate_key in candidate_keys:
         configured_workspace_path = aliases.get(candidate_key)
         if configured_workspace_path:
@@ -4720,15 +4714,12 @@ def _feedback_release_instruction(*, includes_reviewer: bool) -> str:
         return (
             "\nRelease instruction: when the reviewer finishes and approves the "
             "implementation, publish the required release for the target app. "
-            "Do not publish if review requests changes or validation fails. "
-            "A release request does not expand existing environment permissions; "
-            "verify authorization for the exact target and environment."
+            "Do not publish if review requests changes or validation fails."
         )
     return (
         "\nRelease instruction: after implementation and validation complete, "
         "publish the required release for the target app. Do not publish if "
-        "validation fails. A release request does not expand existing environment "
-        "permissions; verify authorization for the exact target and environment."
+        "validation fails."
     )
 
 
@@ -5312,7 +5303,6 @@ async def start_feedback_batch_session(
     await run_in_threadpool(ledger.finish, reservation["id"], reservation["owner"], result.model_dump(mode="json"))
     return result
 
-
 @router.get("/feedback-contract")
 async def feedback_contract():
     return {
@@ -5326,7 +5316,6 @@ async def feedback_contract():
         "backlogReceiptField": "backlogId",
     }
 
-
 @router.get("/feedback-submissions/{batch_id}")
 async def feedback_submission_status(batch_id: str, container: AppContainer = Depends(get_container)):
     ledger = FeedbackSubmissions(Path(container.settings.feedback_queue_path).with_suffix(".submissions.sqlite3"))
@@ -5334,7 +5323,6 @@ async def feedback_submission_status(batch_id: str, container: AppContainer = De
     if result is None:
         raise HTTPException(status_code=404, detail="Feedback submission not found")
     return result
-
 
 async def _start_feedback_batch_session(
     payload: FeedbackBatchStartRequest,
@@ -7441,6 +7429,20 @@ def _app_update_apk_proxy_url(
     channel: str,
     preview_url: str | None = None,
 ) -> str:
+    # Explicit opt-in for public releases: Android's system downloader can fetch
+    # and resume independently of the app's private Bridge/VPN connection.
+    config = container.app_update_service.get_config(source_app)
+    if (
+        (config.release_metadata or {}).get("apkDownloadMode") == "public-github"
+        and config.release_channel != "private-install"
+    ):
+        from urllib.parse import quote
+        from backend.app.application.services.app_update_service import _validate_repo
+        repo = _validate_repo(config.repo)
+        return (
+            f"https://github.com/{repo}/releases/download/"
+            f"{quote(release_tag, safe='')}/{quote(asset_name, safe='')}"
+        )
     generated_apk_url = request.url_for(
         "download_app_update_apk",
         source_app=source_app,
