@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app.api.routes import ensure_dev_stage_chat_run, get_container, router
 from backend.app.api.objective_team_routes import router as objective_team_router
+from backend.app.api.meeting_intake_routes import router as meeting_intake_router
 from backend.app.api.quality_routes import router as quality_router
 from backend.app.api.agent_launch_routes import router as agent_launch_router
 from backend.app.api.agent_proposal_routes import router as agent_proposal_router
@@ -34,6 +35,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     _configure_background_workers(app, container)
     app.include_router(objective_team_router)
     app.include_router(objective_team_router, prefix="/api/v1")
+    app.include_router(meeting_intake_router)
+    app.include_router(meeting_intake_router, prefix="/api/v1")
     app.include_router(router)
     app.include_router(router, prefix="/api/v1")
     app.include_router(quality_router)
