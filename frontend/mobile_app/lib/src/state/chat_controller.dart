@@ -440,6 +440,76 @@ class ChatController extends ChangeNotifier {
 
   Timer? _liveSyncTimer;
   bool _liveSyncInFlight = false;
+  int _liveSyncTicks = 0;
+  WebSocketChannel? _sessionChannel;
+  String? _sessionChannelId;
+  bool _sessionStreamConnected = false;
+  Timer? _sessionChangeDebounce;
+
+  /// Opens the push channel of the open chat; the backend announces changes
+  /// made from any device, so the chat reloads only when needed.
+  void _ensureSessionStream() {
+    final sessionId = _selectedSessionId;
+    if (_disposed || _liveSyncTimer == null || sessionId == null) return;
+    if (_sessionChannel != null && _sessionChannelId == sessionId) return;
+    _closeSessionStream();
+    try {
+      final channel =
+          WebSocketChannel.connect(_apiClient.sessionStreamUri(sessionId));
+      _sessionChannel = channel;
+      _sessionChannelId = sessionId;
+      unawaited(channel.ready.catchError((Object _) {}));
+      channel.stream.listen(
+        (event) {
+          if (_disposed || event is! String) return;
+          final payload = jsonDecode(event);
+          if (payload is! Map<String, dynamic>) return;
+          switch (payload['type']) {
+            case 'session.ready':
+              _sessionStreamConnected = true;
+            case 'session.changed':
+              _sessionChangeDebounce?.cancel();
+              _sessionChangeDebounce = Timer(
+                const Duration(milliseconds: 250),
+                () => unawaited(_handleRemoteSessionChange(sessionId)),
+              );
+          }
+        },
+        onError: (_) => _dropSessionStream(channel),
+        onDone: () => _dropSessionStream(channel),
+        cancelOnError: true,
+      );
+    } catch (_) {
+      _closeSessionStream();
+    }
+  }
+
+  Future<void> _handleRemoteSessionChange(String sessionId) async {
+    if (_disposed) return;
+    unawaited(refreshSessions());
+    if (sessionId != _selectedSessionId) return;
+    // Running jobs of this chat already stream through their own channel.
+    if (activeJobCountForSession(sessionId) > 0) return;
+    try {
+      await _reloadCurrentSession();
+    } catch (_) {}
+  }
+
+  void _dropSessionStream(WebSocketChannel channel) {
+    if (!identical(channel, _sessionChannel)) return;
+    _sessionChannel = null;
+    _sessionChannelId = null;
+    _sessionStreamConnected = false;
+  }
+
+  void _closeSessionStream() {
+    _sessionChangeDebounce?.cancel();
+    final channel = _sessionChannel;
+    _sessionChannel = null;
+    _sessionChannelId = null;
+    _sessionStreamConnected = false;
+    if (channel != null) unawaited(channel.sink.close());
+  }
 
   /// Keeps the session list and the open chat in sync with changes made from
   /// other devices. Running jobs already stream through their own channel, so
@@ -448,18 +518,25 @@ class ChatController extends ChangeNotifier {
     if (_disposed) return;
     _liveSyncTimer ??=
         Timer.periodic(interval, (_) => unawaited(_liveSyncTick()));
+    _ensureSessionStream();
   }
 
   void stopLiveSync() {
     _liveSyncTimer?.cancel();
     _liveSyncTimer = null;
+    _closeSessionStream();
   }
 
   Future<void> _liveSyncTick() async {
     if (_disposed || _liveSyncInFlight || _pendingJobs.isNotEmpty) return;
+    _ensureSessionStream();
+    _liveSyncTicks++;
+    // With the push channel up, only refresh the sidebar list now and then.
+    if (_sessionStreamConnected && _liveSyncTicks % 4 != 0) return;
     _liveSyncInFlight = true;
     try {
       await refreshSessions();
+      if (_sessionStreamConnected) return;
       final id = _selectedSessionId;
       final current = _currentSession;
       if (_disposed || id == null || current == null || current.id != id) {
@@ -734,6 +811,7 @@ class ChatController extends ChangeNotifier {
       _errorText = null;
       _flushDeferredRunNotifications();
       notifyListeners();
+      _ensureSessionStream();
       unawaited(_maybeImportGeneratedAgentProfiles(_currentSession));
     } catch (error) {
       if (_disposed || revision != _selectionRevision) return;
@@ -1353,6 +1431,14 @@ class ChatController extends ChangeNotifier {
     }
   }
 
+  Future<bool> steerJob(String jobId, String message) async {
+    try {
+      return await _apiClient.steerJob(jobId, message);
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<bool> cancelJob(String jobId) async {
     final sessionId = _sessionIdForJob(jobId);
 
@@ -1816,9 +1902,12 @@ class ChatController extends ChangeNotifier {
         ? snapshot.activities
         : _legacyActivities(message, snapshot);
     return message.copyWith(
-      text: snapshot.status == 'failed' || snapshot.status == 'cancelled'
-          ? _localizedJobError(snapshot.error) ?? message.text
-          : (snapshot.response ?? message.text),
+      text: snapshot.status == 'cancelled' &&
+              (snapshot.response?.trim().isNotEmpty ?? false)
+          ? '${snapshot.response!.trim()}\n\n_Detenido por el usuario._'
+          : snapshot.status == 'failed' || snapshot.status == 'cancelled'
+              ? _localizedJobError(snapshot.error) ?? message.text
+              : (snapshot.response ?? message.text),
       status: _statusFromJob(snapshot.status),
       jobStatus: snapshot.status,
       jobPhase: snapshot.phase,
@@ -2620,9 +2709,13 @@ class _OptimisticTextMessage {
   String? runId;
 
   bool isPresentIn(List<ChatMessage> messages) => messages.any((candidate) =>
-      candidate.isUser && candidate.text == message.text &&
-      !knownMessageIds.contains(candidate.id) &&
-      (runId == null || candidate.runId == runId));
+      candidate.isUser &&
+      // The accepted job id identifies the server copy even when a push
+      // refresh delivered it before the send response arrived.
+      ((message.jobId != null && candidate.jobId == message.jobId) ||
+          (candidate.text == message.text &&
+              !knownMessageIds.contains(candidate.id) &&
+              (runId == null || candidate.runId == runId))));
 }
 
 String? _localizedJobError(String? error) => switch (error?.trim()) {

@@ -1560,6 +1560,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   onDraftChanged: _draftUpdaterForCurrentSession(),
                   onBackgroundDraftChanged: _draftUpdaterForCurrentSession(onlyIfUnchanged: true),
                   onSend: _handleSend,
+                  onSteer: _handleSteer,
                   activeJobCount: _chatController.selectedSessionId == null ? 0 : _chatController.activeJobCountForSession(_chatController.selectedSessionId!),
                   queuedJobCount: _chatController.selectedSessionId == null ? 0 : _chatController.queuedJobCountForSession(_chatController.selectedSessionId!),
                   onSendAudio: _audioSenderForCurrentSession(),
@@ -1713,12 +1714,29 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
 
+  /// Clears the composer immediately (so the next message can be typed while
+  /// this one is delivered) and restores the text if nothing was sent.
   Future<bool> _handleSend() async {
+    final submittedText = _textController.text;
+    final sessionIdBeforeSend = _chatController.selectedSessionId;
+    if (submittedText.trim().isEmpty) return _sendComposerText(submittedText);
+    _textController.clear();
+    final didSend = await _sendComposerText(submittedText);
+    final sameChat = sessionIdBeforeSend == null ||
+        _chatController.selectedSessionId == sessionIdBeforeSend;
+    if (!didSend && mounted && sameChat && _textController.text.trim().isEmpty) {
+      _textController.text = submittedText;
+      _textController.selection =
+          TextSelection.collapsed(offset: submittedText.length);
+    }
+    return didSend;
+  }
+
+  Future<bool> _sendComposerText(String submittedText) async {
     final originController = _chatController;
     final sessionIdBeforeSend = originController.selectedSessionId;
     final workspacePathBeforeSend = originController.currentSession?.workspacePath;
     final codexRunOptions = _currentComposerDraft().codexRunOptions;
-    final submittedText = _textController.text;
     final backlogPrefix = RegExp(r'^(?:/backlog\s+|agreg[aá]\s+al\s+backlog\s*:?\s*)',caseSensitive:false).firstMatch(submittedText.trim());
     if(backlogPrefix != null) {
       final instruction=submittedText.trim().substring(backlogPrefix.end).trim();
@@ -1727,7 +1745,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       try {
         await client.enqueue(workspacePathBeforeSend,instruction);
         if(mounted) {
-          if(_textController.text==submittedText)_textController.clear();
+          if(_textController.text.trim()==submittedText.trim())_textController.clear();
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Agregado al backlog; se ejecutará al completar el trabajo anterior.')));
         }
         return true;
@@ -1753,11 +1771,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       workspacePathOverride: workspacePathBeforeSend,
       codexRunOptions: codexRunOptions.isEmpty ? null : codexRunOptions,
     );
-    if (didSend &&
-        _textController.text == submittedText &&
-        (sessionIdBeforeSend == null ||
-            _chatController.selectedSessionId == sessionIdBeforeSend)) {
-      _textController.clear();
+    final sameChat = sessionIdBeforeSend == null ||
+        _chatController.selectedSessionId == sessionIdBeforeSend;
+    if (didSend && sameChat) {
       _updateStickToBottom(true);
       _scrollToBottom();
     }
@@ -1767,6 +1783,48 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   void _toggleSidebarCollapsed() {
     setState(() => _sidebarCollapsed = !_sidebarCollapsed);
     unawaited(_serverProfileStore.saveSidebarCollapsed(_sidebarCollapsed));
+  }
+
+  String? _runningJobIdForCurrentSession() {
+    final session = _chatController.currentSession;
+    if (session == null) return null;
+    for (final message in session.messages.reversed) {
+      final jobId = message.jobId;
+      if (jobId == null || message.isUser) continue;
+      if (message.isPendingLike) return jobId;
+    }
+    return null;
+  }
+
+  /// Sends [text] to the running agent: a real mid-turn instruction when the
+  /// backend supports it (Codex app-server), otherwise stop and resend.
+  Future<bool> _handleSteer(String text) async {
+    final message = text.trim();
+    final jobId = _runningJobIdForCurrentSession();
+    if (message.isEmpty) return false;
+    if (jobId == null) {
+      _textController.text = message;
+      return _handleSend();
+    }
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (await _chatController.steerJob(jobId, message)) {
+      messenger?.showSnackBar(const SnackBar(
+        content: Text('Indicación enviada: el agente la toma sin detenerse.'),
+        duration: Duration(seconds: 3),
+      ));
+      return true;
+    }
+    await _chatController.cancelJob(jobId);
+    if (!mounted) return false;
+    _textController.text = message;
+    final sent = await _handleSend();
+    messenger?.showSnackBar(SnackBar(
+      content: Text(sent
+          ? 'Se detuvo la ejecución y se envió tu mensaje.'
+          : 'No se pudo redirigir la ejecución.'),
+      duration: const Duration(seconds: 3),
+    ));
+    return sent;
   }
 
   /// Esc stops the newest running job of the open chat, like in the CLI.
@@ -5417,8 +5475,12 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                 context,
               ).copyWith(dividerColor: Colors.transparent),
               child: ExpansionTile(
-                key: PageStorageKey<String>('workspace-${workspace.path}'),
-                initiallyExpanded: hasSelected,
+                // While searching, every project with matches opens so the
+                // results are visible without extra taps.
+                key: PageStorageKey<String>(
+                    'workspace-${workspace.path}${_sessionSearch.trim().isEmpty ? '' : '-search'}'),
+                initiallyExpanded:
+                    hasSelected || _sessionSearch.trim().isNotEmpty,
                 tilePadding: const EdgeInsets.symmetric(
                   horizontal: 16,
                   vertical: 6,
@@ -7610,6 +7672,7 @@ class _Composer extends StatefulWidget {
     required this.onDraftChanged,
     this.onBackgroundDraftChanged,
     required this.onSend,
+    this.onSteer,
     this.activeJobCount = 0,
     this.queuedJobCount = 0,
     required this.onSendAudio,
@@ -7632,6 +7695,7 @@ class _Composer extends StatefulWidget {
   final ValueChanged<_ComposerDraft> onDraftChanged;
   final ValueChanged<_ComposerDraft>? onBackgroundDraftChanged;
   final Future<bool> Function() onSend;
+  final Future<bool> Function(String text)? onSteer;
   final int activeJobCount;
   final int queuedJobCount;
   final Future<bool> Function(XFile audioFile, {String? message}) onSendAudio;
@@ -7657,6 +7721,7 @@ class _Composer extends StatefulWidget {
 class _ComposerState extends State<_Composer> {
   late AudioNoteRecorder _audioRecorder;
   final FocusNode _composerFocusNode = FocusNode();
+  bool _refocusAfterBusy = false;
   final ImagePicker _imagePicker = ImagePicker();
   late final ClipboardImagePasteListener _clipboardImagePasteListener;
   Stopwatch? _recordingStopwatch;
@@ -7691,6 +7756,14 @@ class _ComposerState extends State<_Composer> {
   @override
   void didUpdateWidget(covariant _Composer oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!oldWidget.isBusy && widget.isBusy) {
+      _refocusAfterBusy = _composerFocusNode.hasFocus;
+    } else if (oldWidget.isBusy && !widget.isBusy && _refocusAfterBusy) {
+      _refocusAfterBusy = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _composerFocusNode.requestFocus();
+      });
+    }
     if (oldWidget.controller != widget.controller) {
       oldWidget.controller.removeListener(_handleTextChanged);
       _hasText = widget.controller.text.trim().isNotEmpty;
@@ -7953,10 +8026,25 @@ class _ComposerState extends State<_Composer> {
           ),
         if (widget.activeJobCount > 0)
           Padding(
-            padding: const EdgeInsets.only(left: 12, bottom: 8),
-            child: Text(
-              '${widget.activeJobCount - widget.queuedJobCount} en curso · ${widget.queuedJobCount} en cola · Podés seguir enviando',
-              style: const TextStyle(color: Color(0xFFB8C8E0), fontSize: 12),
+            padding: const EdgeInsets.only(left: 12, bottom: 4),
+            child: Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 8,
+              children: <Widget>[
+                Text(
+                  '${widget.activeJobCount - widget.queuedJobCount} en curso · ${widget.queuedJobCount} en cola · Enter encola · Esc detiene',
+                  style: const TextStyle(color: Color(0xFFB8C8E0), fontSize: 12),
+                ),
+                if (widget.onSteer != null)
+                  TextButton.icon(
+                    key: const ValueKey('composer-steer'),
+                    onPressed: _hasText && !_isSubmittingAttachments
+                        ? () => unawaited(_steerNow())
+                        : null,
+                    icon: const Icon(Icons.alt_route_rounded, size: 16),
+                    label: const Text('Redirigir ahora (Ctrl+Enter)'),
+                  ),
+              ],
             ),
           ),
         TextField(
@@ -7966,6 +8054,9 @@ class _ComposerState extends State<_Composer> {
           maxLines: 6,
           enabled: !widget.isBusy && !_isSubmittingAttachments,
           textInputAction: TextInputAction.send,
+          // Keep the cursor in the composer after sending (the default for
+          // "send" actions drops focus, forcing a click before every message).
+          onEditingComplete: () {},
           onSubmitted: (_) async {
             await _handlePrimaryAction();
           },
@@ -8126,9 +8217,29 @@ class _ComposerState extends State<_Composer> {
     return filterSlashCommands(_slashCommands, query);
   }
 
+  Future<void> _steerNow() async {
+    final onSteer = widget.onSteer;
+    final text = widget.controller.text.trim();
+    if (onSteer == null || text.isEmpty) return;
+    widget.controller.clear();
+    final ok = await onSteer(text);
+    if (!ok && mounted && widget.controller.text.isEmpty) {
+      widget.controller.text = text;
+    }
+  }
+
   KeyEventResult _handleComposerKeyEvent(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.enter &&
+        (HardwareKeyboard.instance.isControlPressed ||
+            HardwareKeyboard.instance.isMetaPressed) &&
+        widget.activeJobCount > 0 &&
+        widget.onSteer != null &&
+        _slashQuery == null) {
+      unawaited(_steerNow());
+      return KeyEventResult.handled;
     }
     final query = _slashQuery;
     if (query == null) {

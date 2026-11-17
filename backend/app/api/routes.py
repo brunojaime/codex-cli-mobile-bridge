@@ -21,6 +21,7 @@ from tempfile import NamedTemporaryFile
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from pydantic import BaseModel, Field
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -7182,6 +7183,29 @@ async def cancel_job(
     return JobResponse.from_domain(job)
 
 
+class SteerJobRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=20000)
+
+
+@router.post("/jobs/{job_id}/steer")
+async def steer_job(
+    job_id: str,
+    payload: SteerJobRequest,
+    service: MessageService = Depends(get_message_service),
+) -> dict[str, object]:
+    """Send an instruction to a running job without stopping it (Codex app-server)."""
+    try:
+        steered = await run_in_threadpool(service.steer_job, job_id, payload.message)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if not steered:
+        raise HTTPException(
+            status_code=409,
+            detail="This job cannot be redirected while it runs.",
+        )
+    return {"job_id": job_id, "steered": True}
+
+
 @router.post("/jobs/{job_id}/retry", response_model=JobResponse, status_code=202)
 async def retry_job(
     job_id: str,
@@ -7199,6 +7223,19 @@ async def retry_job(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return JobResponse.from_domain(job)
+
+
+@router.websocket("/ws/sessions/{session_id}")
+async def session_updates(
+    websocket: WebSocket,
+    session_id: str,
+    container: AppContainer = Depends(get_container),
+) -> None:
+    await container.job_stream_hub.stream_session(
+        websocket,
+        session_id=session_id,
+        service=container.message_service,
+    )
 
 
 @router.websocket("/ws/jobs/{job_id}")

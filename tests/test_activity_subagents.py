@@ -69,3 +69,20 @@ def test_claude_usage_summary_is_compact_and_public():
     assert item["kind"] == "usage"
     assert item["title"] == "31.2k entrada · 450 salida · US$0.023"
     assert _usage_activity({}) is None
+
+
+def test_file_change_detail_keeps_unified_diffs():
+    item = activity_item(
+        {
+            "type": "fileChange",
+            "id": "f1",
+            "changes": [
+                {"path": "/repo/app.py", "kind": {"type": "update"}, "diff": "@@ -1 +1 @@\n-a\n+b"},
+                {"path": "/repo/new.md", "kind": {"type": "add"}, "diff": "+hola"},
+            ],
+        },
+        completed=True,
+    )
+    assert item["title"] == "Cambios en 2 archivos: app.py, new.md"
+    assert "--- /repo/app.py (update)\n@@ -1 +1 @@\n-a\n+b" in item["detail"]
+    assert "--- /repo/new.md (add)\n+hola" in item["detail"]

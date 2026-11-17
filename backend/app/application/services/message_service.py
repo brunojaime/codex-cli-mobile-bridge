@@ -763,6 +763,23 @@ class MessageService:
     def get_session(self, session_id: str) -> ChatSession | None:
         return self._repository.get_session(session_id)
 
+    def session_fingerprint(self, session_id: str) -> str | None:
+        """Cheap change marker for push updates; None when the session is gone."""
+        session = self._repository.get_session(session_id)
+        if session is None:
+            return None
+        recent = self._repository.list_recent_messages(session_id, limit=3)
+        parts = [
+            session.updated_at.isoformat() if session.updated_at else "",
+            "archived" if session.archived_at else "active",
+            session.title or "",
+        ]
+        parts.extend(
+            f"{message.id}:{getattr(message.status, 'value', message.status)}:{len(message.content or '')}"
+            for message in recent
+        )
+        return "|".join(parts)
+
     def refresh_session(self, session_id: str) -> ChatSession | None:
         session = self._repository.get_session(session_id)
         if session is None:
@@ -1933,6 +1950,15 @@ class MessageService:
         cancelled_job = self.get_job(job_id)
         return cancelled_job or job
 
+    def steer_job(self, job_id: str, message: str) -> bool:
+        """Redirect a running job. Returns False when the job cannot be steered."""
+        job = self.get_job(job_id)
+        if job is None:
+            raise ValueError(f"Job {job_id} was not found.")
+        if job.status.is_terminal:
+            return False
+        return bool(self._execution_provider.steer_job(job_id, message))
+
     def retry_job(self, job_id: str) -> Job:
         self._ensure_accepting_new_jobs()
         original_job = self.get_job(job_id)
@@ -2436,8 +2462,15 @@ class MessageService:
                 job_id=job.id,
             )
         elif job.status == JobStatus.CANCELLED:
+            partial = (job.response or "").strip()
             assistant_message.sync(
-                content=job.error or "Execution cancelled.",
+                # Keep what the agent already wrote; the user stopped it, the
+                # work shown so far is still useful context.
+                content=(
+                    f"{partial}\n\n_Detenido por el usuario._"
+                    if partial
+                    else job.error or "Execution cancelled."
+                ),
                 status=ChatMessageStatus.CANCELLED,
                 job_id=job.id,
             )

@@ -77,6 +77,13 @@ class ExecutionProvider(ABC):
     def supports_job_cancellation(self) -> bool:
         return False
 
+    def supports_job_steering(self) -> bool:
+        return False
+
+    def steer_job(self, job_id: str, message: str) -> bool:
+        """Inject a user instruction into a running job; False when unsupported."""
+        return False
+
     def cancel_job(self, job_id: str) -> bool:
         return False
 

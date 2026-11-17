@@ -119,6 +119,16 @@ class ApiClient {
     return response.bodyBytes;
   }
 
+  Uri sessionStreamUri(String sessionId) {
+    final httpUri = Uri.parse(baseUrl);
+    final scheme = httpUri.scheme == 'https' ? 'wss' : 'ws';
+    return httpUri.replace(
+      scheme: scheme,
+      path:
+          '${httpUri.path.replaceAll(RegExp(r'/$'), '')}/ws/sessions/$sessionId',
+    );
+  }
+
   Uri jobStreamUri(String jobId) {
     final httpUri = Uri.parse(baseUrl);
     final scheme = httpUri.scheme == 'https' ? 'wss' : 'ws';
@@ -2337,6 +2347,18 @@ class ApiClient {
 
     final payload = jsonDecode(response.body) as Map<String, dynamic>;
     return JobStatusResponse.fromJson(payload);
+  }
+
+  /// Redirects a running job. Returns false when the backend cannot steer it.
+  Future<bool> steerJob(String jobId, String message) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/jobs/$jobId/steer'),
+      headers: const <String, String>{'Content-Type': 'application/json'},
+      body: jsonEncode(<String, String>{'message': message}),
+    );
+    if (response.statusCode == 200) return true;
+    if (response.statusCode == 409 || response.statusCode == 404) return false;
+    throw Exception('Failed to steer job: ${response.body}');
   }
 
   Future<JobStatusResponse> retryJob(String jobId) async {

@@ -41,12 +41,28 @@ def activity_item(item: dict, *, completed: bool) -> dict[str, str] | None:
         if completed and code is not None:
             detail += f"\n\nSalida: {code}"
     elif kind == "filechange":
-        title = "Cambios en archivos"
-        detail = "\n".join(
-            str(change.get("path", ""))
-            for change in item.get("changes", [])
-            if isinstance(change, dict)
+        changes = [c for c in item.get("changes", []) if isinstance(c, dict)]
+        names = [str(c.get("path", "")).rsplit("/", 1)[-1] for c in changes]
+        title = (
+            f"Cambios en {len(changes)} archivo{'s' if len(changes) != 1 else ''}: "
+            + ", ".join(names[:4])
+            + ("…" if len(names) > 4 else "")
+            if changes
+            else "Cambios en archivos"
         )
+        blocks = []
+        for change in changes:
+            path = str(change.get("path", ""))
+            change_kind = change.get("kind")
+            label = (
+                change_kind.get("type")
+                if isinstance(change_kind, dict)
+                else str(change_kind or "update")
+            )
+            diff = str(change.get("diff") or "").rstrip()
+            header = f"--- {path} ({label})"
+            blocks.append(header + ("\n" + diff if diff else ""))
+        detail = "\n\n".join(blocks)
     elif kind == "collabagenttoolcall" or (
         kind == "tooluse" and str(item.get("name", "")) in {"Task", "Agent"}
     ):

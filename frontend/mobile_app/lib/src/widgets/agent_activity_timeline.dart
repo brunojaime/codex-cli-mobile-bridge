@@ -177,6 +177,8 @@ class _ActivityRowState extends State<_ActivityRow> {
   Widget build(BuildContext context) {
     final item = widget.activity;
     final commentary = item.kind == 'commentary';
+    final isDiff = !commentary && looksLikeDiff(item.detail);
+    final stats = isDiff ? diffStats(item.detail) : (0, 0);
     final (label, icon, color) = switch (item.status) {
       'observed' => (
           'Registrado',
@@ -226,7 +228,38 @@ class _ActivityRowState extends State<_ActivityRow> {
             border: Border(left: BorderSide(color: Color(0xFF43516A)))),
         child: Padding(
           padding: const EdgeInsets.only(left: 14, bottom: 10, top: 2),
-          child: commentary
+          child: item.kind == 'steer'
+              ? Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      const Padding(
+                        padding: EdgeInsets.only(top: 2),
+                        child: Icon(Icons.alt_route_rounded,
+                            size: 17, color: Color(0xFF55D6BE)),
+                      ),
+                      const SizedBox(width: 9),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: <Widget>[
+                            const Text('Tu indicación (sin detener al agente)',
+                                style: TextStyle(
+                                    color: Color(0xFF55D6BE),
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600)),
+                            const SizedBox(height: 3),
+                            SelectableText(item.title,
+                                style: const TextStyle(
+                                    color: Color(0xFFE6EEFF), fontSize: 14)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              : commentary
               ? Padding(
                   padding: const EdgeInsets.symmetric(vertical: 6),
                   child: RichMessageContent(
@@ -275,10 +308,27 @@ class _ActivityRowState extends State<_ActivityRow> {
                                               fontSize: 14,
                                               fontWeight: FontWeight.w600)),
                                       const SizedBox(height: 3),
-                                      Text(label,
-                                          style: TextStyle(
-                                              color: color, fontSize: 12)),
+                                      Row(children: <Widget>[
+                                        Text(label,
+                                            style: TextStyle(
+                                                color: color, fontSize: 12)),
+                                        if (isDiff) ...<Widget>[
+                                          const SizedBox(width: 8),
+                                          Text('+${stats.$1}',
+                                              style: const TextStyle(
+                                                  color: Color(0xFF7EE2A8),
+                                                  fontSize: 12,
+                                                  fontWeight: FontWeight.w600)),
+                                          const SizedBox(width: 4),
+                                          Text('−${stats.$2}',
+                                              style: const TextStyle(
+                                                  color: Color(0xFFFF9C94),
+                                                  fontSize: 12,
+                                                  fontWeight: FontWeight.w600)),
+                                        ],
+                                      ]),
                                       if (!_expanded &&
+                                          !isDiff &&
                                           item.detail.trim().isNotEmpty) ...[
                                         const SizedBox(height: 4),
                                         Text(
@@ -305,7 +355,9 @@ class _ActivityRowState extends State<_ActivityRow> {
                               ]),
                         ),
                       ),
-                      if (_expanded && item.detail.isNotEmpty)
+                      if (_expanded && item.detail.isNotEmpty && isDiff)
+                        _DiffView(text: item.detail)
+                      else if (_expanded && item.detail.isNotEmpty)
                         Container(
                           constraints: const BoxConstraints(maxHeight: 280),
                           padding: const EdgeInsets.all(12),
@@ -614,6 +666,19 @@ AgentActivity _withReadableToolInput(AgentActivity item) {
 
   String clip(String value, [int max = 110]) =>
       value.length > max ? '${value.substring(0, max)}…' : value;
+  final editDiff = claudeEditDiff(item.title, input);
+  if (editDiff != null) {
+    final path = text('file_path')!;
+    return AgentActivity(
+      id: item.id,
+      kind: item.kind,
+      title: '${item.title} · ${clip(path)}',
+      status: item.status,
+      detail: [editDiff, if (rest.isNotEmpty) rest].join('\n\n'),
+      createdAt: item.createdAt,
+      parentId: item.parentId,
+    );
+  }
   final command = text('command');
   final description = text('description');
   final path = text('file_path') ?? text('path') ?? text('notebook_path');
@@ -644,4 +709,135 @@ AgentActivity _withReadableToolInput(AgentActivity item) {
     createdAt: item.createdAt,
     parentId: item.parentId,
   );
+}
+
+/// True when [text] contains unified-diff style content worth coloring.
+bool looksLikeDiff(String text) {
+  final lines = text.split('\n');
+  var marks = 0;
+  for (final line in lines) {
+    if (line.startsWith('--- ') || line.startsWith('@@')) return true;
+    if (line.startsWith('+') || line.startsWith('-')) marks++;
+  }
+  return marks >= 2 && marks * 2 >= lines.length;
+}
+
+/// Counts added/removed lines, ignoring file headers.
+(int, int) diffStats(String text) {
+  var added = 0;
+  var removed = 0;
+  for (final line in text.split('\n')) {
+    if (line.startsWith('+++') || line.startsWith('--- ')) continue;
+    if (line.startsWith('+')) added++;
+    if (line.startsWith('-')) removed++;
+  }
+  return (added, removed);
+}
+
+String _prefixLines(String text, String prefix) =>
+    text.split('\n').map((line) => '$prefix$line').join('\n');
+
+/// Builds a readable diff from Claude Edit / MultiEdit / Write tool inputs.
+String? claudeEditDiff(String toolName, Map<String, dynamic> input) {
+  final path = input['file_path'];
+  if (path is! String || path.isEmpty) return null;
+  if (toolName == 'Write' && input['content'] is String) {
+    return '--- $path (write)\n${_prefixLines(input['content'] as String, '+')}';
+  }
+  final edits = <Map<String, dynamic>>[
+    if (input['old_string'] is String || input['new_string'] is String) input,
+    if (input['edits'] is List)
+      for (final edit in input['edits'] as List)
+        if (edit is Map<String, dynamic>) edit,
+  ];
+  if (edits.isEmpty) return null;
+  final buffer = StringBuffer('--- $path (update)');
+  for (final edit in edits) {
+    final oldText = edit['old_string'];
+    final newText = edit['new_string'];
+    buffer.write('\n@@');
+    if (oldText is String && oldText.isNotEmpty) {
+      buffer.write('\n${_prefixLines(oldText, '-')}');
+    }
+    if (newText is String && newText.isNotEmpty) {
+      buffer.write('\n${_prefixLines(newText, '+')}');
+    }
+  }
+  return buffer.toString();
+}
+
+class _DiffView extends StatelessWidget {
+  const _DiffView({required this.text});
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final lines = text.split('\n');
+    final shown = lines.length > 400 ? lines.sublist(0, 400) : lines;
+    return Container(
+      constraints: const BoxConstraints(maxHeight: 360),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0D1524),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Scrollbar(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SelectionArea(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  for (final line in shown) _DiffLine(line: line),
+                  if (lines.length > shown.length)
+                    Padding(
+                      padding: const EdgeInsets.all(8),
+                      child: Text(
+                        '… ${lines.length - shown.length} líneas más',
+                        style: const TextStyle(color: Color(0xFFB8C8E0), fontSize: 12),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DiffLine extends StatelessWidget {
+  const _DiffLine({required this.line});
+  final String line;
+
+  @override
+  Widget build(BuildContext context) {
+    final header = line.startsWith('--- ') || line.startsWith('+++');
+    final (Color? background, Color foreground) = header
+        ? (const Color(0xFF1B2A44), const Color(0xFFE6EEFF))
+        : line.startsWith('@@')
+            ? (null, const Color(0xFF8FEAFF))
+            : line.startsWith('+')
+                ? (const Color(0x3326A269), const Color(0xFFB9F6CA))
+                : line.startsWith('-')
+                    ? (const Color(0x33E5534B), const Color(0xFFFFC2BD))
+                    : (null, const Color(0xFFD9E4F5));
+    return Container(
+      color: background,
+      padding: EdgeInsets.fromLTRB(12, header ? 4 : 0, 16, header ? 4 : 0),
+      child: Text(
+        line.isEmpty ? ' ' : line,
+        softWrap: false,
+        style: TextStyle(
+          color: foreground,
+          fontFamily: 'monospace',
+          fontSize: 12.5,
+          height: 1.45,
+          fontWeight: header ? FontWeight.w600 : FontWeight.w400,
+        ),
+      ),
+    );
+  }
 }

@@ -160,6 +160,10 @@ class LocalExecutionProvider(ExecutionProvider):
         self._states: dict[str, _ExecutionState] = {}
         self._subscribers: dict[str, list[Callable[[ExecutionSnapshot], None]]] = {}
         self._processes: dict[str, subprocess.Popen[str]] = {}
+        # job_id -> (thread_id, turn_id) of the running app-server turn.
+        self._steer_targets: dict[str, tuple[str, str]] = {}
+        self._token_usage: dict[str, dict[str, int]] = {}
+        self._stdin_lock = threading.Lock()
         self._queued_executions: dict[str, _QueuedExecution] = {}
         self._serial_tails: dict[str, str] = {}
         self._serial_successors: dict[str, str] = {}
@@ -294,6 +298,91 @@ class LocalExecutionProvider(ExecutionProvider):
 
     def supports_job_cancellation(self) -> bool:
         return True
+
+    def supports_job_steering(self) -> bool:
+        return True
+
+    def steer_job(self, job_id: str, message: str) -> bool:
+        """Add a user instruction to the running Codex turn without stopping it."""
+        text = message.strip()
+        if not text:
+            return False
+        with self._lock:
+            current = self._states.get(job_id)
+            process = self._processes.get(job_id)
+            target = self._steer_targets.get(job_id)
+        if (
+            current is None
+            or current.status.is_terminal
+            or process is None
+            or process.poll() is not None
+            or target is None
+        ):
+            return False
+        thread_id, turn_id = target
+        try:
+            self._app_server_send(
+                process,
+                {
+                    "id": f"steer-{uuid4().hex[:12]}",
+                    "method": "turn/steer",
+                    "params": {
+                        "threadId": thread_id,
+                        "expectedTurnId": turn_id,
+                        "input": [{"type": "text", "text": text}],
+                    },
+                },
+            )
+        except (OSError, ValueError, _AppServerRequestError):
+            return False
+        self._record_activity(
+            job_id,
+            activity_entry(
+                f"steer-{uuid4().hex[:12]}",
+                "steer",
+                text,
+                "",
+                "completed",
+            ),
+        )
+        return True
+
+    def _record_token_usage(self, job_id: str, params: object) -> None:
+        if not isinstance(params, dict):
+            return
+        usage = params.get("tokenUsage")
+        last = usage.get("last") if isinstance(usage, dict) else None
+        if not isinstance(last, dict):
+            return
+
+        def as_int(key: str) -> int:
+            value = last.get(key)
+            return int(value) if isinstance(value, (int, float)) else 0
+
+        with self._lock:
+            totals = self._token_usage.setdefault(
+                job_id, {"input": 0, "cached": 0, "output": 0, "reasoning": 0}
+            )
+            totals["input"] += as_int("inputTokens")
+            totals["cached"] += as_int("cachedInputTokens")
+            totals["output"] += as_int("outputTokens")
+            totals["reasoning"] += as_int("reasoningOutputTokens")
+            snapshot = dict(totals)
+
+        def compact(value: int) -> str:
+            if value >= 1_000_000:
+                return f"{value / 1_000_000:.1f}M"
+            if value >= 1_000:
+                return f"{value / 1_000:.1f}k"
+            return str(value)
+
+        title = f"{compact(snapshot['input'])} entrada · {compact(snapshot['output'])} salida"
+        if snapshot["reasoning"]:
+            title += f" ({compact(snapshot['reasoning'])} razonamiento)"
+        self._record_activity(
+            job_id,
+            activity_entry("usage", "usage", title, json.dumps(snapshot), "completed"),
+        )
 
     def cancel_job(self, job_id: str) -> bool:
         with self._lock:
@@ -568,6 +657,8 @@ class LocalExecutionProvider(ExecutionProvider):
         finally:
             with self._lock:
                 self._processes.pop(job_id, None)
+                self._steer_targets.pop(job_id, None)
+                self._token_usage.pop(job_id, None)
             self._cleanup_output_file(output_path)
             self._cleanup_paths(cleanup_paths)
 
@@ -873,6 +964,8 @@ class LocalExecutionProvider(ExecutionProvider):
         finally:
             with self._lock:
                 self._processes.pop(job_id, None)
+                self._steer_targets.pop(job_id, None)
+                self._token_usage.pop(job_id, None)
             if process is not None and process.poll() is None:
                 self._terminate_process_tree(process)
             self._cleanup_paths(cleanup_paths)
@@ -1154,8 +1247,9 @@ class LocalExecutionProvider(ExecutionProvider):
     ) -> None:
         if process.stdin is None:
             raise _AppServerRequestError("Codex app-server stdin is not available.")
-        process.stdin.write(json.dumps(payload) + "\n")
-        process.stdin.flush()
+        with self._stdin_lock:
+            process.stdin.write(json.dumps(payload) + "\n")
+            process.stdin.flush()
 
     def _await_thread_response(
         self,
@@ -1337,6 +1431,18 @@ class LocalExecutionProvider(ExecutionProvider):
     ) -> bool:
         method = payload.get("method")
         if not isinstance(method, str):
+            return False
+
+        if method == "turn/started":
+            params = payload.get("params")
+            turn = params.get("turn") if isinstance(params, dict) else None
+            thread_id = params.get("threadId") if isinstance(params, dict) else None
+            if isinstance(turn, dict) and isinstance(turn.get("id"), str) and isinstance(thread_id, str):
+                with self._lock:
+                    self._steer_targets[job_id] = (thread_id, turn["id"])
+
+        if method == "thread/tokenUsage/updated":
+            self._record_token_usage(job_id, payload.get("params"))
             return False
 
         if method == "turn/plan/updated":
