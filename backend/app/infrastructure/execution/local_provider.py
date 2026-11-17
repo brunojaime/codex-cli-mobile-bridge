@@ -142,6 +142,7 @@ class LocalExecutionProvider(ExecutionProvider):
         claude_command: str = "claude",
         claude_effort: str = "medium",
         claude_permission_mode: str = "default",
+        claude_chrome: bool = False,
         ai_policy: AiRuntimePolicy | None = None,
         use_exec_mode: bool = True,
         streaming_mode: Literal["auto", "exec", "app_server"] = "auto",
@@ -155,6 +156,7 @@ class LocalExecutionProvider(ExecutionProvider):
         self._claude_command = claude_command
         self._claude_permission_mode = claude_permission_mode
         self._claude_effort = claude_effort
+        self._claude_chrome = claude_chrome
         self._ai_policy = ai_policy or AiRuntimePolicy()
         self._use_exec_mode = use_exec_mode
         self._streaming_mode = streaming_mode

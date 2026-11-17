@@ -343,3 +343,13 @@ def test_project_permission_mode_overrides_server_default(tmp_path):
     result = wait(p, p.execute("hello", model="claude:sonnet", workdir=str(tmp_path)))
     argv = json.loads(result.response)["argv"]
     assert argv[argv.index("--permission-mode") + 1] == "default"
+
+
+def test_claude_chrome_flag_follows_setting(tmp_path):
+    from backend.app.infrastructure.config.settings import Settings
+
+    assert Settings(_env_file=None).claude_chrome is True
+    for enabled in (True, False):
+        p = provider(claude_chrome=enabled)
+        result = wait(p, p.execute("hello", model="claude:sonnet", workdir=str(tmp_path)))
+        assert ("--chrome" in json.loads(result.response)["argv"]) is enabled

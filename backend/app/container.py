@@ -419,6 +419,7 @@ def _build_execution_provider(settings: Settings) -> ExecutionProvider:
         claude_command=settings.claude_command,
         claude_effort=policy.effort,
         claude_permission_mode=settings.claude_permission_mode,
+        claude_chrome=settings.claude_chrome,
         ai_policy=policy,
         use_exec_mode=settings.codex_use_exec,
         streaming_mode=settings.codex_streaming_mode,
