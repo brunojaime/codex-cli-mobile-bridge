@@ -330,3 +330,16 @@ def test_auto_permission_mode_preserves_readonly_policy(tmp_path, restricted):
     assert "--dangerously-skip-permissions" not in argv
     if restricted:
         assert argv[argv.index("--tools") + 1] == "Read,Glob,Grep"
+
+
+def test_project_permission_mode_overrides_server_default(tmp_path):
+    from backend.app.application.services import project_permissions
+
+    p = provider(claude_permission_mode="acceptEdits")
+    result = wait(p, p.execute("hello", model="claude:sonnet", workdir=str(tmp_path)))
+    argv = json.loads(result.response)["argv"]
+    assert argv[argv.index("--permission-mode") + 1] == "acceptEdits"
+    project_permissions.set_mode(str(tmp_path), "default")
+    result = wait(p, p.execute("hello", model="claude:sonnet", workdir=str(tmp_path)))
+    argv = json.loads(result.response)["argv"]
+    assert argv[argv.index("--permission-mode") + 1] == "default"

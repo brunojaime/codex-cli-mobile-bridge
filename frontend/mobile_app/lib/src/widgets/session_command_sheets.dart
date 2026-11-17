@@ -127,6 +127,68 @@ class _PermissionsSheetState extends State<_PermissionsSheet> {
     }
   }
 
+  bool _savingMode = false;
+
+  Future<void> _setMode(String? mode) async {
+    if (_savingMode) return;
+    setState(() {
+      _savingMode = true;
+      _error = null;
+    });
+    try {
+      final data =
+          await widget.client.setPermissionMode(widget.sessionId, mode);
+      if (mounted) setState(() => _data = data);
+    } catch (error) {
+      if (mounted) setState(() => _error = '$error');
+    } finally {
+      if (mounted) setState(() => _savingMode = false);
+    }
+  }
+
+  Widget _claudeModes(Map? claude) {
+    final current = claude?['mode'] as String?;
+    final fromProject = claude?['source'] == 'project';
+    final options = ((claude?['options'] as List?) ?? const [])
+        .whereType<Map>()
+        .toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        const Text('Claude',
+            style: TextStyle(color: _text, fontWeight: FontWeight.w700)),
+        const Text('Cómo pide permiso en este proyecto. Se aplica desde el próximo mensaje.',
+            style: TextStyle(color: _muted, fontSize: 12.5)),
+        const SizedBox(height: 6),
+        RadioGroup<String>(
+          groupValue: current,
+          onChanged: (mode) {
+            if (mode != null && mode != current) _setMode(mode);
+          },
+          child: Column(
+            children: <Widget>[
+              for (final option in options)
+                RadioListTile<String>(
+                  value: option['mode'] as String,
+                  enabled: !_savingMode,
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  title: Text('${option['label']}'),
+                  subtitle: Text('${option['description']}'),
+                ),
+            ],
+          ),
+        ),
+        if (fromProject && claude?['server_default'] != current)
+          TextButton(
+            onPressed: _savingMode ? null : () => _setMode(null),
+            child: const Text('Volver al modo por defecto'),
+          ),
+        if (_savingMode) const LinearProgressIndicator(minHeight: 2),
+      ],
+    );
+  }
+
   Future<void> _remove(String list, String rule) async {
     try {
       await widget.client.removePermissionRule(widget.sessionId, list, rule);
@@ -199,7 +261,8 @@ class _PermissionsSheetState extends State<_PermissionsSheet> {
                 child: Center(child: CircularProgressIndicator()),
               ),
             if (data != null) ...<Widget>[
-              _row('Claude', '${claude?['description'] ?? ''} (${claude?['mode']})'),
+              _claudeModes(claude),
+              const SizedBox(height: 8),
               _row('Codex', '${codex?['description'] ?? ''}'),
               const SizedBox(height: 12),
               const Text('Recordados en este proyecto',

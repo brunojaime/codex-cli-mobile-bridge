@@ -7106,6 +7106,34 @@ async def get_session_permissions(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+class PermissionModeRequest(BaseModel):
+    # None goes back to the server default.
+    mode: Literal["acceptEdits", "default", "auto", "plan"] | None = None
+
+
+@router.post("/sessions/{session_id}/permissions/mode")
+async def set_session_permission_mode(
+    session_id: str,
+    payload: PermissionModeRequest,
+    service: MessageService = Depends(get_message_service),
+    container: AppContainer = Depends(get_container),
+) -> dict:
+    """Choose how Claude asks for permission in this project (next runs)."""
+    from backend.app.application.services import project_permissions
+
+    workspace = await _session_file_workspace(session_id, service)
+    try:
+        await run_in_threadpool(project_permissions.set_mode, workspace, payload.mode)
+        return await run_in_threadpool(
+            project_permissions.describe,
+            workspace,
+            claude_mode=container.settings.claude_permission_mode,
+            codex_exec_args=container.settings.codex_exec_args,
+        )
+    except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 class RemovePermissionRuleRequest(BaseModel):
     list: Literal["allow", "ask", "deny"]
     rule: str = Field(..., min_length=1, max_length=2000)

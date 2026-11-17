@@ -16,6 +16,7 @@ from backend.app.domain.entities.job import JobStatus
 from backend.app.infrastructure.execution.claude_options import translate_options
 from backend.app.infrastructure.execution.activity import activity_item, entry
 from backend.app.infrastructure.execution import claude_interactions
+from backend.app.application.services import project_permissions
 
 
 def run_claude(
@@ -63,7 +64,11 @@ def run_claude(
             "stdio",
         ]
         if "--permission-mode" not in option_args:
-            command += ["--permission-mode", provider._claude_permission_mode]
+            # The project's choice (saved from the front) wins over the server default.
+            command += [
+                "--permission-mode",
+                project_permissions.effective_mode(workdir, provider._claude_permission_mode),
+            ]
         command += option_args
         if option_context and not message.lstrip().startswith("/"):
             # Slash commands (/compact, /cost…) only run when they are the
