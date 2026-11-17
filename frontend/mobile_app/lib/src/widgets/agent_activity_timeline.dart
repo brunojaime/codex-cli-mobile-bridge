@@ -694,10 +694,14 @@ AgentActivity _withReadableToolInput(AgentActivity item) {
     title = '${item.title} · ${clip(description)}';
   }
   if (title == null) return item;
+  final target = path ?? pattern;
   final readable = <String>[
     if (description != null && command != null) description,
     if (command != null) command,
-    if (command == null) const JsonEncoder.withIndent('  ').convert(input),
+    // Reads and searches: the result matters more than the parameters.
+    if (command == null && target != null && rest.isEmpty) target,
+    if (command == null && target == null)
+      const JsonEncoder.withIndent('  ').convert(input),
     if (rest.isNotEmpty) rest,
   ].join('\n\n');
   return AgentActivity(
