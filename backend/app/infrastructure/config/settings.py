@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     claude_command: str = "claude"
     claude_permission_mode: Literal["default", "acceptEdits", "auto", "dontAsk"] = "acceptEdits"
     claude_effort: Literal["low", "medium", "high", "xhigh", "max"] = "medium"
+    # Lets Claude drive the user's Chrome through the Claude in Chrome extension.
+    claude_chrome: bool = True
     agent_default_model: str | None = None
     ai_provider: Literal["auto", "codex", "claude"] = "auto"
     ai_model: str | None = None

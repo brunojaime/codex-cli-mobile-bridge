@@ -69,6 +69,8 @@ def run_claude(
                 "--permission-mode",
                 project_permissions.effective_mode(workdir, provider._claude_permission_mode),
             ]
+        if provider._claude_chrome:
+            command.append("--chrome")
         command += option_args
         if option_context and not message.lstrip().startswith("/"):
             # Slash commands (/compact, /cost…) only run when they are the
