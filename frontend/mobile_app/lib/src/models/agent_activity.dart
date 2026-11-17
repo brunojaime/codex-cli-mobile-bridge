@@ -10,7 +10,11 @@ class AgentActivity {
     this.detail = '',
     this.createdAt,
     this.parentId,
+    this.resolution,
   });
+
+  /// How the user answered a permission/question/plan request.
+  final String? resolution;
 
   final String id;
   final String kind;
@@ -34,6 +38,7 @@ class AgentActivity {
         parentId: (json['parent_id'] as String?)?.trim().isEmpty ?? true
             ? null
             : (json['parent_id'] as String).trim(),
+        resolution: json['resolution'] as String?,
       );
 
   Map<String, dynamic> toJson() => {
@@ -44,6 +49,7 @@ class AgentActivity {
         'detail': detail,
         if (createdAt != null) 'created_at': createdAt!.toIso8601String(),
         if (parentId != null) 'parent_id': parentId,
+        if (resolution != null) 'resolution': resolution,
       };
 
   @override
@@ -55,11 +61,12 @@ class AgentActivity {
       status == other.status &&
       detail == other.detail &&
       createdAt == other.createdAt &&
-      parentId == other.parentId;
+      parentId == other.parentId &&
+      resolution == other.resolution;
 
   @override
   int get hashCode =>
-      Object.hash(id, kind, title, status, detail, createdAt, parentId);
+      Object.hash(id, kind, title, status, detail, createdAt, parentId, resolution);
 }
 
 List<AgentActivity> parseAgentActivities(Object? value) => value is List

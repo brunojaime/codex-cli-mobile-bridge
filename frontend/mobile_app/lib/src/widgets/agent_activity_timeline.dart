@@ -195,6 +195,11 @@ class _ActivityRowState extends State<_ActivityRow> {
           Icons.pending_outlined,
           const Color(0xFF8FEAFF)
         ),
+      'waiting' => (
+          'Esperando tu respuesta',
+          Icons.front_hand_outlined,
+          const Color(0xFFFFC857)
+        ),
       'completed' => (
           'Completado',
           Icons.check_circle_outline_rounded,
@@ -387,6 +392,29 @@ final RegExp _mcpStartupFailure = RegExp(
 
 /// Makes raw provider events readable: groups MCP startup failures into one
 /// warning row and moves very long titles into the expandable detail.
+const _interactionKinds = <String>{'permission', 'question', 'plan'};
+
+/// Permission/question/plan requests read as one line with their outcome.
+AgentActivity _withInteractionTitle(AgentActivity item) {
+  if (!_interactionKinds.contains(item.kind)) return item;
+  final resolution = item.resolution?.trim() ?? '';
+  final title = item.status == 'waiting'
+      ? '${item.title} — respondé abajo'
+      : resolution.isEmpty
+          ? item.title
+          : '${item.title} → $resolution';
+  return AgentActivity(
+    id: item.id,
+    kind: item.kind == 'plan' ? 'plan_request' : 'tool',
+    title: title,
+    status: item.status,
+    detail: item.detail,
+    createdAt: item.createdAt,
+    parentId: item.parentId,
+    resolution: item.resolution,
+  );
+}
+
 List<AgentActivity> normalizeAgentActivities(List<AgentActivity> input) {
   final result = <AgentActivity>[];
   final mcpNames = <String>[];
@@ -394,7 +422,15 @@ List<AgentActivity> normalizeAgentActivities(List<AgentActivity> input) {
   int? mcpIndex;
   final readyNames = <String>[];
   int? readyIndex;
-  for (final original in input) {
+  final answeredInPlace = input.any((item) => _interactionKinds.contains(item.kind));
+  for (final source in input) {
+    // The question/plan request row already shows these tools readably.
+    if (answeredInPlace &&
+        source.kind == 'tool' &&
+        (source.title == 'AskUserQuestion' || source.title == 'ExitPlanMode')) {
+      continue;
+    }
+    final original = _withInteractionTitle(source);
     final item = _withReadableToolInput(_withCommandTitle(original));
     final title = item.title.trim();
     final ready = _mcpReady.firstMatch(title);

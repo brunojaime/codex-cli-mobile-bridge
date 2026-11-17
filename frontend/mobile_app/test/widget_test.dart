@@ -1113,7 +1113,8 @@ flowchart LR
   testWidgets('renders Codex Remote shell', (tester) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     await tester.pumpWidget(
-      const CodexMobileApp(initialApiBaseUrl: 'http://localhost:8000'),
+      const CodexMobileApp(
+          initialApiBaseUrl: 'http://localhost:8000', startOnDashboard: false),
     );
 
     expect(find.text('Codex Remote'), findsOneWidget);
@@ -1161,6 +1162,7 @@ flowchart LR
     await tester.pumpWidget(
       CodexMobileApp(
         initialApiBaseUrl: 'http://bridge.test',
+        startOnDashboard: false,
         currentVersion: '1.2.3',
         currentBuild: 33,
         appUpdaterEnabled: true,
@@ -1194,7 +1196,8 @@ flowchart LR
     addTearDown(tester.view.resetDevicePixelRatio);
 
     await tester.pumpWidget(
-      const CodexMobileApp(initialApiBaseUrl: 'http://localhost:8000'),
+      const CodexMobileApp(
+          initialApiBaseUrl: 'http://localhost:8000', startOnDashboard: false),
     );
     await tester.pump();
 

@@ -1,3 +1,9 @@
+import '../models/run_overview.dart';
+import '../services/run_alerts.dart';
+import '../state/runs_monitor.dart';
+import '../widgets/runs_dashboard.dart';
+import '../widgets/interaction_card.dart';
+import '../widgets/session_command_sheets.dart';
 import 'objective_team_screen.dart';
 import '../services/objective_team_client.dart';
 import 'dart:async';
@@ -457,7 +463,11 @@ class ChatScreen extends StatefulWidget {
     this.initialProdUpdateStatusOverride,
     this.prodUpdateClientOverride,
     this.projectDocumentsClientOverride,
+    this.enableRunsDashboard = false,
   });
+
+  /// Starts on the live runs dashboard (the app's home) instead of a chat.
+  final bool enableRunsDashboard;
 
   final String initialApiBaseUrl;
   final ChatNotificationService notificationService;
@@ -624,6 +634,215 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     Navigator.of(context).pop();
   }
   static const int _sessionGroupPageSize = 5;
+  RunsMonitor? _runsMonitor;
+  bool _showDashboard = false;
+
+  Future<void> _openRunSession(String sessionId) async {
+    if (!mounted) return;
+    setState(() => _showDashboard = false);
+    if (_chatController.selectedSessionId != sessionId) {
+      await _chatController.selectSession(sessionId);
+    }
+  }
+
+  void _showRunsDashboard() {
+    if (_runsMonitor == null || _showDashboard) return;
+    setState(() => _showDashboard = true);
+  }
+
+  Future<void> _stopRun(RunCard run) async {
+    final stopped = await _chatController.cancelJob(run.jobId);
+    if (!mounted) return;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+      content: Text(stopped ? 'Detuviste "${run.sessionTitle}"' : 'No se pudo detener'),
+    ));
+    await _runsMonitor?.refresh();
+  }
+
+  Future<void> _newTaskFromDashboard() async {
+    final before = _chatController.selectedSessionId;
+    await _openWorkspacePicker();
+    if (!mounted) return;
+    if (_chatController.selectedSessionId != before) {
+      setState(() => _showDashboard = false);
+    }
+  }
+
+  Future<void> _toggleRunAlerts() async {
+    final monitor = _runsMonitor;
+    if (monitor == null) return;
+    final alerts = monitor.alerts;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (!alerts.supported) {
+      messenger?.showSnackBar(const SnackBar(
+          content: Text('Este navegador no permite avisos del sistema.')));
+      return;
+    }
+    if (alerts.enabled && alerts.permission == 'granted') {
+      alerts.enabled = false;
+      setState(() {});
+      messenger?.showSnackBar(const SnackBar(content: Text('Avisos desactivados')));
+      return;
+    }
+    final permission = alerts.permission == 'granted'
+        ? 'granted'
+        : await alerts.requestPermission();
+    alerts.enabled = permission == 'granted';
+    if (!mounted) return;
+    setState(() {});
+    messenger?.showSnackBar(SnackBar(
+      content: Text(permission == 'granted'
+          ? 'Listo: te aviso cuando un agente te necesite o termine, aunque estés en otra pestaña.'
+          : 'El navegador bloqueó los avisos. Habilitalos desde el candado de la barra de direcciones.'),
+    ));
+  }
+
+  Widget _buildDashboardButton({bool compact = false}) {
+    final monitor = _runsMonitor!;
+    return AnimatedBuilder(
+      animation: monitor,
+      builder: (context, _) {
+        final waiting = monitor.overview.count(RunState.needsYou);
+        final icon = Badge(
+          isLabelVisible: waiting > 0,
+          label: Text('$waiting'),
+          backgroundColor: const Color(0xFFFFC857),
+          textColor: const Color(0xFF2A1600),
+          child: const Icon(Icons.space_dashboard_outlined, size: 20),
+        );
+        if (compact) {
+          return IconButton(
+            key: const ValueKey('open-runs-dashboard'),
+            tooltip: 'Volver al panel',
+            onPressed: _showRunsDashboard,
+            icon: icon,
+          );
+        }
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          child: Tooltip(
+            message: 'Volver al panel (Ctrl+Shift+H)',
+            child: TextButton.icon(
+              key: const ValueKey('open-runs-dashboard'),
+              onPressed: _showRunsDashboard,
+              icon: Badge(
+                isLabelVisible: waiting > 0,
+                label: Text('$waiting'),
+                backgroundColor: const Color(0xFFFFC857),
+                textColor: const Color(0xFF2A1600),
+                child: const Icon(Icons.space_dashboard_outlined, size: 20),
+              ),
+              label: const Text('Panel'),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Pending permissions/questions/plans of the open chat, pinned above
+  /// the composer so they cannot be missed.
+  Widget _buildSessionRequests() {
+    final monitor = _runsMonitor!;
+    return AnimatedBuilder(
+      animation: monitor,
+      builder: (context, _) {
+        final sessionId = _chatController.selectedSessionId;
+        final runs = monitor.overview.runs
+            .where((run) => run.sessionId == sessionId && run.pending.isNotEmpty)
+            .toList();
+        if (runs.isEmpty) return const SizedBox.shrink();
+        final maxHeight = MediaQuery.sizeOf(context).height * .55;
+        return ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: maxHeight),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 920),
+                child: Column(
+                  children: <Widget>[
+                    for (final run in runs)
+                      for (final pending in run.pending)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: InteractionCard(
+                            key: ValueKey('chat-interaction-${pending.requestId}'),
+                            interaction: pending,
+                            busy: monitor.isAnswering(pending.requestId),
+                            onDecide: (decision) =>
+                                monitor.respond(run, pending, decision),
+                          ),
+                        ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildDashboardScaffold(bool isCompactAppBar) {
+    final monitor = _runsMonitor!;
+    final alerts = monitor.alerts;
+    final alertsOn = alerts.supported && alerts.enabled && alerts.permission == 'granted';
+    return Scaffold(
+      appBar: AppBar(
+        titleSpacing: 16,
+        title: const Text('Panel', style: TextStyle(fontWeight: FontWeight.w700)),
+        actions: <Widget>[
+          IconButton(
+            key: const ValueKey('toggle-run-alerts'),
+            tooltip: alertsOn ? 'Desactivar avisos' : 'Avisarme cuando me necesiten o terminen',
+            onPressed: _toggleRunAlerts,
+            icon: Icon(alertsOn
+                ? Icons.notifications_active_outlined
+                : Icons.notifications_off_outlined),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            child: isCompactAppBar
+                ? IconButton(
+                    tooltip: 'Ver chats',
+                    onPressed: () => setState(() => _showDashboard = false),
+                    icon: const Icon(Icons.forum_outlined),
+                  )
+                : TextButton.icon(
+                    onPressed: () => setState(() => _showDashboard = false),
+                    icon: const Icon(Icons.forum_outlined, size: 18),
+                    label: const Text('Chats'),
+                  ),
+          ),
+          const SizedBox(width: 4),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            child: isCompactAppBar
+                ? IconButton.filledTonal(
+                    tooltip: 'Nueva tarea',
+                    onPressed: _newTaskFromDashboard,
+                    icon: const Icon(Icons.add),
+                  )
+                : FilledButton.tonalIcon(
+                    onPressed: _newTaskFromDashboard,
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('Nueva tarea'),
+                  ),
+          ),
+          const SizedBox(width: 12),
+        ],
+      ),
+      body: SafeArea(
+        child: RunsDashboard(
+          monitor: monitor,
+          onOpenRun: (run) => unawaited(_openRunSession(run.sessionId)),
+          onStopRun: _stopRun,
+          onNewTask: _newTaskFromDashboard,
+        ),
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -660,6 +879,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
     _activeCodexTooling = widget.initialCodexTooling;
     _chatController.addListener(_handleChatControllerChanged);
+    if (widget.enableRunsDashboard) {
+      _showDashboard = true;
+      _runsMonitor = RunsMonitor(
+        alerts: createRunAlerts(),
+        onOpenSession: (sessionId) => unawaited(_openRunSession(sessionId)),
+      )..attach(_chatController.apiClient);
+    }
     _chatNotificationTaps = _notificationNavigation?.chatTaps.listen((_) {
       unawaited(_openPendingChatNotification());
     });
@@ -679,6 +905,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_handleGlobalShortcut);
+    _runsMonitor?.dispose();
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_chatNotificationTaps?.cancel());
     _notificationNavigation?.setVisibleChat(null, null);
@@ -1541,6 +1768,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           ],
                         ),
                 ),
+                if (_runsMonitor != null) _buildSessionRequests(),
                 OutboxPanel(
                   entries: _chatController.pendingOutbox,
                   storageError: _chatController.outboxStorageError,
@@ -1615,6 +1843,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               ],
             ),
           );
+        if (_showDashboard && _runsMonitor != null) {
+          return _buildDashboardScaffold(isCompactAppBar);
+        }
         return CallbackShortcuts(
           bindings: const <ShortcutActivator, VoidCallback>{},
           child: Focus(
@@ -1674,7 +1905,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               },
             ),
             title: _buildAppBarTitle(isCompactAppBar: isCompactAppBar),
-            actions: _buildAppBarActions(isCompactAppBar: isCompactAppBar),
+            actions: <Widget>[
+              if (_runsMonitor != null)
+                _buildDashboardButton(compact: isCompactAppBar),
+              ..._buildAppBarActions(isCompactAppBar: isCompactAppBar),
+            ],
           ),
           drawer: usePersistentSidebar
               ? null
@@ -1850,6 +2085,14 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   bool _handleGlobalShortcut(KeyEvent event) {
     if (event is! KeyDownEvent || !mounted) return false;
     if (ModalRoute.of(context)?.isCurrent == false) return false;
+    if (_runsMonitor != null &&
+        event.logicalKey == LogicalKeyboardKey.keyH &&
+        HardwareKeyboard.instance.isControlPressed &&
+        HardwareKeyboard.instance.isShiftPressed) {
+      setState(() => _showDashboard = !_showDashboard);
+      return true;
+    }
+    if (_showDashboard) return false;
     if (event.logicalKey == LogicalKeyboardKey.escape &&
         !HardwareKeyboard.instance.isControlPressed &&
         !HardwareKeyboard.instance.isMetaPressed &&
@@ -1975,6 +2218,99 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     );
   }
 
+  bool get _currentChatIsClaude {
+    final session = _chatController.currentSession;
+    if (session == null) return false;
+    final native = session.providerSessionId ?? '';
+    if (native.startsWith('claude:')) return true;
+    if (native.isNotEmpty) return false;
+    final model = session.agentConfiguration.agents
+        .where((agent) => agent.agentId == AgentId.generator)
+        .map((agent) => agent.model ?? '')
+        .firstOrNull;
+    return model?.startsWith('claude') ?? false;
+  }
+
+  Future<void> _showStatusCommand() async {
+    final session = _chatController.currentSession;
+    final sessionRuns = (_runsMonitor?.overview.runs ?? const <RunCard>[])
+        .where((item) => item.sessionId == session?.id)
+        .toList()
+      ..sort((a, b) {
+        if (a.isActive != b.isActive) return a.isActive ? -1 : 1;
+        return (b.completedAt ?? b.updatedAt ?? DateTime(0))
+            .compareTo(a.completedAt ?? a.updatedAt ?? DateTime(0));
+      });
+    final run = sessionRuns.firstOrNull;
+    final model = session?.agentConfiguration.agents
+        .where((agent) => agent.agentId == AgentId.generator)
+        .map((agent) => agent.model)
+        .firstOrNull;
+    String lastUsage = '';
+    for (final message in (session?.messages ?? const <ChatMessage>[]).reversed) {
+      final usage = message.activities.where((a) => a.kind == 'usage').firstOrNull;
+      if (usage != null) {
+        lastUsage = usage.title;
+        break;
+      }
+    }
+    final rows = <(String, String)>[
+      if (session != null) ('Chat', session.title),
+      if (session != null) ('Agente', _currentChatIsClaude ? 'Claude' : 'Codex'),
+      if (model != null && model.isNotEmpty) ('Modelo', model.replaceFirst('claude:', '')),
+      if (session != null && session.workspacePath.isNotEmpty)
+        ('Proyecto', session.workspacePath),
+      if (run != null)
+        ('Corrida', switch (run.state) {
+          RunState.needsYou => 'Esperando tu respuesta',
+          RunState.working => 'Trabajando: ${run.headline}',
+          RunState.queued => 'En cola',
+          RunState.failed => 'Última: falló',
+          RunState.stopped => 'Última: detenida',
+          RunState.done => 'Última: terminó ${timeAgo(run.completedAt, DateTime.now())}',
+        }),
+      if (lastUsage.isNotEmpty) ('Última respuesta', lastUsage),
+      if (session?.providerSessionId?.isNotEmpty ?? false)
+        ('Sesión nativa', session!.providerSessionId!),
+      if (_activeServer != null)
+        ('Servidor', '${_activeServer!.name} · ${_activeServer!.baseUrl}'),
+    ];
+    if (!mounted) return;
+    await showStatusSheet(
+      context,
+      rows: rows.isEmpty ? <(String, String)>[('Chat', 'Ningún chat abierto')] : rows,
+      onUsage: () => unawaited(_showUsageSheet()),
+      onPermissions: session == null ? null : () => unawaited(_showPermissionsCommand()),
+    );
+  }
+
+  Future<void> _showPermissionsCommand() async {
+    final sessionId = _chatController.selectedSessionId;
+    if (sessionId == null) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+          const SnackBar(content: Text('Abrí un chat para ver sus permisos.')));
+      return;
+    }
+    await showPermissionsSheet(context,
+        client: _chatController.apiClient, sessionId: sessionId);
+  }
+
+  Future<void> _showSubagentCommand() async {
+    final sessionId = _chatController.selectedSessionId;
+    if (sessionId == null) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(
+          content: Text('Abrí un chat para lanzar un subagente.')));
+      return;
+    }
+    final message = await showSubagentSheet(context,
+        client: _chatController.apiClient,
+        sessionId: sessionId,
+        isClaude: _currentChatIsClaude);
+    if (message == null || !mounted) return;
+    _textController.text = message;
+    await _handleSend();
+  }
+
   Future<void> _showSlashHelpSheet() async {
     final commands = buildSlashCommands(SlashCommandContext(
       hasActiveBackend: _activeServer != null,
@@ -2062,6 +2398,20 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       case 'usage':
         await _showUsageSheet();
         return true;
+      case 'status':
+        await _showStatusCommand();
+        return true;
+      case 'permissions':
+        await _showPermissionsCommand();
+        return true;
+      case 'agents':
+        await _showSubagentCommand();
+        return true;
+      case 'compact':
+        if (_chatController.selectedSessionId == null) return false;
+        _textController.text = '/compact';
+        await _handleSend();
+        return true;
       case 'help':
         await _showSlashHelpSheet();
         return true;
@@ -2075,9 +2425,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         return _startUxLane(full: false);
       case 'ux-full':
         return _startUxLane(full: true);
-      case 'status':
       case 'review':
-      case 'compact':
       case 'diff':
         _textController.text = payload;
         _textController.selection = TextSelection.collapsed(
@@ -4214,6 +4562,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
       _sessionSearchDebounce?.cancel();
       client.setSessionFilter(archived: _showArchivedChatsInSidebar, search: _sessionSearch);
       _chatController = nextController;
+      _runsMonitor?.attach(client);
       if (widget.enableServerBootstrap) nextController.startLiveSync();
       _activeServer = profile;
       _activeServerHealth = null;

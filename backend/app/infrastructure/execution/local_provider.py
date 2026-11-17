@@ -43,7 +43,14 @@ _MOBILE_FILE_CONTEXT = (
 )
 
 
+_SLASH_COMMAND = re.compile(r"/[A-Za-z][\w:-]*(?:[ \t][^\n]*)?")
+
+
 def _message_with_mobile_file_context(message: str) -> str:
+    # A one-line slash command (/compact, /cost…) only runs when it is the
+    # first thing the CLI sees, so it is passed through untouched.
+    if _SLASH_COMMAND.fullmatch(message.strip()):
+        return message.strip()
     context = _MOBILE_FILE_CONTEXT
     if VIDEO_HANDOFF_HINT not in message:
         context = with_video_handoff(context)
@@ -162,6 +169,7 @@ class LocalExecutionProvider(ExecutionProvider):
         self._processes: dict[str, subprocess.Popen[str]] = {}
         # job_id -> (thread_id, turn_id) of the running app-server turn.
         self._steer_targets: dict[str, tuple[str, str]] = {}
+        self._interactions: dict[str, dict[str, Callable[[dict], None]]] = {}
         self._token_usage: dict[str, dict[str, int]] = {}
         self._stdin_lock = threading.Lock()
         self._queued_executions: dict[str, _QueuedExecution] = {}
@@ -300,6 +308,40 @@ class LocalExecutionProvider(ExecutionProvider):
         return True
 
     def supports_job_steering(self) -> bool:
+        return True
+
+    def supports_interactions(self) -> bool:
+        return True
+
+    def register_interaction(
+        self, job_id: str, request_id: str, responder: Callable[[dict], None]
+    ) -> None:
+        with self._lock:
+            self._interactions.setdefault(job_id, {})[request_id] = responder
+
+    def drop_interaction(self, job_id: str, request_id: str) -> bool:
+        with self._lock:
+            pending = self._interactions.get(job_id, {})
+            return pending.pop(request_id, None) is not None
+
+    def clear_interactions(self, job_id: str) -> None:
+        with self._lock:
+            self._interactions.pop(job_id, None)
+
+    def respond_interaction(self, job_id: str, request_id: str, decision: dict) -> bool:
+        """Answer a pending agent request (permission, question or plan)."""
+        with self._lock:
+            responder = self._interactions.get(job_id, {}).pop(request_id, None)
+        if responder is None:
+            return False
+        try:
+            responder(decision)
+        except ValueError:
+            # Invalid decision: keep the request pending so it can be answered.
+            self.register_interaction(job_id, request_id, responder)
+            raise
+        except OSError:
+            return False
         return True
 
     def steer_job(self, job_id: str, message: str) -> bool:
@@ -827,9 +869,26 @@ class LocalExecutionProvider(ExecutionProvider):
             )
 
             reasoning_effort = self._reasoning_effort_for_job(codex_options)
+            is_compact = message.strip().lower() == "/compact"
+            if is_compact:
+                # Native compaction, same as the CLI's /compact: the thread's
+                # history is summarized by Codex itself, not by a prompt.
+                self._set_state(
+                    job_id,
+                    status=JobStatus.RUNNING,
+                    provider_session_id=thread_id,
+                    phase="Compacting",
+                    latest_activity="Compactando la conversación.",
+                )
             self._app_server_send(
                 process,
                 {
+                    "id": "turn-start",
+                    "method": "thread/compact/start",
+                    "params": {"threadId": thread_id},
+                }
+                if is_compact
+                else {
                     "id": "turn-start",
                     "method": "turn/start",
                     "params": {
@@ -901,7 +960,11 @@ class LocalExecutionProvider(ExecutionProvider):
             completed_response = (
                 final_response
                 or response_buffer.strip()
-                or "Execution completed with no output."
+                or (
+                    "Conversación compactada: Codex resumió el historial y sigue con el mismo hilo."
+                    if is_compact
+                    else "Execution completed with no output."
+                )
             )
             self._set_state(
                 job_id,

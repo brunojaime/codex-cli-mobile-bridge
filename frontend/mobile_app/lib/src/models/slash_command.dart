@@ -179,21 +179,44 @@ class GlobalSlashCommandProvider extends SlashCommandProvider {
       const SlashCommand(
         id: 'status',
         slash: '/status',
-        title: 'Status',
-        description: 'Ask for session, backend, workspace, and run status.',
+        title: 'Estado',
+        description: 'Session, agent, model, workspace and current run status.',
         scope: 'global',
-        actionKind: SlashCommandActionKind.sendMessage,
-        payload: 'Show current session, backend, workspace, and run status.',
+        actionKind: SlashCommandActionKind.callback,
       ),
       const SlashCommand(
         id: 'review',
         slash: '/review',
         title: 'Review',
-        description: 'Request a focused review of the current workspace.',
+        description:
+            'Review uncommitted changes: bugs by severity, risks and missing tests.',
         scope: 'workspace',
         actionKind: SlashCommandActionKind.sendMessage,
         payload:
-            'Review the current workspace changes and call out bugs, risks, and missing tests.',
+            'Review the uncommitted changes in this workspace (git status, git diff and new '
+            'untracked files) like a senior reviewer. Do not modify any file. List the bugs '
+            'ordered by severity with file:line, then risks and missing tests. Answer in Spanish.',
+      ),
+      SlashCommand(
+        id: 'permissions',
+        slash: '/permissions',
+        aliases: const <String>['/permisos', '/allowed-tools'],
+        title: 'Permisos',
+        description:
+            'Agent permission modes and remembered "always allow" rules for this project.',
+        scope: 'session',
+        actionKind: SlashCommandActionKind.callback,
+        disabledReason: backendDisabledReason,
+      ),
+      SlashCommand(
+        id: 'agents',
+        slash: '/agents',
+        aliases: const <String>['/subagent', '/agentes'],
+        title: 'Subagente',
+        description: 'Launch a subagent with its own task and see it as a branch.',
+        scope: 'session',
+        actionKind: SlashCommandActionKind.callback,
+        disabledReason: backendDisabledReason,
       ),
       SlashCommand(
         id: 'ux',
@@ -235,11 +258,10 @@ class GlobalSlashCommandProvider extends SlashCommandProvider {
         id: 'compact',
         slash: '/compact',
         title: 'Compact',
-        description: 'Ask for a compact conversation summary.',
+        description:
+            'Native context compaction (same as the CLI) to free up the context window.',
         scope: 'session',
-        actionKind: SlashCommandActionKind.sendMessage,
-        payload:
-            'Compact this conversation into a concise summary with current decisions and next steps.',
+        actionKind: SlashCommandActionKind.callback,
       ),
       const SlashCommand(
         id: 'diff',

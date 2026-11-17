@@ -87,6 +87,13 @@ class ExecutionProvider(ABC):
     def cancel_job(self, job_id: str) -> bool:
         return False
 
+    def supports_interactions(self) -> bool:
+        return False
+
+    def respond_interaction(self, job_id: str, request_id: str, decision: dict) -> bool:
+        """Answer a pending permission/question/plan request; False when unknown."""
+        return False
+
     def supports_submission_lookup(self) -> bool:
         return False
 

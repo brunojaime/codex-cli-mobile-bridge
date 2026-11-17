@@ -15,6 +15,7 @@ from uuid import uuid4
 from backend.app.domain.entities.job import JobStatus
 from backend.app.infrastructure.execution.claude_options import translate_options
 from backend.app.infrastructure.execution.activity import activity_item, entry
+from backend.app.infrastructure.execution import claude_interactions
 
 
 def run_claude(
@@ -55,11 +56,18 @@ def run_claude(
             "--effort",
             provider._claude_effort,
             "--include-partial-messages",
+            # Permission prompts, questions and plan approvals reach the
+            # front through the stdio control protocol instead of being
+            # silently denied.
+            "--permission-prompt-tool",
+            "stdio",
         ]
         if "--permission-mode" not in option_args:
             command += ["--permission-mode", provider._claude_permission_mode]
         command += option_args
-        if option_context:
+        if option_context and not message.lstrip().startswith("/"):
+            # Slash commands (/compact, /cost…) only run when they are the
+            # very first thing in the message, so they never get a prefix.
             message = option_context + "\n\n" + message
         command += [
             "--append-system-prompt",
@@ -121,6 +129,73 @@ def run_claude(
             provider._processes[job_id] = process
 
         live = {"text": "", "last_push": 0.0}
+        compaction: dict = {}
+        stdin_lock = threading.Lock()
+
+        def send(obj):
+            with stdin_lock:
+                if process.stdin is None or process.stdin.closed:
+                    raise OSError("Claude input is closed.")
+                process.stdin.write(json.dumps(obj) + "\n")
+                process.stdin.flush()
+
+        def close_stdin():
+            with stdin_lock:
+                try:
+                    if process.stdin is not None and not process.stdin.closed:
+                        process.stdin.close()
+                except OSError:
+                    pass
+
+        def handle_control_request(event):
+            request_id = str(event.get("request_id") or "")
+            request = event.get("request") or {}
+            if request.get("subtype") != "can_use_tool" or not request_id:
+                send(
+                    {
+                        "type": "control_response",
+                        "response": {
+                            "subtype": "error",
+                            "request_id": request_id,
+                            "error": "Unsupported request from the bridge front.",
+                        },
+                    }
+                )
+                return
+            activity = claude_interactions.interaction_activity(request_id, request)
+            if parent := event.get("parent_tool_use_id") or request.get("parent_tool_use_id"):
+                activity["parent_id"] = str(parent)
+
+            def respond(decision):
+                payload, label, status = claude_interactions.build_response(
+                    request, decision
+                )
+                send(
+                    {
+                        "type": "control_response",
+                        "response": {
+                            "subtype": "success",
+                            "request_id": request_id,
+                            "response": payload,
+                        },
+                    }
+                )
+                provider._record_activity(
+                    job_id, {**activity, "status": status, "resolution": label}
+                )
+                update(
+                    status=JobStatus.RUNNING,
+                    phase="Claude working",
+                    latest_activity=label,
+                )
+
+            provider.register_interaction(job_id, request_id, respond)
+            provider._record_activity(job_id, dict(activity))
+            update(
+                status=JobStatus.RUNNING,
+                phase="Waiting for you",
+                latest_activity=activity["title"],
+            )
 
         def push_live(force=False):
             now = time.monotonic()
@@ -147,6 +222,31 @@ def run_claude(
                     if event.get("session_id"):
                         native_id = "claude:" + event["session_id"]
                     kind = event.get("type")
+                    if kind == "control_request":
+                        handle_control_request(event)
+                        continue
+                    if kind == "control_cancel_request":
+                        request_id = str(event.get("request_id") or "")
+                        if provider.drop_interaction(job_id, request_id):
+                            snapshot = provider.get_snapshot(job_id)
+                            previous = next(
+                                (
+                                    item
+                                    for item in snapshot.activities
+                                    if item["id"] == f"interaction-{request_id}"
+                                ),
+                                None,
+                            )
+                            if previous is not None:
+                                provider._record_activity(
+                                    job_id,
+                                    {
+                                        **previous,
+                                        "status": "cancelled",
+                                        "resolution": "Claude retiró el pedido",
+                                    },
+                                )
+                        continue
                     if kind == "stream_event":
                         stream = event.get("event") or {}
                         stream_type = stream.get("type")
@@ -165,12 +265,17 @@ def run_claude(
                         continue
                     if kind == "result":
                         result = event
+                        # The turn is over: closing stdin lets Claude exit.
+                        close_stdin()
                     elif kind == "assistant":
                         message_id = str(event.get("message", {}).get("id") or uuid4())
                         parent_id = event.get("parent_tool_use_id")
+                        content = (event.get("message") or {}).get("content")
                         for block_index, block in enumerate(
-                            event.get("message", {}).get("content", [])
+                            content if isinstance(content, list) else []
                         ):
+                            if not isinstance(block, dict):
+                                continue
                             if block.get("type") == "text":
                                 provider._record_activity(
                                     job_id,
@@ -213,8 +318,13 @@ def run_claude(
                                     ),
                                 )
                     elif kind == "user":
-                        for block in event.get("message", {}).get("content", []):
-                            if block.get("type") != "tool_result":
+                        blocks = (event.get("message") or {}).get("content")
+                        # After /compact Claude replays the summary as a plain
+                        # string; only tool results (lists of blocks) matter.
+                        if not isinstance(blocks, list):
+                            continue
+                        for block in blocks:
+                            if not isinstance(block, dict) or block.get("type") != "tool_result":
                                 continue
                             tool_id = block.get("tool_use_id")
                             snapshot = provider.get_snapshot(job_id)
@@ -247,6 +357,14 @@ def run_claude(
                                         )[:16000],
                                     },
                                 )
+                    elif kind == "system" and event.get("subtype") == "compact_boundary":
+                        compaction.update(event.get("compact_metadata") or {})
+                    elif kind == "system" and event.get("status") == "compacting":
+                        update(
+                            status=JobStatus.RUNNING,
+                            phase="Compacting",
+                            latest_activity="Compactando la conversación.",
+                        )
                     elif kind == "system":
                         update(
                             status=JobStatus.RUNNING,
@@ -255,6 +373,9 @@ def run_claude(
                         )
             except Exception as exc:
                 reader_errors.append(str(exc))
+                # Never leave Claude waiting on an open stdin nobody reads.
+                close_stdin()
+                provider._terminate_process_tree(process, kill=True)
 
         def read_stderr():
             for line in process.stderr:
@@ -268,8 +389,9 @@ def run_claude(
         for reader in readers:
             reader.start()
         try:
-            process.stdin.write(payload)
-            process.stdin.close()
+            with stdin_lock:
+                process.stdin.write(payload)
+                process.stdin.flush()
         except OSError:
             pass  # Early startup/auth failures are reported through stdout/stderr.
         timeout = provider._timeout_seconds
@@ -319,6 +441,14 @@ def run_claude(
                     "warning",
                 ),
             )
+        if not response.strip() and compaction:
+            before = compaction.get("pre_tokens")
+            after = compaction.get("post_tokens")
+            response = "Conversación compactada" + (
+                f": {_compact_number(int(before))} → {_compact_number(int(after))} tokens de contexto."
+                if isinstance(before, (int, float)) and isinstance(after, (int, float))
+                else "."
+            )
         usage_entry = _usage_activity(result)
         if usage_entry is not None:
             provider._record_activity(job_id, usage_entry)
@@ -355,6 +485,7 @@ def run_claude(
                         pass
         with provider._lock:
             provider._processes.pop(job_id, None)
+        provider.clear_interactions(job_id)
         provider._cleanup_paths(cleanup_paths)
 
 

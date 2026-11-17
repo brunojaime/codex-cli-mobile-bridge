@@ -344,6 +344,7 @@ class ChatController extends ChangeNotifier {
   bool _loadingMoreSessions = false;
   bool _loadingSessionFilter = false;
   bool get hasMoreSessions => _apiClient.hasMoreSessions;
+  ApiClient get apiClient => _apiClient;
   bool get isLoadingSessionList => _loadingMoreSessions || _loadingSessionFilter;
 
   Future<void> filterSessions({required bool archived, String search = ''}) async {

@@ -1447,6 +1447,8 @@ String? _diagnosticReasonText(ChatMessageReasonCode? reasonCode) {
 }
 
 const Map<String, String> _jobPhaseLabels = <String, String>{
+  'waiting for you': 'Esperando tu respuesta',
+  'compacting': 'Compactando',
   'completed': 'Completado',
   'failed': 'Falló',
   'cancelled': 'Cancelado',

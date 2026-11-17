@@ -141,7 +141,11 @@ class CodexMobileApp extends StatefulWidget {
     this.appUpdaterController,
     this.appUpdaterCheckOnStart = true,
     this.notificationService = const NoopChatNotificationService(),
+    this.startOnDashboard = true,
   });
+
+  /// Opens on the live runs dashboard (the default home).
+  final bool startOnDashboard;
 
   final String initialApiBaseUrl;
   final String currentVersion;
@@ -215,6 +219,7 @@ class _CodexMobileAppState extends State<CodexMobileApp> {
         initialApiBaseUrl: widget.initialApiBaseUrl,
         notificationService: widget.notificationService,
         onActiveServerBaseUrlChanged: _handleActiveServerBaseUrlChanged,
+        enableRunsDashboard: widget.startOnDashboard,
       ),
       builder: (context, child) {
         final home = child ?? const SizedBox.shrink();

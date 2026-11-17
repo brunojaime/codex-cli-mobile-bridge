@@ -1,3 +1,4 @@
+import '../models/run_overview.dart';
 import 'dart:convert';
 
 import 'package:cross_file/cross_file.dart';
@@ -127,6 +128,76 @@ class ApiClient {
       path:
           '${httpUri.path.replaceAll(RegExp(r'/$'), '')}/ws/sessions/$sessionId',
     );
+  }
+
+  Uri runsStreamUri() {
+    final httpUri = Uri.parse(baseUrl);
+    final scheme = httpUri.scheme == 'https' ? 'wss' : 'ws';
+    return httpUri.replace(
+      scheme: scheme,
+      path: '${httpUri.path.replaceAll(RegExp(r'/$'), '')}/ws/runs',
+    );
+  }
+
+  Future<RunsOverview> getRunsOverview() async {
+    final response = await _client.get(Uri.parse('$baseUrl/runs/overview'));
+    if (response.statusCode != 200) {
+      throw Exception('Failed to load runs: ${response.body}');
+    }
+    return RunsOverview.fromJson(
+        jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>);
+  }
+
+  /// Answers a permission, question or plan. False when it is no longer
+  /// waiting (already answered elsewhere or the run ended).
+  Future<bool> respondInteraction(
+    String jobId,
+    String requestId,
+    InteractionDecision decision,
+  ) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/jobs/$jobId/interactions/$requestId'),
+      headers: const <String, String>{'Content-Type': 'application/json'},
+      body: jsonEncode(decision.toJson()),
+    );
+    if (response.statusCode == 200) return true;
+    if (response.statusCode == 409 || response.statusCode == 404) return false;
+    throw Exception('Failed to answer: ${response.body}');
+  }
+
+  Future<Map<String, dynamic>> getSessionPermissions(String sessionId) async {
+    final response = await _client
+        .get(Uri.parse('$baseUrl/sessions/$sessionId/permissions'));
+    if (response.statusCode != 200) {
+      throw Exception('Failed to load permissions: ${response.body}');
+    }
+    return jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+  }
+
+  Future<bool> removePermissionRule(
+      String sessionId, String list, String rule) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/sessions/$sessionId/permissions/remove'),
+      headers: const <String, String>{'Content-Type': 'application/json'},
+      body: jsonEncode(<String, String>{'list': list, 'rule': rule}),
+    );
+    if (response.statusCode == 200) return true;
+    if (response.statusCode == 404) return false;
+    throw Exception('Failed to remove rule: ${response.body}');
+  }
+
+  Future<List<Map<String, dynamic>>> getSubagents(String sessionId) async {
+    final response =
+        await _client.get(Uri.parse('$baseUrl/sessions/$sessionId/subagents'));
+    if (response.statusCode != 200) {
+      throw Exception('Failed to load subagents: ${response.body}');
+    }
+    final data =
+        jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+    return (data['subagents'] as List? ?? const [])
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
   }
 
   Uri jobStreamUri(String jobId) {
