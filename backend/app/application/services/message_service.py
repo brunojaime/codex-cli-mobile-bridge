@@ -243,6 +243,8 @@ _DEFAULT_TRANSCRIPT_PAGE_SIZE = 40
 _MAX_TRANSCRIPT_PAGE_SIZE = 200
 
 
+_NATIVE_AGENT_COMMANDS = frozenset({"/compact"})
+
 class MaintenanceModeError(RuntimeError):
     pass
 
@@ -763,6 +765,23 @@ class MessageService:
     def get_session(self, session_id: str) -> ChatSession | None:
         return self._repository.get_session(session_id)
 
+    def session_fingerprint(self, session_id: str) -> str | None:
+        """Cheap change marker for push updates; None when the session is gone."""
+        session = self._repository.get_session(session_id)
+        if session is None:
+            return None
+        recent = self._repository.list_recent_messages(session_id, limit=3)
+        parts = [
+            session.updated_at.isoformat() if session.updated_at else "",
+            "archived" if session.archived_at else "active",
+            session.title or "",
+        ]
+        parts.extend(
+            f"{message.id}:{getattr(message.status, 'value', message.status)}:{len(message.content or '')}"
+            for message in recent
+        )
+        return "|".join(parts)
+
     def refresh_session(self, session_id: str) -> ChatSession | None:
         session = self._repository.get_session(session_id)
         if session is None:
@@ -1177,12 +1196,21 @@ class MessageService:
         resolved_run_id = run_id or session.active_agent_run_id or str(uuid4())
         entry_agent_id = self._entry_agent_for_configuration(current_configuration)
         entry_agent_definition = current_configuration.agents[entry_agent_id]
-        resolved_user_prompt = self._apply_codex_prompt_preferences(
-            execution_message or message,
-            normalized_codex_options,
+        raw_prompt = execution_message or message
+        # CLI commands the agents run natively (e.g. /compact) must reach them
+        # verbatim; any added instruction would turn them into a normal turn.
+        is_native_command = raw_prompt.strip().lower() in _NATIVE_AGENT_COMMANDS
+        resolved_user_prompt = (
+            raw_prompt.strip()
+            if is_native_command
+            else self._apply_codex_prompt_preferences(
+                raw_prompt,
+                normalized_codex_options,
+            )
         )
         if (
-            self._quality_service is not None
+            not is_native_command
+            and self._quality_service is not None
             and conversation_kind == JobConversationKind.PRIMARY
             and author_type == ChatMessageAuthorType.HUMAN
         ):
@@ -1199,13 +1227,16 @@ class MessageService:
             if acceptance:
                 resolved_user_prompt += "\n\n" + acceptance
         if self._prod_bridge_repo_governance_applies(session):
-            resolved_user_prompt = self._apply_prod_bridge_governance_notice(
-                resolved_user_prompt
-            )
+            if not is_native_command:
+                resolved_user_prompt = self._apply_prod_bridge_governance_notice(
+                    resolved_user_prompt
+                )
             normalized_codex_options = self._prod_bridge_read_only_codex_options(
                 normalized_codex_options
             )
-        if conversation_kind == JobConversationKind.PRIMARY:
+        if is_native_command:
+            execution_message = resolved_user_prompt
+        elif conversation_kind == JobConversationKind.PRIMARY:
             if entry_agent_id == AgentId.SUPERVISOR:
                 execution_message = self._build_supervisor_execution_message(
                     session=session,
@@ -1239,6 +1270,7 @@ class MessageService:
             status=ChatMessageStatus.COMPLETED,
         )
         if (self._bridge_api_port is not None
+                and not is_native_command
                 and author_type == ChatMessageAuthorType.HUMAN
                 and conversation_kind == JobConversationKind.PRIMARY):
             execution_message += (
@@ -1933,6 +1965,76 @@ class MessageService:
         cancelled_job = self.get_job(job_id)
         return cancelled_job or job
 
+    def steer_job(self, job_id: str, message: str) -> bool:
+        """Redirect a running job. Returns False when the job cannot be steered."""
+        job = self.get_job(job_id)
+        if job is None:
+            raise ValueError(f"Job {job_id} was not found.")
+        if job.status.is_terminal:
+            return False
+        return bool(self._execution_provider.steer_job(job_id, message))
+
+    def runs_overview(self, *, recent_limit: int = 30, recent_hours: int = 48) -> dict:
+        """Dashboard data: active runs first, then recently finished ones."""
+        from datetime import datetime, timedelta, timezone
+
+        from backend.app.application.services import run_overview
+
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(hours=recent_hours)
+        selected: list[str] = []
+        recent = 0
+        for summary in self._repository.list_summary_jobs():
+            if not summary.status.is_terminal:
+                selected.append(summary.id)
+                continue
+            updated = summary.updated_at
+            if updated.tzinfo is None:
+                updated = updated.replace(tzinfo=timezone.utc)
+            if recent < recent_limit and updated >= cutoff:
+                selected.append(summary.id)
+                recent += 1
+        sessions: dict[str, object] = {}
+        cards = []
+        for job_id in selected:
+            stored = self._repository.get_job(job_id)
+            if stored is None:
+                continue
+            # Finished runs are read as stored (cheap); only live runs go
+            # through get_job, which merges the provider's in-memory state.
+            job = stored if stored.status.is_terminal else self.get_job(job_id)
+            if job is None:
+                continue
+            if job.session_id not in sessions:
+                sessions[job.session_id] = self._repository.get_session(job.session_id)
+            session = sessions[job.session_id]
+            if session is None:
+                continue
+            # Archived chats only hide finished runs: anything still running
+            # or waiting for the user must stay visible.
+            if getattr(session, "archived_at", None) is not None and job.status.is_terminal:
+                continue
+            cards.append(
+                run_overview.run_card(
+                    job,
+                    session_title=session.title,
+                    workspace_name=session.workspace_name,
+                    now=now,
+                )
+            )
+        return run_overview.overview(cards)
+
+    def respond_interaction(self, job_id: str, request_id: str, decision: dict) -> bool:
+        """Answer a permission/question/plan request of a running job."""
+        job = self.get_job(job_id)
+        if job is None:
+            raise LookupError(f"Job {job_id} was not found.")
+        if job.status.is_terminal:
+            return False
+        return bool(
+            self._execution_provider.respond_interaction(job_id, request_id, decision)
+        )
+
     def retry_job(self, job_id: str) -> Job:
         self._ensure_accepting_new_jobs()
         original_job = self.get_job(job_id)
@@ -2142,6 +2244,7 @@ class MessageService:
             provider_session_id=snapshot.provider_session_id,
             phase=snapshot.phase,
             latest_activity=snapshot.latest_activity,
+            activities=snapshot.activities,
         )
         self._repository.save_job(job)
         if job.status.is_terminal:
@@ -2439,8 +2542,15 @@ class MessageService:
                 job_id=job.id,
             )
         elif job.status == JobStatus.CANCELLED:
+            partial = (job.response or "").strip()
             assistant_message.sync(
-                content=job.error or "Execution cancelled.",
+                # Keep what the agent already wrote; the user stopped it, the
+                # work shown so far is still useful context.
+                content=(
+                    f"{partial}\n\n_Detenido por el usuario._"
+                    if partial
+                    else job.error or "Execution cancelled."
+                ),
                 status=ChatMessageStatus.CANCELLED,
                 job_id=job.id,
             )
@@ -3809,6 +3919,7 @@ class MessageService:
             error=snapshot.error,
             phase=snapshot.phase,
             latest_activity=snapshot.latest_activity,
+            activities=snapshot.activities,
         )
         message.sync(
             status=ChatMessageStatus.PENDING,
@@ -4641,7 +4752,7 @@ class MessageService:
             job_id = self._execution_provider.execute(
                 prompt,
                 serial_key=f"{session.id}:turn-summary",
-                workdir=session.workspace_path,
+                workdir=(self._work_coordinator.execution_workspace_for(session) if getattr(self, "_work_coordinator", None) is not None else session.workspace_path),
             )
         except Exception:
             return None
@@ -4766,7 +4877,7 @@ class MessageService:
             job_id = self._execution_provider.execute(
                 prompt,
                 serial_key=f"{session.id}:title",
-                workdir=session.workspace_path,
+                workdir=(self._work_coordinator.execution_workspace_for(session) if getattr(self, "_work_coordinator", None) is not None else session.workspace_path),
                 model=self._title_generation_model,
             )
         except Exception:
