@@ -155,9 +155,9 @@ void main() {
     expect(decisions.last, {'action': 'allow', 'answers': {'Color?': 'Azul'}});
 
     await pump({'request_id': 'p', 'kind': 'plan', 'title': 'Plan', 'detail': '', 'input': {'plan': '1. Hacer x'}});
-    await tester.tap(find.text('Aprobar'));
+    await tester.tap(find.text('Aprobar sin preguntar'));
     await tester.pump();
-    expect(decisions.last, {'action': 'allow', 'mode': 'acceptEdits'});
+    expect(decisions.last, {'action': 'allow', 'mode': 'bypassPermissions'});
   });
 
   test('new CLI-parity commands are callbacks', () {

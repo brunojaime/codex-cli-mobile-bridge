@@ -7120,7 +7120,7 @@ async def get_session_permissions(
 
 class PermissionModeRequest(BaseModel):
     # None goes back to the server default.
-    mode: Literal["acceptEdits", "default", "auto", "plan"] | None = None
+    mode: Literal["bypassPermissions", "acceptEdits", "default", "auto", "plan"] | None = None
 
 
 @router.post("/sessions/{session_id}/permissions/mode")
@@ -7305,7 +7305,7 @@ class InteractionDecisionRequest(BaseModel):
     action: Literal["allow", "allow_always", "deny"]
     message: str | None = Field(default=None, max_length=20000)
     answers: dict[str, str] | None = None
-    mode: Literal["acceptEdits", "default", "auto"] | None = None
+    mode: Literal["bypassPermissions", "acceptEdits", "default", "auto"] | None = None
     interrupt: bool = False
 
 

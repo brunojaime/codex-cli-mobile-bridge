@@ -353,3 +353,10 @@ def test_claude_chrome_flag_follows_setting(tmp_path):
         p = provider(claude_chrome=enabled)
         result = wait(p, p.execute("hello", model="claude:sonnet", workdir=str(tmp_path)))
         assert ("--chrome" in json.loads(result.response)["argv"]) is enabled
+
+
+def test_bypass_permissions_server_default_reaches_claude(tmp_path):
+    p = provider(claude_permission_mode="bypassPermissions")
+    result = wait(p, p.execute("hello", model="claude:sonnet", workdir=str(tmp_path)))
+    argv = json.loads(result.response)["argv"]
+    assert argv[argv.index("--permission-mode") + 1] == "bypassPermissions"

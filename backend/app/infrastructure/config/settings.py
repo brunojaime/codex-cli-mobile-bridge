@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
     codex_command: str = "codex"
     claude_command: str = "claude"
-    claude_permission_mode: Literal["default", "acceptEdits", "auto", "dontAsk"] = "acceptEdits"
+    claude_permission_mode: Literal["default", "acceptEdits", "auto", "dontAsk", "bypassPermissions"] = "acceptEdits"
     claude_effort: Literal["low", "medium", "high", "xhigh", "max"] = "medium"
     # Lets Claude drive the user's Chrome through the Claude in Chrome extension.
     claude_chrome: bool = True

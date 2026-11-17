@@ -15,6 +15,7 @@ from typing import Any
 LISTS = ("allow", "ask", "deny")
 
 CLAUDE_MODES = {
+    "bypassPermissions": "Nunca pregunta: edita y ejecuta comandos sin pedir permiso.",
     "default": "Pregunta antes de editar archivos o ejecutar comandos.",
     "acceptEdits": "Edita archivos sin preguntar; los comandos te los pregunta.",
     "auto": "Decide solo qué es seguro; te pregunta lo riesgoso.",
@@ -55,8 +56,9 @@ def codex_policy(exec_args: str) -> dict[str, str]:
 
 
 # Modes the user can pick per project from the front, in display order.
-SELECTABLE_MODES = ("acceptEdits", "default", "auto", "plan")
+SELECTABLE_MODES = ("bypassPermissions", "acceptEdits", "default", "auto", "plan")
 MODE_LABELS = {
+    "bypassPermissions": "Sin preguntar",
     "acceptEdits": "Edición automática",
     "default": "Preguntar todo",
     "auto": "Automático",
