@@ -303,14 +303,14 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
               .titleLarge
               ?.copyWith(fontWeight: FontWeight.w700)),
       const SizedBox(height: 8),
-      Text(detail, style: const TextStyle(color: Color(0xFFB9C5D9))),
+      Text(detail, style: const TextStyle(color: Color(0xFFC1C6D1))),
       if (elapsed != null && elapsed >= 0) ...[
         const SizedBox(height: 12),
         Text(
             elapsed == 0
                 ? 'Inició hace menos de un minuto'
                 : 'Inició hace $elapsed min',
-            style: const TextStyle(fontSize: 12, color: Color(0xFFAAB8D0))),
+            style: const TextStyle(fontSize: 12, color: Color(0xFFB4B9C6))),
       ],
     ]));
   }
@@ -342,7 +342,7 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
       margin: const EdgeInsets.only(bottom: 14),
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-          color: const Color(0xFF141E32),
+          color: const Color(0xFF1B1D21),
           borderRadius: BorderRadius.circular(22),
           border: Border.all(
               color:
@@ -354,7 +354,7 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
         const SizedBox(height: 16),
         Text(title, style: Theme.of(context).textTheme.titleLarge),
         const SizedBox(height: 8),
-        Text(description, style: const TextStyle(color: Color(0xFFAAB8D0)))
+        Text(description, style: const TextStyle(color: Color(0xFFB4B9C6)))
       ]));
   Widget _heading(String title, String subtitle) => Padding(
       padding: const EdgeInsets.only(top: 6, bottom: 18),
@@ -365,7 +365,7 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
                 .titleLarge
                 ?.copyWith(fontWeight: FontWeight.w700)),
         const SizedBox(height: 5),
-        Text(subtitle, style: const TextStyle(color: Color(0xFFAAB8D0)))
+        Text(subtitle, style: const TextStyle(color: Color(0xFFB4B9C6)))
       ]));
   List<Widget> _preparationCards() => [
         if (_preparationError != null)
@@ -399,7 +399,7 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
                 job['status'] == 'failed' || job['status'] == 'cancelled'
                     ? 'El chat se detuvo. Revisá el resultado antes de continuar.'
                     : 'El chat está atendiendo el encargo y preparando el inicio del equipo.',
-                style: const TextStyle(color: Color(0xFFAAB8D0))),
+                style: const TextStyle(color: Color(0xFFB4B9C6))),
             if (DateTime.tryParse('${job['created_at']}')
                 case final DateTime started)
               Padding(
@@ -654,7 +654,7 @@ class _ObjectiveTeamScreenState extends State<ObjectiveTeamScreen>
                     : activity == 'Ajustando una entrega revisada'
                         ? 'Se están ajustando cambios sobre una etapa revisada; deberán comprobarse nuevamente.'
                         : '${task['purpose']}',
-                style: const TextStyle(color: Color(0xFFB9C5D9))),
+                style: const TextStyle(color: Color(0xFFC1C6D1))),
             if (!compact && activity == null) ...[
               const SizedBox(height: 16),
               const Text('Entrega esperada',

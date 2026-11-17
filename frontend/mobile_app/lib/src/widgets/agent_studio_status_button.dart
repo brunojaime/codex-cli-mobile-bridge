@@ -45,7 +45,7 @@ AgentStudioStatusPresentation buildAgentStudioStatusPresentation(
   return switch (preset) {
     AgentPreset.solo => AgentStudioStatusPresentation(
         icon: Icons.smart_toy_outlined,
-        iconColor: const Color(0xFF8B97B5),
+        iconColor: const Color(0xFF939BAD),
         tooltip: 'Agents: $modeLabel',
       ),
     AgentPreset.review => AgentStudioStatusPresentation(
@@ -54,7 +54,7 @@ AgentStudioStatusPresentation buildAgentStudioStatusPresentation(
         tooltip: 'Agents: $modeLabel\n${reviewerPresentation.statusLine}',
         badgeLabel: 'R',
         badgeBackgroundColor: reviewerPresentation.accentColor,
-        badgeForegroundColor: const Color(0xFF07131D),
+        badgeForegroundColor: const Color(0xFF0E0F11),
       ),
     AgentPreset.triad => AgentStudioStatusPresentation(
         icon: Icons.hub_outlined,
@@ -62,7 +62,7 @@ AgentStudioStatusPresentation buildAgentStudioStatusPresentation(
         tooltip: 'Agents: $modeLabel\n${reviewerPresentation.statusLine}',
         badgeLabel: '3',
         badgeBackgroundColor: reviewerPresentation.accentColor,
-        badgeForegroundColor: const Color(0xFF07131D),
+        badgeForegroundColor: const Color(0xFF0E0F11),
       ),
     AgentPreset.supervisor => const AgentStudioStatusPresentation(
         icon: Icons.account_tree_outlined,
@@ -70,7 +70,7 @@ AgentStudioStatusPresentation buildAgentStudioStatusPresentation(
         tooltip: 'Agents: Supervisor + Specialists',
         badgeLabel: 'S',
         badgeBackgroundColor: Color(0xFF8FEAFF),
-        badgeForegroundColor: Color(0xFF07131D),
+        badgeForegroundColor: Color(0xFF0E0F11),
       ),
   };
 }

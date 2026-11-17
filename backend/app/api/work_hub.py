@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse, Response
 
 def install_work_hub(app, settings, *, transport=None):
     url = getattr(settings, "work_hub_url", "").rstrip("/")
-    if not url or settings.bridge_environment != "prod":
+    if not url:
         return
     if getattr(settings, "work_hub_environment", "dev") != "prod":
         raise ValueError("Bridge PROD cannot depend on a DEV work coordinator")
@@ -37,15 +37,7 @@ def install_work_hub(app, settings, *, transport=None):
         path = request.url.path.removeprefix("/api/v1")
         forward = path == "/work" or path.startswith("/work/")
         if path == "/feedback-batches/start-session" and request.method == "POST":
-            try:
-                payload = await request.json()
-                forward = (
-                    isinstance(payload, dict)
-                    and payload.get("executionMode", payload.get("execution_mode"))
-                    == "backlog"
-                )
-            except (ValueError, UnicodeDecodeError):
-                pass
+            forward = True  # Direct feedback and backlog share the PROD owner.
         if not forward:
             return await call_next(request)
         if request.headers.get("x-bridge-work-hop"):

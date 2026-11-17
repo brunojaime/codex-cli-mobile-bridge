@@ -69,9 +69,9 @@ ReviewerLifecyclePresentation buildReviewerLifecyclePresentation(
         statusLine: '$reviewerLabel off',
         subtitle: 'Auto mode is off for this chat.',
         icon: Icons.pause_circle_outline,
-        bannerBackgroundColor: const Color(0xFF1E2944),
-        bannerForegroundColor: const Color(0xFFB8C8EA),
-        accentColor: const Color(0xFF8B97B5),
+        bannerBackgroundColor: const Color(0xFF26282E),
+        bannerForegroundColor: const Color(0xFFCBCED7),
+        accentColor: const Color(0xFF939BAD),
       );
     case ReviewerLifecycleState.disabled:
       return ReviewerLifecyclePresentation(
@@ -89,8 +89,8 @@ ReviewerLifecyclePresentation buildReviewerLifecyclePresentation(
         statusLine: '$reviewerLabel ready',
         subtitle: 'Waiting for the next auto-mode run.',
         icon: Icons.schedule_outlined,
-        bannerBackgroundColor: const Color(0xFF1E2944),
-        bannerForegroundColor: const Color(0xFFB8C8EA),
+        bannerBackgroundColor: const Color(0xFF26282E),
+        bannerForegroundColor: const Color(0xFFCBCED7),
         accentColor: const Color(0xFF9FD3FF),
       );
     case ReviewerLifecycleState.waitingOnGenerator:
@@ -99,7 +99,7 @@ ReviewerLifecyclePresentation buildReviewerLifecyclePresentation(
         statusLine: '$reviewerLabel waiting on generator',
         subtitle: 'The generator has not finished the current run yet.',
         icon: Icons.hourglass_bottom_rounded,
-        bannerBackgroundColor: const Color(0xFF1E2944),
+        bannerBackgroundColor: const Color(0xFF26282E),
         bannerForegroundColor: const Color(0xFF9FD3FF),
         accentColor: const Color(0xFF9FD3FF),
       );

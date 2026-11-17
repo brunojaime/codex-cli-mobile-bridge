@@ -58,6 +58,7 @@ class Job:
     error: str | None = None
     phase: str | None = None
     latest_activity: str | None = None
+    activities: list[dict[str, str]] = field(default_factory=list)
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
     completed_at: datetime | None = None
@@ -76,6 +77,7 @@ class Job:
         provider_session_id: str | None = None,
         phase: str | None = None,
         latest_activity: str | None = None,
+        activities: list[dict[str, str]] | None = None,
         auto_chain_processed: bool | None = None,
     ) -> None:
         self.status = status
@@ -87,5 +89,7 @@ class Job:
             self.auto_chain_processed = auto_chain_processed
         self.phase = phase
         self.latest_activity = latest_activity
+        if activities is not None:
+            self.activities = [dict(item) for item in activities]
         self.updated_at = utc_now()
         self.completed_at = self.updated_at if status.is_terminal else None

@@ -1113,11 +1113,12 @@ flowchart LR
   testWidgets('renders Codex Remote shell', (tester) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     await tester.pumpWidget(
-      const CodexMobileApp(initialApiBaseUrl: 'http://localhost:8000'),
+      const CodexMobileApp(
+          initialApiBaseUrl: 'http://localhost:8000', startOnDashboard: false),
     );
 
     expect(find.text('Codex Remote'), findsOneWidget);
-    expect(find.textContaining('local machine'), findsOneWidget);
+    expect(find.textContaining('Los comandos corren en esta máquina'), findsOneWidget);
     expect(find.byIcon(Icons.mic_rounded), findsOneWidget);
     expect(find.byIcon(Icons.upload_file_outlined), findsNothing);
     expect(find.byIcon(Icons.download_for_offline_outlined), findsNothing);
@@ -1161,6 +1162,7 @@ flowchart LR
     await tester.pumpWidget(
       CodexMobileApp(
         initialApiBaseUrl: 'http://bridge.test',
+        startOnDashboard: false,
         currentVersion: '1.2.3',
         currentBuild: 33,
         appUpdaterEnabled: true,
@@ -1194,14 +1196,17 @@ flowchart LR
     addTearDown(tester.view.resetDevicePixelRatio);
 
     await tester.pumpWidget(
-      const CodexMobileApp(initialApiBaseUrl: 'http://localhost:8000'),
+      const CodexMobileApp(
+          initialApiBaseUrl: 'http://localhost:8000', startOnDashboard: false),
     );
     await tester.pump();
 
-    expect(find.byIcon(Icons.hub_outlined), findsOneWidget);
+    // The agent button lives in the overflow menu on phones.
+    expect(find.byIcon(Icons.hub_outlined), findsNothing);
     expect(find.byIcon(Icons.more_vert), findsOneWidget);
     expect(find.byIcon(Icons.computer), findsNothing);
-    expect(find.byIcon(Icons.add), findsNothing);
+    // New chat stays one tap away on phones.
+    expect(find.byTooltip('Nuevo chat'), findsOneWidget);
     expect(find.byIcon(Icons.upload_file_outlined), findsNothing);
     expect(find.byIcon(Icons.download_for_offline_outlined), findsNothing);
   });
@@ -1237,7 +1242,7 @@ flowchart LR
     expect(find.textContaining('Feedback queue'), findsNothing);
     expect(find.textContaining('feedback pending'), findsNothing);
 
-    await tester.tap(find.byTooltip('Projects'));
+    await tester.tap(find.byTooltip('Proyectos'));
     await tester.pumpAndSettle();
 
     expect(find.byIcon(Icons.feedback_outlined), findsNothing);
@@ -1255,6 +1260,8 @@ flowchart LR
 
     expect(find.byIcon(Icons.feedback_outlined), findsNothing);
     expect(find.textContaining('Feedback queue'), findsNothing);
+    await tester.ensureVisible(find.text('Other Project', skipOffstage: false));
+    await tester.pumpAndSettle();
     expect(
       find.byTooltip('Project actions for Other Project'),
       findsOneWidget,

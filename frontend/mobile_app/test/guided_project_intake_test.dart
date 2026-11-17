@@ -194,7 +194,9 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byTooltip('New project'));
+    await tester.tap(find.byTooltip('Más acciones'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New project').last);
     await tester.pumpAndSettle();
 
     expect(find.text('Project title'), findsOneWidget);
@@ -284,7 +286,9 @@ void main() {
     expect(
         find.textContaining('Current phase: Init preflight'), findsOneWidget);
 
-    await tester.tap(find.byTooltip('New project'));
+    await tester.tap(find.byTooltip('Más acciones'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New project').last);
     await tester.pumpAndSettle();
 
     final secondDialogFields = find.descendant(
@@ -560,7 +564,7 @@ void main() {
 
 Finder _composerField() {
   return find.byWidgetPredicate(
-    (widget) => widget is TextField && widget.decoration?.hintText == 'Message',
+    (widget) => widget is TextField && widget.decoration?.hintText == 'Escribí un mensaje · / para comandos',
   );
 }
 
@@ -592,7 +596,9 @@ Future<void> _openNewProjectIntake(
   required String name,
   required String adminEmail,
 }) async {
-  await tester.tap(find.byTooltip('New project'));
+  await tester.tap(find.byTooltip('Más acciones'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New project').last);
   await tester.pumpAndSettle();
 
   final fields = find.descendant(

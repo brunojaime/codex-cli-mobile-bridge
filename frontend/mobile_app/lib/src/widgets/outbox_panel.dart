@@ -30,11 +30,12 @@ class OutboxPanel extends StatelessWidget {
             color: failures > 0 ? Colors.orangeAccent : null),
         title: Text(
             storageError ??
-                '${entries.length} envío${entries.length == 1 ? '' : 's'} pendiente${entries.length == 1 ? '' : 's'}${failures == 0 ? '' : ' · $failures para revisar'}',
+                '${entries.length} mensaje${entries.length == 1 ? '' : 's'} en cola${failures == 0 ? '' : ' · $failures para revisar'}',
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 13)),
-        subtitle: const Text('Podés seguir escribiendo o cambiar de proyecto',
+        subtitle: const Text(
+            'Se envía cuando el agente termine la respuesta actual. Podés seguir escribiendo.',
             style: TextStyle(fontSize: 11)),
         children: [
           ConstrainedBox(

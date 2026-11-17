@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from backend.app.domain.entities.codex_options import CodexRunOptions
 from backend.app.domain.entities.job import JobStatus
@@ -17,6 +17,7 @@ class ExecutionSnapshot:
     provider_session_id: str | None = None
     phase: str | None = None
     latest_activity: str | None = None
+    activities: list[dict[str, str]] = field(default_factory=list)
 
 
 class ExecutionProvider(ABC):
@@ -76,7 +77,21 @@ class ExecutionProvider(ABC):
     def supports_job_cancellation(self) -> bool:
         return False
 
+    def supports_job_steering(self) -> bool:
+        return False
+
+    def steer_job(self, job_id: str, message: str) -> bool:
+        """Inject a user instruction into a running job; False when unsupported."""
+        return False
+
     def cancel_job(self, job_id: str) -> bool:
+        return False
+
+    def supports_interactions(self) -> bool:
+        return False
+
+    def respond_interaction(self, job_id: str, request_id: str, decision: dict) -> bool:
+        """Answer a pending permission/question/plan request; False when unknown."""
         return False
 
     def supports_submission_lookup(self) -> bool:

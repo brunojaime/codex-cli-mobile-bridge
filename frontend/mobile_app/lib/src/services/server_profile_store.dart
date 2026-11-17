@@ -9,6 +9,8 @@ class ServerProfileStore {
   static const _profilesKey = 'server_profiles';
   static const _activeProfileIdKey = 'active_server_profile_id';
   static const _sidebarExpandedKey = 'sidebar_expanded';
+  static const _sidebarCollapsedKey = 'sidebar_collapsed';
+  static const _sidebarWidthKey = 'sidebar_width';
 
   Future<List<ServerProfile>> loadProfiles({
     required String defaultBaseUrl,
@@ -79,6 +81,31 @@ class ServerProfileStore {
   Future<void> saveSidebarExpanded(bool expanded) async {
     final preferences = await SharedPreferences.getInstance();
     await preferences.setBool(_sidebarExpandedKey, expanded);
+  }
+
+  Future<bool> loadSidebarCollapsed() async {
+    final preferences = await SharedPreferences.getInstance();
+    return preferences.getBool(_sidebarCollapsedKey) ?? false;
+  }
+
+  Future<void> saveSidebarCollapsed(bool collapsed) async {
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setBool(_sidebarCollapsedKey, collapsed);
+  }
+
+  /// Width the user dragged the persistent sidebar to; null = default.
+  Future<double?> loadSidebarWidth() async {
+    final preferences = await SharedPreferences.getInstance();
+    return preferences.getDouble(_sidebarWidthKey);
+  }
+
+  Future<void> saveSidebarWidth(double? width) async {
+    final preferences = await SharedPreferences.getInstance();
+    if (width == null) {
+      await preferences.remove(_sidebarWidthKey);
+    } else {
+      await preferences.setDouble(_sidebarWidthKey, width);
+    }
   }
 
   Future<List<Workspace>> loadSidebarWorkspaces(String serverBaseUrl) async {

@@ -86,7 +86,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Codex tools'));
+    await tester.tap(find.byTooltip('Más acciones'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Codex tools').last);
     await tester.pumpAndSettle();
 
     expect(find.text('Available MCP apps'), findsOneWidget);
@@ -131,7 +133,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Codex tools'));
+    await tester.tap(find.byTooltip('Más acciones'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Codex tools').last);
     await tester.pumpAndSettle();
 
     expect(find.text('Open app'), findsOneWidget);
@@ -180,7 +184,7 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.enterText(
-        find.byType(TextField).first, 'open project catalog for alpha');
+        find.byType(TextField).last, 'open project catalog for alpha');
     await tester.pump();
     expect(find.byIcon(Icons.arrow_upward_rounded), findsWidgets);
     await tester.tap(find.byIcon(Icons.arrow_upward_rounded).first);
@@ -233,7 +237,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Codex tools'));
+    await tester.tap(find.byTooltip('Más acciones'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Codex tools').last);
     await tester.pumpAndSettle();
 
     expect(find.text('drifted'), findsOneWidget);
@@ -286,7 +292,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Codex tools'));
+    await tester.tap(find.byTooltip('Más acciones'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Codex tools').last);
     await tester.pumpAndSettle();
 
     final chip = tester.widget<FilterChip>(
@@ -331,7 +339,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Codex tools'));
+    await tester.tap(find.byTooltip('Más acciones'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Codex tools').last);
     await tester.pumpAndSettle();
 
     final repoChip = tester.widget<FilterChip>(
@@ -382,7 +392,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Codex tools'));
+    await tester.tap(find.byTooltip('Más acciones'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Codex tools').last);
     await tester.pumpAndSettle();
 
     final repoChip = tester.widget<FilterChip>(
@@ -432,7 +444,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Codex tools'));
+    await tester.tap(find.byTooltip('Más acciones'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Codex tools').last);
     await tester.pumpAndSettle();
 
     final repoChip = tester.widget<FilterChip>(
@@ -480,7 +494,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Codex tools'));
+    await tester.tap(find.byTooltip('Más acciones'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Codex tools').last);
     await tester.pumpAndSettle();
 
     expect(
@@ -534,7 +550,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Codex tools'));
+    await tester.tap(find.byTooltip('Más acciones'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Codex tools').last);
     await tester.pumpAndSettle();
 
     expect(find.text('disabled'), findsOneWidget);
@@ -580,7 +598,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byTooltip('Codex tools'));
+    await tester.tap(find.byTooltip('Más acciones'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Codex tools').last);
     await tester.pumpAndSettle();
 
     expect(find.text('disabled-drifted'), findsOneWidget);

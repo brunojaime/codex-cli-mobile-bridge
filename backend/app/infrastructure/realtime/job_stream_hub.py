@@ -58,6 +58,107 @@ class JobStreamHub:
                 unsubscribe()
             await self._close_websocket(websocket)
 
+    async def stream_session(
+        self,
+        websocket: WebSocket,
+        *,
+        session_id: str,
+        service: MessageService,
+        check_interval_seconds: float = 1.0,
+        heartbeat_seconds: float = 25.0,
+    ) -> None:
+        """Push a small event whenever the session changes (any device)."""
+        from starlette.concurrency import run_in_threadpool
+
+        await websocket.accept()
+        try:
+            fingerprint = await run_in_threadpool(
+                service.session_fingerprint, session_id
+            )
+            if fingerprint is None:
+                await self._send_json(
+                    websocket, {"type": "session.missing", "session_id": session_id}
+                )
+                return
+            await self._send_json(
+                websocket,
+                {"type": "session.ready", "session_id": session_id},
+            )
+            idle = 0.0
+            while True:
+                await asyncio.sleep(check_interval_seconds)
+                idle += check_interval_seconds
+                current = await run_in_threadpool(
+                    service.session_fingerprint, session_id
+                )
+                if current is None:
+                    await self._send_json(
+                        websocket,
+                        {"type": "session.missing", "session_id": session_id},
+                    )
+                    return
+                if current != fingerprint:
+                    fingerprint = current
+                    idle = 0.0
+                    await self._send_json(
+                        websocket,
+                        {"type": "session.changed", "session_id": session_id},
+                    )
+                elif idle >= heartbeat_seconds:
+                    idle = 0.0
+                    await self._send_json(websocket, {"type": "ping"})
+        except (_ClientDisconnected, WebSocketDisconnect):
+            return
+        finally:
+            await self._close_websocket(websocket)
+
+    async def stream_runs(
+        self,
+        websocket: WebSocket,
+        *,
+        service: MessageService,
+        check_interval_seconds: float = 1.0,
+        heartbeat_seconds: float = 25.0,
+    ) -> None:
+        """Push the dashboard overview now and again whenever it changes."""
+        import json
+
+        from starlette.concurrency import run_in_threadpool
+
+        await websocket.accept()
+        try:
+            previous = None
+            idle = heartbeat_seconds
+            while True:
+                data = await run_in_threadpool(service.runs_overview)
+                # elapsed_seconds/updated_at move on every read of a live job;
+                # the front counts time itself, so only real changes are sent.
+                comparable = json.dumps(
+                    [
+                        {
+                            k: v
+                            for k, v in run.items()
+                            if k not in {"elapsed_seconds", "updated_at"}
+                        }
+                        for run in data["runs"]
+                    ],
+                    sort_keys=True,
+                    default=str,
+                )
+                if comparable != previous:
+                    previous = comparable
+                    idle = 0.0
+                    await self._send_json(websocket, {"type": "runs.overview", **data})
+                elif idle >= heartbeat_seconds:
+                    idle = 0.0
+                    await self._send_json(websocket, {"type": "ping"})
+                await asyncio.sleep(check_interval_seconds)
+                idle += check_interval_seconds
+        except (_ClientDisconnected, WebSocketDisconnect):
+            return
+        finally:
+            await self._close_websocket(websocket)
+
     async def _send_job_snapshot(
         self,
         websocket: WebSocket,

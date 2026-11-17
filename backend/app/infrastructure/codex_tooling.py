@@ -701,10 +701,22 @@ def _run_codex_app_server_requests(
     command: str,
     *,
     requests: list[dict[str, object]],
+    timeout_seconds: float = 15.0,
 ) -> tuple[dict[int, dict[str, object]], str | None]:
-    payload = "".join(f"{json.dumps(item)}\n" for item in requests)
+    """Send JSON-RPC requests and keep stdin open until every reply arrives.
+
+    Closing stdin right after writing (as ``subprocess.run(input=...)`` does)
+    makes the app-server exit on EOF before answering slower requests such as
+    ``account/rateLimits/read``.
+    """
+    import selectors
+    import time
+
+    expected_ids = {
+        item["id"] for item in requests if isinstance(item.get("id"), int)
+    }
     try:
-        completed = subprocess.run(
+        process = subprocess.Popen(
             [
                 *shlex.split(command),
                 "-c",
@@ -713,36 +725,61 @@ def _run_codex_app_server_requests(
                 "--listen",
                 "stdio://",
             ],
-            input=payload,
-            capture_output=True,
-            check=False,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=15,
+            bufsize=1,
         )
-    except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
+    except (FileNotFoundError, OSError) as exc:
         return {}, str(exc)
 
-    if completed.returncode != 0:
-        stderr = completed.stderr.strip()
-        return (
-            {},
-            stderr or f"Codex app-server exited with code {completed.returncode}.",
-        )
-
     responses: dict[int, dict[str, object]] = {}
-    for raw_line in completed.stdout.splitlines():
-        line = raw_line.strip()
-        if not line or not line.startswith("{"):
-            continue
+    try:
+        assert process.stdin is not None and process.stdout is not None
+        for item in requests:
+            process.stdin.write(f"{json.dumps(item)}\n")
+        process.stdin.flush()
+        selector = selectors.DefaultSelector()
+        selector.register(process.stdout, selectors.EVENT_READ)
+        deadline = time.monotonic() + timeout_seconds
+        while not expected_ids.issubset(responses):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            if not selector.select(timeout=remaining):
+                break
+            raw_line = process.stdout.readline()
+            if not raw_line:
+                break
+            line = raw_line.strip()
+            if not line.startswith("{"):
+                continue
+            try:
+                message = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(message, dict) and isinstance(message.get("id"), int):
+                responses[message["id"]] = message
+    except (OSError, ValueError) as exc:
+        return responses, str(exc)
+    finally:
         try:
-            message = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(message, dict):
-            continue
-        message_id = message.get("id")
-        if isinstance(message_id, int):
-            responses[message_id] = message
+            if process.stdin:
+                process.stdin.close()
+        except OSError:
+            pass
+        try:
+            process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=3)
+
+    if not responses and process.returncode not in (0, None, -9):
+        stderr = (process.stderr.read() if process.stderr else "").strip()
+        return {}, stderr or f"Codex app-server exited with code {process.returncode}."
+    if not expected_ids.issubset(responses) and not responses:
+        return {}, "Codex app-server did not answer in time."
     return responses, None
 
 

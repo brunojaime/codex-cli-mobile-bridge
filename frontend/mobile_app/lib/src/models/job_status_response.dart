@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+import 'agent_activity.dart';
 import 'agent_configuration.dart';
 import '../services/chat_notification_service.dart';
 
@@ -18,6 +20,7 @@ class JobStatusResponse {
     this.runId,
     this.phase,
     this.latestActivity,
+    this.activities = const [],
     this.updatedAt,
     this.completedAt,
   });
@@ -37,6 +40,7 @@ class JobStatusResponse {
   final String? runId;
   final String? phase;
   final String? latestActivity;
+  final List<AgentActivity> activities;
   final DateTime? updatedAt;
   final DateTime? completedAt;
 
@@ -59,6 +63,7 @@ class JobStatusResponse {
       runId == other.runId &&
       phase == other.phase &&
       latestActivity == other.latestActivity &&
+      listEquals(activities, other.activities) &&
       updatedAt == other.updatedAt &&
       completedAt == other.completedAt;
 
@@ -86,6 +91,7 @@ class JobStatusResponse {
       runId: _readText(json['run_id']),
       phase: _readText(json['phase']),
       latestActivity: _readPayloadText(json['latest_activity']),
+      activities: parseAgentActivities(json['activities']),
       updatedAt: _readDateTime(json['updated_at']),
       completedAt: _readDateTime(json['completed_at']),
     );
@@ -94,6 +100,8 @@ class JobStatusResponse {
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
       'job_id': jobId,
+      'activities':
+          activities.map((item) => item.toJson()).toList(growable: false),
       'session_id': sessionId,
       'status': status,
       'elapsed_seconds': elapsedSeconds,
@@ -128,6 +136,7 @@ class JobStatusResponse {
     String? runId,
     String? phase,
     String? latestActivity,
+    List<AgentActivity>? activities,
     DateTime? updatedAt,
     DateTime? completedAt,
   }) {
@@ -147,6 +156,7 @@ class JobStatusResponse {
       runId: runId ?? this.runId,
       phase: phase ?? this.phase,
       latestActivity: latestActivity ?? this.latestActivity,
+      activities: activities ?? this.activities,
       updatedAt: updatedAt ?? this.updatedAt,
       completedAt: completedAt ?? this.completedAt,
     );

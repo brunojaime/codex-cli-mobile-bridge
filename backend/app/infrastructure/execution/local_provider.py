@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -10,7 +11,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, Literal
 from uuid import uuid4
@@ -19,6 +20,7 @@ from backend.app.domain.entities.codex_options import CodexRunOptions
 from backend.app.domain.engine import is_claude_model, session_matches_model
 from backend.app.domain.ai_runtime import AiRuntimePolicy
 from backend.app.domain.entities.job import JobStatus
+from backend.app.infrastructure.execution.activity import activity_item, entry as activity_entry
 from backend.app.domain.video_handoff import VIDEO_HANDOFF_HINT, with_video_handoff
 from backend.app.infrastructure.codex_tooling import sync_repo_skills
 from backend.app.infrastructure.execution.base import (
@@ -41,7 +43,14 @@ _MOBILE_FILE_CONTEXT = (
 )
 
 
+_SLASH_COMMAND = re.compile(r"/[A-Za-z][\w:-]*(?:[ \t][^\n]*)?")
+
+
 def _message_with_mobile_file_context(message: str) -> str:
+    # A one-line slash command (/compact, /cost…) only runs when it is the
+    # first thing the CLI sees, so it is passed through untouched.
+    if _SLASH_COMMAND.fullmatch(message.strip()):
+        return message.strip()
     context = _MOBILE_FILE_CONTEXT
     if VIDEO_HANDOFF_HINT not in message:
         context = with_video_handoff(context)
@@ -109,6 +118,7 @@ class _ExecutionState:
     provider_session_id: str | None = None
     phase: str | None = None
     latest_activity: str | None = None
+    activities: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -157,6 +167,11 @@ class LocalExecutionProvider(ExecutionProvider):
         self._states: dict[str, _ExecutionState] = {}
         self._subscribers: dict[str, list[Callable[[ExecutionSnapshot], None]]] = {}
         self._processes: dict[str, subprocess.Popen[str]] = {}
+        # job_id -> (thread_id, turn_id) of the running app-server turn.
+        self._steer_targets: dict[str, tuple[str, str]] = {}
+        self._interactions: dict[str, dict[str, Callable[[dict], None]]] = {}
+        self._token_usage: dict[str, dict[str, int]] = {}
+        self._stdin_lock = threading.Lock()
         self._queued_executions: dict[str, _QueuedExecution] = {}
         self._serial_tails: dict[str, str] = {}
         self._serial_successors: dict[str, str] = {}
@@ -259,6 +274,10 @@ class LocalExecutionProvider(ExecutionProvider):
         state = self._get_state(job_id)
         return state.latest_activity if state else None
 
+    def get_snapshot(self, job_id: str) -> ExecutionSnapshot:
+        with self._lock:
+            return self._snapshot_from_state(job_id, self._states.get(job_id))
+
     def watch_job(
         self,
         job_id: str,
@@ -287,6 +306,125 @@ class LocalExecutionProvider(ExecutionProvider):
 
     def supports_job_cancellation(self) -> bool:
         return True
+
+    def supports_job_steering(self) -> bool:
+        return True
+
+    def supports_interactions(self) -> bool:
+        return True
+
+    def register_interaction(
+        self, job_id: str, request_id: str, responder: Callable[[dict], None]
+    ) -> None:
+        with self._lock:
+            self._interactions.setdefault(job_id, {})[request_id] = responder
+
+    def drop_interaction(self, job_id: str, request_id: str) -> bool:
+        with self._lock:
+            pending = self._interactions.get(job_id, {})
+            return pending.pop(request_id, None) is not None
+
+    def clear_interactions(self, job_id: str) -> None:
+        with self._lock:
+            self._interactions.pop(job_id, None)
+
+    def respond_interaction(self, job_id: str, request_id: str, decision: dict) -> bool:
+        """Answer a pending agent request (permission, question or plan)."""
+        with self._lock:
+            responder = self._interactions.get(job_id, {}).pop(request_id, None)
+        if responder is None:
+            return False
+        try:
+            responder(decision)
+        except ValueError:
+            # Invalid decision: keep the request pending so it can be answered.
+            self.register_interaction(job_id, request_id, responder)
+            raise
+        except OSError:
+            return False
+        return True
+
+    def steer_job(self, job_id: str, message: str) -> bool:
+        """Add a user instruction to the running Codex turn without stopping it."""
+        text = message.strip()
+        if not text:
+            return False
+        with self._lock:
+            current = self._states.get(job_id)
+            process = self._processes.get(job_id)
+            target = self._steer_targets.get(job_id)
+        if (
+            current is None
+            or current.status.is_terminal
+            or process is None
+            or process.poll() is not None
+            or target is None
+        ):
+            return False
+        thread_id, turn_id = target
+        try:
+            self._app_server_send(
+                process,
+                {
+                    "id": f"steer-{uuid4().hex[:12]}",
+                    "method": "turn/steer",
+                    "params": {
+                        "threadId": thread_id,
+                        "expectedTurnId": turn_id,
+                        "input": [{"type": "text", "text": text}],
+                    },
+                },
+            )
+        except (OSError, ValueError, _AppServerRequestError):
+            return False
+        self._record_activity(
+            job_id,
+            activity_entry(
+                f"steer-{uuid4().hex[:12]}",
+                "steer",
+                text,
+                "",
+                "completed",
+            ),
+        )
+        return True
+
+    def _record_token_usage(self, job_id: str, params: object) -> None:
+        if not isinstance(params, dict):
+            return
+        usage = params.get("tokenUsage")
+        last = usage.get("last") if isinstance(usage, dict) else None
+        if not isinstance(last, dict):
+            return
+
+        def as_int(key: str) -> int:
+            value = last.get(key)
+            return int(value) if isinstance(value, (int, float)) else 0
+
+        with self._lock:
+            totals = self._token_usage.setdefault(
+                job_id, {"input": 0, "cached": 0, "output": 0, "reasoning": 0}
+            )
+            totals["input"] += as_int("inputTokens")
+            totals["cached"] += as_int("cachedInputTokens")
+            totals["output"] += as_int("outputTokens")
+            totals["reasoning"] += as_int("reasoningOutputTokens")
+            snapshot = dict(totals)
+
+        def compact(value: int) -> str:
+            if value >= 1_000_000:
+                return f"{value / 1_000_000:.1f}M"
+            if value >= 1_000:
+                return f"{value / 1_000:.1f}k"
+            return str(value)
+
+        title = f"{compact(snapshot['input'])} entrada · {compact(snapshot['output'])} salida"
+        if snapshot["reasoning"]:
+            title += f" ({compact(snapshot['reasoning'])} razonamiento)"
+        self._record_activity(
+            job_id,
+            activity_entry("usage", "usage", title, json.dumps(snapshot), "completed"),
+        )
 
     def cancel_job(self, job_id: str) -> bool:
         with self._lock:
@@ -561,6 +699,8 @@ class LocalExecutionProvider(ExecutionProvider):
         finally:
             with self._lock:
                 self._processes.pop(job_id, None)
+                self._steer_targets.pop(job_id, None)
+                self._token_usage.pop(job_id, None)
             self._cleanup_output_file(output_path)
             self._cleanup_paths(cleanup_paths)
 
@@ -729,9 +869,26 @@ class LocalExecutionProvider(ExecutionProvider):
             )
 
             reasoning_effort = self._reasoning_effort_for_job(codex_options)
+            is_compact = message.strip().lower() == "/compact"
+            if is_compact:
+                # Native compaction, same as the CLI's /compact: the thread's
+                # history is summarized by Codex itself, not by a prompt.
+                self._set_state(
+                    job_id,
+                    status=JobStatus.RUNNING,
+                    provider_session_id=thread_id,
+                    phase="Compacting",
+                    latest_activity="Compactando la conversación.",
+                )
             self._app_server_send(
                 process,
                 {
+                    "id": "turn-start",
+                    "method": "thread/compact/start",
+                    "params": {"threadId": thread_id},
+                }
+                if is_compact
+                else {
                     "id": "turn-start",
                     "method": "turn/start",
                     "params": {
@@ -803,7 +960,11 @@ class LocalExecutionProvider(ExecutionProvider):
             completed_response = (
                 final_response
                 or response_buffer.strip()
-                or "Execution completed with no output."
+                or (
+                    "Conversación compactada: Codex resumió el historial y sigue con el mismo hilo."
+                    if is_compact
+                    else "Execution completed with no output."
+                )
             )
             self._set_state(
                 job_id,
@@ -866,6 +1027,8 @@ class LocalExecutionProvider(ExecutionProvider):
         finally:
             with self._lock:
                 self._processes.pop(job_id, None)
+                self._steer_targets.pop(job_id, None)
+                self._token_usage.pop(job_id, None)
             if process is not None and process.poll() is None:
                 self._terminate_process_tree(process)
             self._cleanup_paths(cleanup_paths)
@@ -1147,8 +1310,9 @@ class LocalExecutionProvider(ExecutionProvider):
     ) -> None:
         if process.stdin is None:
             raise _AppServerRequestError("Codex app-server stdin is not available.")
-        process.stdin.write(json.dumps(payload) + "\n")
-        process.stdin.flush()
+        with self._stdin_lock:
+            process.stdin.write(json.dumps(payload) + "\n")
+            process.stdin.flush()
 
     def _await_thread_response(
         self,
@@ -1332,7 +1496,34 @@ class LocalExecutionProvider(ExecutionProvider):
         if not isinstance(method, str):
             return False
 
+        if method == "turn/started":
+            params = payload.get("params")
+            turn = params.get("turn") if isinstance(params, dict) else None
+            thread_id = params.get("threadId") if isinstance(params, dict) else None
+            if isinstance(turn, dict) and isinstance(turn.get("id"), str) and isinstance(thread_id, str):
+                with self._lock:
+                    self._steer_targets[job_id] = (thread_id, turn["id"])
+
+        if method == "thread/tokenUsage/updated":
+            self._record_token_usage(job_id, payload.get("params"))
+            return False
+
+        if method == "turn/plan/updated":
+            params = payload.get("params")
+            if isinstance(params, dict):
+                for step in params.get("plan", []):
+                    if not isinstance(step, dict) or not isinstance(step.get("step"), str):
+                        continue
+                    title = step["step"]
+                    state = {"inProgress": "running", "in_progress": "running", "pending": "pending", "completed": "completed"}.get(str(step.get("status")), "unknown")
+                    step_id = "plan-" + hashlib.sha256(title.encode()).hexdigest()[:16]
+                    self._record_activity(job_id, activity_entry(step_id, "plan", title, "", state))
+            return False
+
         if method in {"item/started", "item/completed"}:
+            item = self._app_server_item(payload)
+            if item is not None:
+                self._record_activity(job_id, activity_item(item, completed=method == "item/completed"))
             self._track_app_server_agent_message_item(
                 payload,
                 final_agent_message_item_ids=final_agent_message_item_ids,
@@ -1357,6 +1548,10 @@ class LocalExecutionProvider(ExecutionProvider):
             item_id = params.get("itemId")
             if isinstance(item_id, str):
                 if item_id in non_final_agent_message_item_ids:
+                    snapshot = self.get_snapshot(job_id)
+                    previous = next((item for item in snapshot.activities if item["id"] == item_id), None)
+                    text = (previous["title"] if previous else "") + delta
+                    self._record_activity(job_id, activity_entry(item_id, "commentary", text, "", "running"))
                     return False
                 if (
                     final_agent_message_item_ids
@@ -1648,6 +1843,11 @@ class LocalExecutionProvider(ExecutionProvider):
             )
             return
 
+        if payload.get("type") in {"item.started", "item.completed"} and isinstance(payload.get("item"), dict):
+            item = payload["item"]
+            if item.get("type") == "agent_message" and not item.get("phase"):
+                item = {**item, "phase": "commentary"}
+            self._record_activity(job_id, activity_item(item, completed=payload["type"] == "item.completed"))
         provider_session_id = payload.get("thread_id")
         phase, latest_activity = self._describe_event(payload)
         self._set_state(
@@ -1799,6 +1999,32 @@ class LocalExecutionProvider(ExecutionProvider):
                 return line.strip()
         return None
 
+    def _record_activity(self, job_id: str, activity: dict[str, str] | None) -> None:
+        if activity is None:
+            return
+        with self._lock:
+            current = self._states.get(job_id)
+            if current is None or current.status.is_terminal:
+                return
+            activities = [dict(item) for item in current.activities]
+            for index, previous in enumerate(activities):
+                if previous["id"] == activity["id"]:
+                    activity["created_at"] = previous["created_at"]
+                    if previous["status"] in {"completed", "failed", "cancelled", "unknown"} and activity["status"] in {"running", "pending"}:
+                        return
+                    if previous["detail"] and not activity["detail"].startswith(previous["detail"]):
+                        activity["detail"] = (previous["detail"] + "\n\n" + activity["detail"])[:16000]
+                    if activity["title"] in {"Herramienta", "Comando"}:
+                        activity["title"] = previous["title"]
+                    if previous.get("parent_id") and not activity.get("parent_id"):
+                        activity["parent_id"] = previous["parent_id"]
+                    activities[index] = activity
+                    break
+            else:
+                activities.append(activity)
+            current.activities = activities
+        self._set_state(job_id, status=current.status)
+
     def _set_state(
         self,
         job_id: str,
@@ -1818,8 +2044,8 @@ class LocalExecutionProvider(ExecutionProvider):
             current = self._states.get(job_id)
             if (
                 current is not None
-                and current.status == JobStatus.CANCELLED
-                and status != JobStatus.CANCELLED
+                and current.status.is_terminal
+                and status != current.status
             ):
                 snapshot = self._snapshot_from_state(job_id, current)
                 listeners = list(self._subscribers.get(job_id, ()))
@@ -1838,10 +2064,17 @@ class LocalExecutionProvider(ExecutionProvider):
                     phase=phase
                     if phase is not None
                     else (current.phase if current else None),
+                    activities=[dict(item) for item in current.activities] if current else [],
                     latest_activity=latest_activity
                     if latest_activity is not None
                     else (current.latest_activity if current else None),
                 )
+                if status.is_terminal:
+                    self._states[job_id].activities = [
+                        {**item, "status": status.value if status != JobStatus.COMPLETED else "unknown"}
+                        if item["status"] in {"running", "pending"} else item
+                        for item in self._states[job_id].activities
+                    ]
                 snapshot = self._snapshot_from_state(job_id, self._states[job_id])
                 listeners = list(self._subscribers.get(job_id, ()))
                 should_start_successor = (
@@ -1886,6 +2119,7 @@ class LocalExecutionProvider(ExecutionProvider):
             provider_session_id=state.provider_session_id,
             phase=state.phase,
             latest_activity=state.latest_activity,
+            activities=[dict(item) for item in state.activities],
         )
 
     def _remove_queued_job(self, job_id: str) -> None:

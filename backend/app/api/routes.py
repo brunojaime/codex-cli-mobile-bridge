@@ -18,9 +18,10 @@ from functools import lru_cache
 from pathlib import Path
 from threading import Thread
 from tempfile import NamedTemporaryFile
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
+from pydantic import BaseModel, Field
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -409,6 +410,14 @@ def _backend_commit() -> str | None:
         return None
     commit = result.stdout.strip()
     return commit or None
+
+
+from backend.app.application.services.backend_automation_release import loaded_revision as _loaded_automation_revision
+
+
+@router.get("/automation/version")
+def automation_version(container: AppContainer = Depends(get_container)):
+    return {"environment": container.settings.bridge_environment, "commit": _loaded_automation_revision()}
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -7076,6 +7085,65 @@ async def _session_file_workspace(session_id: str, service: MessageService) -> s
     return session.workspace_path
 
 
+@router.get("/sessions/{session_id}/permissions")
+async def get_session_permissions(
+    session_id: str,
+    service: MessageService = Depends(get_message_service),
+    container: AppContainer = Depends(get_container),
+) -> dict:
+    """Agent permission modes and Claude's remembered rules for this project."""
+    from backend.app.application.services import project_permissions
+
+    workspace = await _session_file_workspace(session_id, service)
+    try:
+        return await run_in_threadpool(
+            project_permissions.describe,
+            workspace,
+            claude_mode=container.settings.claude_permission_mode,
+            codex_exec_args=container.settings.codex_exec_args,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+class RemovePermissionRuleRequest(BaseModel):
+    list: Literal["allow", "ask", "deny"]
+    rule: str = Field(..., min_length=1, max_length=2000)
+
+
+@router.post("/sessions/{session_id}/permissions/remove")
+async def remove_session_permission_rule(
+    session_id: str,
+    payload: RemovePermissionRuleRequest,
+    service: MessageService = Depends(get_message_service),
+) -> dict:
+    """Forget one remembered Claude rule (project-local settings only)."""
+    from backend.app.application.services import project_permissions
+
+    workspace = await _session_file_workspace(session_id, service)
+    try:
+        removed = await run_in_threadpool(
+            project_permissions.remove_rule, workspace, payload.list, payload.rule
+        )
+    except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not removed:
+        raise HTTPException(status_code=404, detail="Esa regla ya no existe.")
+    return {"removed": True}
+
+
+@router.get("/sessions/{session_id}/subagents")
+async def get_session_subagents(
+    session_id: str,
+    service: MessageService = Depends(get_message_service),
+) -> dict:
+    """Subagents available to launch in this chat's project."""
+    from backend.app.application.services import subagent_catalog
+
+    workspace = await _session_file_workspace(session_id, service)
+    return {"subagents": await run_in_threadpool(subagent_catalog.catalog, workspace)}
+
+
 @router.get("/sessions/{session_id}/files")
 async def get_session_file(
     session_id: str,
@@ -7162,6 +7230,72 @@ async def cancel_job(
     return JobResponse.from_domain(job)
 
 
+class SteerJobRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=20000)
+
+
+@router.post("/jobs/{job_id}/steer")
+async def steer_job(
+    job_id: str,
+    payload: SteerJobRequest,
+    service: MessageService = Depends(get_message_service),
+) -> dict[str, object]:
+    """Send an instruction to a running job without stopping it (Codex app-server)."""
+    try:
+        steered = await run_in_threadpool(service.steer_job, job_id, payload.message)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if not steered:
+        raise HTTPException(
+            status_code=409,
+            detail="This job cannot be redirected while it runs.",
+        )
+    return {"job_id": job_id, "steered": True}
+
+
+@router.get("/runs/overview")
+async def runs_overview(
+    service: MessageService = Depends(get_message_service),
+) -> dict[str, object]:
+    """Everything running, waiting for the user or recently finished."""
+    return await run_in_threadpool(service.runs_overview)
+
+
+class InteractionDecisionRequest(BaseModel):
+    action: Literal["allow", "allow_always", "deny"]
+    message: str | None = Field(default=None, max_length=20000)
+    answers: dict[str, str] | None = None
+    mode: Literal["acceptEdits", "default", "auto"] | None = None
+    interrupt: bool = False
+
+
+@router.post("/jobs/{job_id}/interactions/{request_id}")
+async def respond_job_interaction(
+    job_id: str,
+    request_id: str,
+    payload: InteractionDecisionRequest,
+    service: MessageService = Depends(get_message_service),
+) -> dict[str, object]:
+    """Approve/deny a tool, answer a question or approve a plan (Claude)."""
+    try:
+        answered = await run_in_threadpool(
+            service.respond_interaction,
+            job_id,
+            request_id,
+            payload.model_dump(exclude_none=True),
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not answered:
+        raise HTTPException(
+            status_code=409,
+            detail="This request is no longer waiting for an answer.",
+        )
+    return {"job_id": job_id, "request_id": request_id, "answered": True}
+
+
 @router.post("/jobs/{job_id}/retry", response_model=JobResponse, status_code=202)
 async def retry_job(
     job_id: str,
@@ -7179,6 +7313,29 @@ async def retry_job(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return JobResponse.from_domain(job)
+
+
+@router.websocket("/ws/sessions/{session_id}")
+async def session_updates(
+    websocket: WebSocket,
+    session_id: str,
+    container: AppContainer = Depends(get_container),
+) -> None:
+    await container.job_stream_hub.stream_session(
+        websocket,
+        session_id=session_id,
+        service=container.message_service,
+    )
+
+
+@router.websocket("/ws/runs")
+async def runs_updates(
+    websocket: WebSocket,
+    container: AppContainer = Depends(get_container),
+) -> None:
+    await container.job_stream_hub.stream_runs(
+        websocket, service=container.message_service
+    )
 
 
 @router.websocket("/ws/jobs/{job_id}")

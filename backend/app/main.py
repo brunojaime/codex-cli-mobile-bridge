@@ -157,6 +157,8 @@ def _configure_background_workers(app: FastAPI, container: AppContainer) -> None
     @app.on_event('startup')
     async def start_work_coordinator():
         nonlocal work_task
+        if getattr(container.settings, "work_hub_url", ""):
+            return
         service = get_work(container)
         async def loop():
             while True:

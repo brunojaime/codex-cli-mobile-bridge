@@ -153,7 +153,7 @@ class _OperationsScreenState extends State<OperationsScreen> {
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
+            child: const Text('Cancelar'),
           ),
           FilledButton(
             onPressed: () {
@@ -219,7 +219,7 @@ class _OperationsScreenState extends State<OperationsScreen> {
             actions: <Widget>[
               TextButton(
                 onPressed: () => Navigator.of(context).pop(false),
-                child: const Text('Cancel'),
+                child: const Text('Cancelar'),
               ),
               FilledButton(
                 style: force
@@ -319,7 +319,7 @@ class _OperationsScreenState extends State<OperationsScreen> {
                 Text(
                   'See PROD and DEV status, then recover either service without depending on the main backend.',
                   style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                        color: const Color(0xFFB7C1DD),
+                        color: const Color(0xFFC3C7D1),
                         height: 1.45,
                       ),
                   textAlign: TextAlign.center,
@@ -461,7 +461,7 @@ class _OperationsOverview extends StatelessWidget {
                   Text(
                     '$healthyCount of ${snapshot.environments.length} services ready  •  $updated',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: const Color(0xFFB7C1DD),
+                          color: const Color(0xFFC3C7D1),
                         ),
                   ),
                 ],
@@ -679,7 +679,7 @@ class _EnvironmentCard extends StatelessWidget {
                     Text(
                       action!.detail,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: const Color(0xFFB7C1DD),
+                            color: const Color(0xFFC3C7D1),
                           ),
                     ),
                   ],
@@ -772,13 +772,13 @@ class _MetricTile extends StatelessWidget {
       constraints: const BoxConstraints(minWidth: 116),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: const Color(0xFF0F172A),
+        color: const Color(0xFF16181B),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
-          Icon(icon, size: 18, color: const Color(0xFF8B97B5)),
+          Icon(icon, size: 18, color: const Color(0xFF939BAD)),
           const SizedBox(width: 8),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -790,7 +790,7 @@ class _MetricTile extends StatelessWidget {
               Text(
                 label,
                 style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: const Color(0xFF8B97B5),
+                      color: const Color(0xFF939BAD),
                     ),
               ),
             ],
@@ -818,7 +818,7 @@ class _StatusRow extends StatelessWidget {
             width: 100,
             child: Text(
               label,
-              style: const TextStyle(color: Color(0xFF8B97B5)),
+              style: const TextStyle(color: Color(0xFF939BAD)),
             ),
           ),
           Expanded(child: Text(value)),
@@ -865,7 +865,7 @@ class _ErrorCard extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
-            TextButton(onPressed: onRetry, child: const Text('Retry')),
+            TextButton(onPressed: onRetry, child: const Text('Reintentar')),
           ],
         ),
       ),
@@ -891,7 +891,7 @@ class _OperationsLoadingView extends StatelessWidget {
                 Container(
                   height: 84,
                   decoration: BoxDecoration(
-                    color: const Color(0xFF141C33),
+                    color: const Color(0xFF1B1D22),
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: const Center(
@@ -913,7 +913,7 @@ class _OperationsLoadingView extends StatelessWidget {
                   Container(
                     height: 238,
                     decoration: BoxDecoration(
-                      color: const Color(0xFF141C33),
+                      color: const Color(0xFF1B1D22),
                       borderRadius: BorderRadius.circular(18),
                     ),
                   ),

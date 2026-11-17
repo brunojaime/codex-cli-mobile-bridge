@@ -1,3 +1,10 @@
+import '../ui/app_theme.dart';
+import '../models/run_overview.dart';
+import '../services/run_alerts.dart';
+import '../state/runs_monitor.dart';
+import '../widgets/runs_dashboard.dart';
+import '../widgets/interaction_card.dart';
+import '../widgets/session_command_sheets.dart';
 import 'objective_team_screen.dart';
 import '../services/objective_team_client.dart';
 import 'dart:async';
@@ -7,6 +14,7 @@ import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
@@ -430,6 +438,7 @@ enum _AppBarOverflowAction {
   newProject,
   projectHistory,
   newChat,
+  agentStudio,
 }
 
 enum _PinnedWorkspaceAction { newChat, deployments, notifications, backlog, remove }
@@ -457,7 +466,11 @@ class ChatScreen extends StatefulWidget {
     this.initialProdUpdateStatusOverride,
     this.prodUpdateClientOverride,
     this.projectDocumentsClientOverride,
+    this.enableRunsDashboard = false,
   });
+
+  /// Starts on the live runs dashboard (the app's home) instead of a chat.
+  final bool enableRunsDashboard;
 
   final String initialApiBaseUrl;
   final ChatNotificationService notificationService;
@@ -488,6 +501,7 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final ServerProfileStore _serverProfileStore = ServerProfileStore();
   final TextEditingController _textController = TextEditingController();
+  final FocusNode _sessionSearchFocusNode = FocusNode(debugLabel: 'session-search');
   final ScrollController _scrollController = ScrollController();
   late final ReplyPlaybackService _replyPlaybackService;
   late ChatController _chatController;
@@ -503,6 +517,56 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   String? _serverErrorText;
   String? _codexToolingErrorText;
   bool _sidebarExpanded = false;
+  bool _sidebarCollapsed = false;
+  double? _sidebarWidth;
+  bool _resizingSidebar = false;
+  static const double _minSidebarWidth = 260;
+  static const double _maxSidebarWidth = 640;
+
+  double _effectiveSidebarWidth(double screenWidth) {
+    final preferred = _sidebarWidth ?? (_sidebarExpanded ? 440.0 : 320.0);
+    final max = math.min(_maxSidebarWidth, screenWidth * 0.5);
+    return preferred.clamp(_minSidebarWidth, math.max(_minSidebarWidth, max));
+  }
+
+  double _sidebarDragStartWidth = 0;
+
+  void _startSidebarResize(double screenWidth) {
+    _sidebarDragStartWidth = _effectiveSidebarWidth(screenWidth);
+  }
+
+  /// [offset] is the total pointer travel since the drag started, so the
+  /// border follows the pointer exactly (no lost slop or skipped events).
+  void _resizeSidebar(double offset, double screenWidth) {
+    setState(() {
+      _resizingSidebar = true;
+      _sidebarWidth = (_sidebarDragStartWidth + offset)
+          .clamp(160.0, math.min(_maxSidebarWidth, screenWidth * 0.5));
+    });
+  }
+
+  void _finishSidebarResize() {
+    final width = _sidebarWidth;
+    setState(() {
+      _resizingSidebar = false;
+      if (width != null && width < _minSidebarWidth - 20) {
+        // Dragged nearly closed: hide it, like editors do.
+        _sidebarCollapsed = true;
+        _sidebarWidth = _minSidebarWidth;
+      }
+    });
+    unawaited(_serverProfileStore.saveSidebarWidth(_sidebarWidth));
+    if (_sidebarCollapsed) {
+      unawaited(_serverProfileStore.saveSidebarCollapsed(true));
+    }
+  }
+
+  void _resetSidebarWidth() {
+    setState(() => _sidebarWidth = null);
+    unawaited(_serverProfileStore.saveSidebarWidth(null));
+  }
+  bool _persistentSidebarActive = false;
+  BuildContext? _scaffoldShortcutContext;
   bool _showArchivedChatsInSidebar = false;
   String _sessionSearch = '';
   Timer? _sessionSearchDebounce;
@@ -612,11 +676,233 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   String? _filteredMessagesViewErrorText;
   _ChatBodyView _chatBodyView = _ChatBodyView.conversation;
   static const double _compactAppBarBreakpoint = 640;
+  static const double _persistentSidebarBreakpoint = 1100;
+
+  /// Closes the sidebar only when it is shown as a modal drawer.
+  void _closeSidebarIfDrawer(BuildContext context) {
+    if (_persistentSidebarActive) return;
+    Navigator.of(context).pop();
+  }
   static const int _sessionGroupPageSize = 5;
+  RunsMonitor? _runsMonitor;
+  bool _showDashboard = false;
+
+  Future<void> _openRunSession(String sessionId) async {
+    if (!mounted) return;
+    setState(() => _showDashboard = false);
+    if (_chatController.selectedSessionId != sessionId) {
+      await _chatController.selectSession(sessionId);
+    }
+  }
+
+  void _showRunsDashboard() {
+    if (_runsMonitor == null || _showDashboard) return;
+    setState(() => _showDashboard = true);
+  }
+
+  Future<void> _stopRun(RunCard run) async {
+    final stopped = await _chatController.cancelJob(run.jobId);
+    if (!mounted) return;
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+      content: Text(stopped ? 'Detuviste "${run.sessionTitle}"' : 'No se pudo detener'),
+    ));
+    await _runsMonitor?.refresh();
+  }
+
+  Future<void> _newTaskFromDashboard() async {
+    final before = _chatController.selectedSessionId;
+    await _openWorkspacePicker();
+    if (!mounted) return;
+    if (_chatController.selectedSessionId != before) {
+      setState(() => _showDashboard = false);
+    }
+  }
+
+  Future<void> _toggleRunAlerts() async {
+    final monitor = _runsMonitor;
+    if (monitor == null) return;
+    final alerts = monitor.alerts;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (!alerts.supported) {
+      messenger?.showSnackBar(const SnackBar(
+          content: Text('Este navegador no permite avisos del sistema.')));
+      return;
+    }
+    if (alerts.enabled && alerts.permission == 'granted') {
+      alerts.enabled = false;
+      setState(() {});
+      messenger?.showSnackBar(const SnackBar(content: Text('Avisos desactivados')));
+      return;
+    }
+    final permission = alerts.permission == 'granted'
+        ? 'granted'
+        : await alerts.requestPermission();
+    alerts.enabled = permission == 'granted';
+    if (!mounted) return;
+    setState(() {});
+    messenger?.showSnackBar(SnackBar(
+      content: Text(permission == 'granted'
+          ? 'Listo: te aviso cuando un agente te necesite o termine, aunque estés en otra pestaña.'
+          : 'El navegador bloqueó los avisos. Habilitalos desde el candado de la barra de direcciones.'),
+    ));
+  }
+
+  Widget _buildDashboardButton({bool compact = false}) {
+    final monitor = _runsMonitor!;
+    return AnimatedBuilder(
+      animation: monitor,
+      builder: (context, _) {
+        final waiting = monitor.overview.count(RunState.needsYou);
+        final icon = Badge(
+          isLabelVisible: waiting > 0,
+          label: Text('$waiting'),
+          backgroundColor: const Color(0xFFFFC857),
+          textColor: const Color(0xFF2A1600),
+          child: const Icon(Icons.space_dashboard_outlined, size: 20),
+        );
+        if (compact) {
+          return IconButton(
+            key: const ValueKey('open-runs-dashboard'),
+            tooltip: 'Volver al panel',
+            onPressed: _showRunsDashboard,
+            icon: icon,
+          );
+        }
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          child: Tooltip(
+            message: 'Volver al panel (Ctrl+Shift+H)',
+            child: TextButton.icon(
+              key: const ValueKey('open-runs-dashboard'),
+              onPressed: _showRunsDashboard,
+              icon: Badge(
+                isLabelVisible: waiting > 0,
+                label: Text('$waiting'),
+                backgroundColor: const Color(0xFFFFC857),
+                textColor: const Color(0xFF2A1600),
+                child: const Icon(Icons.space_dashboard_outlined, size: 20),
+              ),
+              label: const Text('Panel'),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Pending permissions/questions/plans of the open chat, pinned above
+  /// the composer so they cannot be missed.
+  Widget _buildSessionRequests() {
+    final monitor = _runsMonitor!;
+    return AnimatedBuilder(
+      animation: monitor,
+      builder: (context, _) {
+        final sessionId = _chatController.selectedSessionId;
+        final runs = monitor.overview.runs
+            .where((run) => run.sessionId == sessionId && run.pending.isNotEmpty)
+            .toList();
+        if (runs.isEmpty) return const SizedBox.shrink();
+        final maxHeight = MediaQuery.sizeOf(context).height * .55;
+        return ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: maxHeight),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 920),
+                child: Column(
+                  children: <Widget>[
+                    for (final run in runs)
+                      for (final pending in run.pending)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: InteractionCard(
+                            key: ValueKey('chat-interaction-${pending.requestId}'),
+                            interaction: pending,
+                            busy: monitor.isAnswering(pending.requestId),
+                            onDecide: (decision) =>
+                                monitor.respond(run, pending, decision),
+                          ),
+                        ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildDashboardScaffold(bool isCompactAppBar) {
+    final monitor = _runsMonitor!;
+    final alerts = monitor.alerts;
+    final alertsOn = alerts.supported && alerts.enabled && alerts.permission == 'granted';
+    return Scaffold(
+      appBar: AppBar(
+        titleSpacing: 16,
+        title: const Text('Panel', style: TextStyle(fontWeight: FontWeight.w700)),
+        actions: <Widget>[
+          IconButton(
+            key: const ValueKey('toggle-run-alerts'),
+            tooltip: alertsOn ? 'Desactivar avisos' : 'Avisarme cuando me necesiten o terminen',
+            onPressed: _toggleRunAlerts,
+            icon: Icon(alertsOn
+                ? Icons.notifications_active_outlined
+                : Icons.notifications_off_outlined),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            child: isCompactAppBar
+                ? IconButton(
+                    tooltip: 'Ver chats',
+                    onPressed: () => setState(() => _showDashboard = false),
+                    icon: const Icon(Icons.forum_outlined),
+                  )
+                : TextButton.icon(
+                    onPressed: () => setState(() => _showDashboard = false),
+                    icon: const Icon(Icons.forum_outlined, size: 18),
+                    label: const Text('Chats'),
+                  ),
+          ),
+          const SizedBox(width: 4),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            child: isCompactAppBar
+                ? IconButton.filledTonal(
+                    tooltip: 'Nueva tarea',
+                    onPressed: _newTaskFromDashboard,
+                    icon: const Icon(Icons.add),
+                  )
+                : FilledButton.tonalIcon(
+                    onPressed: _newTaskFromDashboard,
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('Nueva tarea'),
+                  ),
+          ),
+          const SizedBox(width: 12),
+        ],
+      ),
+      body: SafeArea(
+        child: RunsDashboard(
+          monitor: monitor,
+          onOpenRun: (run) => unawaited(_openRunSession(run.sessionId)),
+          onStopRun: _stopRun,
+          onNewTask: _newTaskFromDashboard,
+        ),
+      ),
+    );
+  }
 
   @override
   void initState() {
     super.initState();
+    HardwareKeyboard.instance.addHandler(_handleGlobalShortcut);
+    if (widget.enableServerBootstrap) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _chatController.startLiveSync(),
+      );
+    }
     WidgetsBinding.instance.addObserver(this);
     _replyPlaybackService =
         widget.replyPlaybackServiceOverride ?? ReplyPlaybackService();
@@ -643,6 +929,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     }
     _activeCodexTooling = widget.initialCodexTooling;
     _chatController.addListener(_handleChatControllerChanged);
+    if (widget.enableRunsDashboard) {
+      _showDashboard = true;
+      _runsMonitor = RunsMonitor(
+        alerts: createRunAlerts(),
+        onOpenSession: (sessionId) => unawaited(_openRunSession(sessionId)),
+      )..attach(_chatController.apiClient);
+    }
     _chatNotificationTaps = _notificationNavigation?.chatTaps.listen((_) {
       unawaited(_openPendingChatNotification());
     });
@@ -661,6 +954,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleGlobalShortcut);
+    _runsMonitor?.dispose();
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_chatNotificationTaps?.cancel());
     _notificationNavigation?.setVisibleChat(null, null);
@@ -675,6 +970,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _chatController.dispose();
     }
     _textController.dispose();
+    _sessionSearchFocusNode.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -689,6 +985,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       unawaited(_markCurrentSessionAsRead());
       _chatController.handleAppResumed();
+      if (widget.enableServerBootstrap) _chatController.startLiveSync();
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      _chatController.stopLiveSync();
     }
   }
 
@@ -727,171 +1027,134 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         final totalActivePinnedJobsCount = _totalActivePinnedJobsCount();
         final hasEnvironmentBadge =
             _activeServerHealth?.environmentIdentity != null;
-        final appBarHeight = hasEnvironmentBadge
-            ? (isCompactAppBar ? 94.0 : 104.0)
-            : kToolbarHeight;
-        return Scaffold(
-          appBar: AppBar(
-            toolbarHeight: appBarHeight,
-            titleSpacing: isCompactAppBar ? 4 : null,
-            leading: Builder(
-              builder: (context) {
-                return IconButton(
-                  onPressed: () => Scaffold.of(context).openDrawer(),
-                  tooltip: 'Projects',
-                  icon: Stack(
-                    clipBehavior: Clip.none,
-                    children: <Widget>[
-                      Icon(
-                        Icons.menu,
-                        color: totalActivePinnedProjectsCount > 0
-                            ? const Color(0xFFFFC857)
-                            : null,
-                      ),
-                      if (totalActivePinnedProjectsCount > 0)
-                        Positioned(
-                          left: -10,
-                          top: -6,
-                          child: _MenuStatusBadge(
-                            label: totalActivePinnedJobsCount.toString(),
-                            backgroundColor: const Color(0xFFFFC857),
-                            foregroundColor: const Color(0xFF2A1600),
-                          ),
-                        ),
-                      if (totalUnreadChatsCount > 0)
-                        Positioned(
-                          right: -8,
-                          top: -6,
-                          child: _MenuStatusBadge(
-                            label: totalUnreadChatsCount.toString(),
-                            backgroundColor: const Color(0xFF55D6BE),
-                            foregroundColor: const Color(0xFF07131D),
-                          ),
-                        ),
-                    ],
-                  ),
-                );
-              },
-            ),
-            title: _buildAppBarTitle(isCompactAppBar: isCompactAppBar),
-            actions: _buildAppBarActions(isCompactAppBar: isCompactAppBar),
-          ),
-          drawer: Drawer(
-            width: drawerWidth,
-            backgroundColor: const Color(0xFF101931),
-            child: SafeArea(
+        final appBarHeight = hasEnvironmentBadge ? 64.0 : kToolbarHeight;
+        final usePersistentSidebar = screenWidth >= _persistentSidebarBreakpoint;
+        _persistentSidebarActive = usePersistentSidebar;
+        final Widget sidebarContent = SafeArea(
               child: Column(
                 children: <Widget>[
-                  ListTile(
-                    title: const Text('Projects'),
-                    subtitle: InkWell(
-                      onTap: () async {
-                        Navigator.of(context).pop();
-                        await _openObjectiveTeam();
-                      },
-                      child: const Padding(padding: EdgeInsets.symmetric(vertical: 8),
-                        child: Text('Ver ejecuciones del equipo', style: TextStyle(color: Color(0xFF55D6BE)))),
-                    ),
-                    trailing: Wrap(
-                      spacing: 4,
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 10, 6, 0),
+                    child: Row(
                       children: <Widget>[
+                        const Expanded(
+                          child: Text(
+                            'Proyectos',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                                fontSize: 15, fontWeight: FontWeight.w700),
+                          ),
+                        ),
                         IconButton(
+                          visualDensity: VisualDensity.compact,
                           tooltip: 'Equipo por objetivos',
-                          icon: const Icon(Icons.hub_outlined),
+                          icon: const Icon(Icons.hub_outlined, size: 20),
                           onPressed: () async {
-                            Navigator.of(context).pop();
+                            _closeSidebarIfDrawer(context);
                             await _openObjectiveTeam();
                           },
                         ),
-                        IconButton(
-                          onPressed: () async {
-                            await _toggleSidebarExpanded();
-                          },
-                          icon: Icon(
-                            _sidebarExpanded
-                                ? Icons.close_fullscreen_rounded
-                                : Icons.open_in_full_rounded,
+                        if (!_persistentSidebarActive)
+                          IconButton(
+                            visualDensity: VisualDensity.compact,
+                            onPressed: () async {
+                              await _toggleSidebarExpanded();
+                            },
+                            icon: Icon(
+                              _sidebarExpanded
+                                  ? Icons.close_fullscreen_rounded
+                                  : Icons.open_in_full_rounded,
+                              size: 20,
+                            ),
+                            tooltip: _sidebarExpanded
+                                ? 'Use compact sidebar'
+                                : 'Expand sidebar',
                           ),
-                          tooltip: _sidebarExpanded
-                              ? 'Use compact sidebar'
-                              : 'Expand sidebar',
-                        ),
                         IconButton(
+                          visualDensity: VisualDensity.compact,
                           onPressed: () async {
                             await _openWorkspacePicker();
                             if (context.mounted) {
-                              Navigator.of(context).pop();
+                              _closeSidebarIfDrawer(context);
                             }
                           },
-                          icon: const Icon(Icons.add),
+                          icon: const Icon(Icons.add, size: 20),
                           tooltip: 'Choose project for new chat',
                         ),
                       ],
                     ),
                   ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: InkWell(
+                      borderRadius: BorderRadius.circular(6),
+                      onTap: () async {
+                        _closeSidebarIfDrawer(context);
+                        await _openObjectiveTeam();
+                      },
+                      child: Text(
+                        'Ver ejecuciones del equipo',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                      ),
+                    ),
+                    ),
+                  ),
                   const Divider(height: 1),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                    child: Row(
-                      children: <Widget>[
-                        Expanded(
-                          child: ChoiceChip(
-                            label: const Text('Active'),
-                            selected: !_showArchivedChatsInSidebar,
-                            onSelected: (selected) {
-                              if (!selected || !_showArchivedChatsInSidebar) {
-                                return;
-                              }
-                              setState(() {
-                                _showArchivedChatsInSidebar = false;
-                              });
-                              _filterSidebarSessions();
-                            },
-                            selectedColor: const Color(0xFF55D6BE),
-                            backgroundColor: const Color(0xFF16213C),
-                            labelStyle: TextStyle(
-                              color: !_showArchivedChatsInSidebar
-                                  ? const Color(0xFF07131D)
-                                  : const Color(0xFFDCE5FF),
-                              fontWeight: FontWeight.w700,
-                            ),
-                            side: const BorderSide(color: Color(0xFF23304F)),
-                          ),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: SegmentedButton<bool>(
+                        showSelectedIcon: false,
+                        segments: const <ButtonSegment<bool>>[
+                          ButtonSegment<bool>(
+                              value: false,
+                              label: Text('Activos',
+                                  maxLines: 1, softWrap: false)),
+                          ButtonSegment<bool>(
+                              value: true,
+                              label: Text('Archivados',
+                                  maxLines: 1,
+                                  softWrap: false,
+                                  overflow: TextOverflow.fade)),
+                        ],
+                        selected: <bool>{_showArchivedChatsInSidebar},
+                        style: SegmentedButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          backgroundColor: AppPalette.surface,
+                          selectedBackgroundColor: AppPalette.surfaceHigher,
+                          selectedForegroundColor: AppPalette.text,
+                          foregroundColor: AppPalette.textMuted,
+                          side: const BorderSide(color: AppPalette.border),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10)),
                         ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: ChoiceChip(
-                            label: const Text('Archived'),
-                            selected: _showArchivedChatsInSidebar,
-                            onSelected: (selected) {
-                              if (!selected || _showArchivedChatsInSidebar) {
-                                return;
-                              }
-                              setState(() {
-                                _showArchivedChatsInSidebar = true;
-                              });
-                              _filterSidebarSessions();
-                            },
-                            selectedColor: const Color(0xFF8CA8FF),
-                            backgroundColor: const Color(0xFF16213C),
-                            labelStyle: TextStyle(
-                              color: _showArchivedChatsInSidebar
-                                  ? const Color(0xFF07131D)
-                                  : const Color(0xFFDCE5FF),
-                              fontWeight: FontWeight.w700,
-                            ),
-                            side: const BorderSide(color: Color(0xFF23304F)),
-                          ),
-                        ),
-                      ],
+                        onSelectionChanged: (selection) {
+                          final archived = selection.first;
+                          if (archived == _showArchivedChatsInSidebar) return;
+                          setState(() {
+                            _showArchivedChatsInSidebar = archived;
+                          });
+                          _filterSidebarSessions();
+                        },
+                      ),
                     ),
                   ),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
                     child: TextField(
                       key: const ValueKey('session-search'),
+                      focusNode: _sessionSearchFocusNode,
                       decoration: const InputDecoration(
-                        hintText: 'Search chats by title or project',
+                        hintText: 'Buscar chats (Ctrl+K)',
                         prefixIcon: Icon(Icons.search), isDense: true),
                       onChanged: (value) {
                         _sessionSearch = value;
@@ -908,22 +1171,21 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                         ? Center(
                             child: Text(
                               _sidebarWorkspaces.isEmpty
-                                  ? 'No projects pinned yet'
+                                  ? 'Todavía no hay proyectos fijados'
                                   : _sessionSearch.trim().isNotEmpty
-                                      ? 'No matching chats'
+                                      ? 'Ningún chat coincide'
                                       : _showArchivedChatsInSidebar
-                                      ? 'No archived chats yet'
-                                      : 'No chats yet',
-                              style: const TextStyle(color: Color(0xFF8B97B5)),
+                                      ? 'No hay chats archivados'
+                                      : 'Todavía no hay chats',
+                              style: const TextStyle(color: Color(0xFF939BAD)),
                             ),
                           )
                         : ListView(children: sessionGroups),
                   ),
                 ],
               ),
-            ),
-          ),
-          body: SafeArea(
+            );
+        final Widget mainBody = SafeArea(
             bottom: false,
             child: Column(
               children: <Widget>[
@@ -1063,18 +1325,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                   0xFF55D6BE,
                                                 ),
                                                 backgroundColor: const Color(
-                                                  0xFF16213C,
+                                                  0xFF202227,
                                                 ),
                                                 labelStyle: TextStyle(
                                                   color: _chatBodyView ==
                                                           _ChatBodyView
                                                               .conversation
-                                                      ? const Color(0xFF07131D)
+                                                      ? const Color(0xFF0E0F11)
                                                       : const Color(0xFFDCE5FF),
                                                   fontWeight: FontWeight.w700,
                                                 ),
                                                 side: const BorderSide(
-                                                  color: Color(0xFF23304F),
+                                                  color: Color(0xFF2C2F36),
                                                 ),
                                               ),
                                               Tooltip(
@@ -1103,13 +1365,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                     0xFF8CA8FF,
                                                   ),
                                                   backgroundColor: const Color(
-                                                    0xFF16213C,
+                                                    0xFF202227,
                                                   ),
                                                   labelStyle: TextStyle(
                                                     color:
                                                         isShowingAgentSummaries
                                                             ? const Color(
-                                                                0xFF07131D,
+                                                                0xFF0E0F11,
                                                               )
                                                             : const Color(
                                                                 0xFFDCE5FF,
@@ -1117,7 +1379,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                     fontWeight: FontWeight.w700,
                                                   ),
                                                   side: const BorderSide(
-                                                    color: Color(0xFF23304F),
+                                                    color: Color(0xFF2C2F36),
                                                   ),
                                                 ),
                                               ),
@@ -1147,7 +1409,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                   0xFFFFC857,
                                                 ),
                                                 backgroundColor: const Color(
-                                                  0xFF16213C,
+                                                  0xFF202227,
                                                 ),
                                                 labelStyle: TextStyle(
                                                   color: isShowingTurnSummaries
@@ -1156,7 +1418,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                   fontWeight: FontWeight.w700,
                                                 ),
                                                 side: const BorderSide(
-                                                  color: Color(0xFF23304F),
+                                                  color: Color(0xFF2C2F36),
                                                 ),
                                               ),
                                               ChoiceChip(
@@ -1165,7 +1427,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                   Icons.description_outlined,
                                                   size: 18,
                                                   color: isShowingDocuments
-                                                      ? const Color(0xFF07131D)
+                                                      ? const Color(0xFF0E0F11)
                                                       : const Color(0xFFDCE5FF),
                                                 ),
                                                 selected: isShowingDocuments,
@@ -1184,16 +1446,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                   0xFF55D6BE,
                                                 ),
                                                 backgroundColor: const Color(
-                                                  0xFF16213C,
+                                                  0xFF202227,
                                                 ),
                                                 labelStyle: TextStyle(
                                                   color: isShowingDocuments
-                                                      ? const Color(0xFF07131D)
+                                                      ? const Color(0xFF0E0F11)
                                                       : const Color(0xFFDCE5FF),
                                                   fontWeight: FontWeight.w700,
                                                 ),
                                                 side: const BorderSide(
-                                                  color: Color(0xFF23304F),
+                                                  color: Color(0xFF2C2F36),
                                                 ),
                                               ),
                                             ],
@@ -1554,7 +1816,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                         _updateStickToBottom(true);
                                         _scrollToBottom();
                                       },
-                                      backgroundColor: const Color(0xFF1C2745),
+                                      backgroundColor: const Color(0xFF26282E),
                                       foregroundColor: const Color(0xFF55D6BE),
                                       child: const Icon(Icons.south_rounded),
                                     ),
@@ -1565,6 +1827,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           ],
                         ),
                 ),
+                if (_runsMonitor != null) _buildSessionRequests(),
                 OutboxPanel(
                   entries: _chatController.pendingOutbox,
                   storageError: _chatController.outboxStorageError,
@@ -1584,11 +1847,25 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   onDraftChanged: _draftUpdaterForCurrentSession(),
                   onBackgroundDraftChanged: _draftUpdaterForCurrentSession(onlyIfUnchanged: true),
                   onSend: _handleSend,
+                  onSteer: _handleSteer,
+                  activeJobCount: _chatController.selectedSessionId == null ? 0 : _chatController.activeJobCountForSession(_chatController.selectedSessionId!),
+                  queuedJobCount: _chatController.selectedSessionId == null ? 0 : _chatController.queuedJobCountForSession(_chatController.selectedSessionId!),
                   onSendAudio: _audioSenderForCurrentSession(),
                   onSendAttachments: _attachmentSenderForCurrentSession(),
                   onBeginRecording: _handleBeginRecording,
                   onSlashCommand: _handleSlashCommand,
                   slashCommandContext: SlashCommandContext(
+                    skills: (_activeCodexTooling?.skills ?? const <CodexSkill>[])
+                        .map((skill) => SlashSkill(
+                              id: skill.skillId,
+                              name: skill.name,
+                              description: skill.description,
+                              selected: _currentComposerDraft()
+                                  .codexRunOptions
+                                  .skillIds
+                                  .contains(skill.skillId),
+                            ))
+                        .toList(growable: false),
                     isProjectFactoryIntake: isProjectFactoryIntakeConfiguration(
                       _chatController.currentSession?.agentConfiguration,
                     ),
@@ -1624,18 +1901,146 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                 ),
               ],
             ),
+          );
+        if (_showDashboard && _runsMonitor != null) {
+          return _buildDashboardScaffold(isCompactAppBar);
+        }
+        return CallbackShortcuts(
+          bindings: const <ShortcutActivator, VoidCallback>{},
+          child: Focus(
+            autofocus: true,
+            child: Builder(
+              builder: (context) {
+                _scaffoldShortcutContext = context;
+                return Scaffold(
+          appBar: AppBar(
+            toolbarHeight: appBarHeight,
+            titleSpacing: isCompactAppBar ? 4 : null,
+            leading: Builder(
+              builder: (context) {
+                return IconButton(
+                  onPressed: () {
+                    if (usePersistentSidebar) {
+                      _toggleSidebarCollapsed();
+                      return;
+                    }
+                    Scaffold.of(context).openDrawer();
+                  },
+                  tooltip: usePersistentSidebar
+                      ? (_sidebarCollapsed ? 'Mostrar proyectos' : 'Ocultar proyectos')
+                      : 'Proyectos',
+                  icon: Stack(
+                    clipBehavior: Clip.none,
+                    children: <Widget>[
+                      Icon(
+                        Icons.menu,
+                        color: totalActivePinnedProjectsCount > 0
+                            ? const Color(0xFFFFC857)
+                            : null,
+                      ),
+                      if (totalActivePinnedProjectsCount > 0)
+                        Positioned(
+                          left: -10,
+                          top: -6,
+                          child: _MenuStatusBadge(
+                            label: totalActivePinnedJobsCount.toString(),
+                            backgroundColor: const Color(0xFFFFC857),
+                            foregroundColor: const Color(0xFF2A1600),
+                          ),
+                        ),
+                      if (totalUnreadChatsCount > 0)
+                        Positioned(
+                          right: -8,
+                          top: -6,
+                          child: _MenuStatusBadge(
+                            label: totalUnreadChatsCount.toString(),
+                            backgroundColor: const Color(0xFF55D6BE),
+                            foregroundColor: const Color(0xFF0E0F11),
+                          ),
+                        ),
+                    ],
+                  ),
+                );
+              },
+            ),
+            title: _buildAppBarTitle(isCompactAppBar: isCompactAppBar),
+            actions: <Widget>[
+              if (_runsMonitor != null)
+                _buildDashboardButton(compact: isCompactAppBar),
+              ..._buildAppBarActions(isCompactAppBar: isCompactAppBar),
+            ],
+          ),
+          drawer: usePersistentSidebar
+              ? null
+              : Drawer(
+                  width: drawerWidth,
+                  backgroundColor: const Color(0xFF191B1F),
+                  child: sidebarContent,
+                ),
+          body: usePersistentSidebar
+              ? Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    AnimatedSize(
+                      duration: _resizingSidebar
+                          ? Duration.zero
+                          : const Duration(milliseconds: 180),
+                      child: _sidebarCollapsed
+                          ? const SizedBox.shrink()
+                          : SizedBox(
+                              width: _sidebarWidth != null && _resizingSidebar
+                                  ? _sidebarWidth!.clamp(160.0, _maxSidebarWidth)
+                                  : _effectiveSidebarWidth(screenWidth),
+                              child: Material(
+                                color: AppPalette.sidebar,
+                                child: sidebarContent,
+                              ),
+                            ),
+                    ),
+                    if (!_sidebarCollapsed)
+                      _SidebarResizeHandle(
+                        active: _resizingSidebar,
+                        onDragStart: () => _startSidebarResize(screenWidth),
+                        onDrag: (offset) => _resizeSidebar(offset, screenWidth),
+                        onDragEnd: _finishSidebarResize,
+                        onReset: _resetSidebarWidth,
+                      ),
+                    Expanded(child: mainBody),
+                  ],
+                )
+              : mainBody,
+        );
+              },
+            ),
           ),
         );
       },
     );
   }
 
+  /// Clears the composer immediately (so the next message can be typed while
+  /// this one is delivered) and restores the text if nothing was sent.
   Future<bool> _handleSend() async {
+    final submittedText = _textController.text;
+    final sessionIdBeforeSend = _chatController.selectedSessionId;
+    if (submittedText.trim().isEmpty) return _sendComposerText(submittedText);
+    _textController.clear();
+    final didSend = await _sendComposerText(submittedText);
+    final sameChat = sessionIdBeforeSend == null ||
+        _chatController.selectedSessionId == sessionIdBeforeSend;
+    if (!didSend && mounted && sameChat && _textController.text.trim().isEmpty) {
+      _textController.text = submittedText;
+      _textController.selection =
+          TextSelection.collapsed(offset: submittedText.length);
+    }
+    return didSend;
+  }
+
+  Future<bool> _sendComposerText(String submittedText) async {
     final originController = _chatController;
     final sessionIdBeforeSend = originController.selectedSessionId;
     final workspacePathBeforeSend = originController.currentSession?.workspacePath;
     final codexRunOptions = _currentComposerDraft().codexRunOptions;
-    final submittedText = _textController.text;
     final backlogPrefix = RegExp(r'^(?:/backlog\s+|agreg[aá]\s+al\s+backlog\s*:?\s*)',caseSensitive:false).firstMatch(submittedText.trim());
     if(backlogPrefix != null) {
       final instruction=submittedText.trim().substring(backlogPrefix.end).trim();
@@ -1644,7 +2049,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       try {
         await client.enqueue(workspacePathBeforeSend,instruction);
         if(mounted) {
-          if(_textController.text==submittedText)_textController.clear();
+          if(_textController.text.trim()==submittedText.trim())_textController.clear();
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('Agregado al backlog; se ejecutará al completar el trabajo anterior.')));
         }
         return true;
@@ -1670,19 +2075,415 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       workspacePathOverride: workspacePathBeforeSend,
       codexRunOptions: codexRunOptions.isEmpty ? null : codexRunOptions,
     );
-    if (didSend &&
-        _textController.text == submittedText &&
-        (sessionIdBeforeSend == null ||
-            _chatController.selectedSessionId == sessionIdBeforeSend)) {
-      _textController.clear();
+    final sameChat = sessionIdBeforeSend == null ||
+        _chatController.selectedSessionId == sessionIdBeforeSend;
+    if (didSend && sameChat) {
       _updateStickToBottom(true);
       _scrollToBottom();
     }
     return didSend;
   }
 
+  void _toggleSidebarCollapsed() {
+    setState(() => _sidebarCollapsed = !_sidebarCollapsed);
+    unawaited(_serverProfileStore.saveSidebarCollapsed(_sidebarCollapsed));
+  }
+
+  String? _runningJobIdForCurrentSession() {
+    final session = _chatController.currentSession;
+    if (session == null) return null;
+    for (final message in session.messages.reversed) {
+      final jobId = message.jobId;
+      if (jobId == null || message.isUser) continue;
+      if (message.isPendingLike) return jobId;
+    }
+    return null;
+  }
+
+  /// Sends [text] to the running agent: a real mid-turn instruction when the
+  /// backend supports it (Codex app-server), otherwise stop and resend.
+  Future<bool> _handleSteer(String text) async {
+    final message = text.trim();
+    final jobId = _runningJobIdForCurrentSession();
+    if (message.isEmpty) return false;
+    if (jobId == null) {
+      _textController.text = message;
+      return _handleSend();
+    }
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (await _chatController.steerJob(jobId, message)) {
+      messenger?.showSnackBar(const SnackBar(
+        content: Text('Indicación enviada: el agente la toma sin detenerse.'),
+        duration: Duration(seconds: 3),
+      ));
+      return true;
+    }
+    await _chatController.cancelJob(jobId);
+    if (!mounted) return false;
+    _textController.text = message;
+    final sent = await _handleSend();
+    messenger?.showSnackBar(SnackBar(
+      content: Text(sent
+          ? 'Se detuvo la ejecución y se envió tu mensaje.'
+          : 'No se pudo redirigir la ejecución.'),
+      duration: const Duration(seconds: 3),
+    ));
+    return sent;
+  }
+
+  /// Esc stops the newest running job of the open chat, like in the CLI.
+  bool _cancelRunningJobWithEscape() {
+    final session = _chatController.currentSession;
+    if (session == null) return false;
+    if (_textController.text.trimLeft().startsWith('/')) return false;
+    for (final message in session.messages.reversed) {
+      final jobId = message.jobId;
+      if (jobId == null || message.isUser) continue;
+      if (message.isPendingLike) {
+        unawaited(_handleCancelJob(jobId));
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(
+          content: Text('Deteniendo la ejecución…'),
+          duration: Duration(seconds: 2),
+        ));
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool _handleGlobalShortcut(KeyEvent event) {
+    if (event is! KeyDownEvent || !mounted) return false;
+    if (ModalRoute.of(context)?.isCurrent == false) return false;
+    if (_runsMonitor != null &&
+        event.logicalKey == LogicalKeyboardKey.keyH &&
+        HardwareKeyboard.instance.isControlPressed &&
+        HardwareKeyboard.instance.isShiftPressed) {
+      setState(() => _showDashboard = !_showDashboard);
+      return true;
+    }
+    if (_showDashboard) return false;
+    if (event.logicalKey == LogicalKeyboardKey.escape &&
+        !HardwareKeyboard.instance.isControlPressed &&
+        !HardwareKeyboard.instance.isMetaPressed &&
+        _chatController.selectedSessionId != null &&
+        _chatController.activeJobCountForSession(
+              _chatController.selectedSessionId!,
+            ) >
+            0) {
+      return _cancelRunningJobWithEscape();
+    }
+    final bindings = _globalShortcutBindings(
+      usePersistentSidebar: _persistentSidebarActive,
+    );
+    for (final entry in bindings.entries) {
+      if (entry.key.accepts(event, HardwareKeyboard.instance)) {
+        entry.value();
+        return true;
+      }
+    }
+    return false;
+  }
+
+  Map<ShortcutActivator, VoidCallback> _globalShortcutBindings({
+    required bool usePersistentSidebar,
+  }) {
+    void toggleSidebar() {
+      if (usePersistentSidebar) {
+        _toggleSidebarCollapsed();
+        return;
+      }
+      final scaffold = _scaffoldShortcutContext == null
+          ? null
+          : Scaffold.maybeOf(_scaffoldShortcutContext!);
+      if (scaffold == null) return;
+      if (scaffold.isDrawerOpen) {
+        scaffold.closeDrawer();
+      } else {
+        scaffold.openDrawer();
+      }
+    }
+
+    void focusSearch() {
+      if (usePersistentSidebar) {
+        if (_sidebarCollapsed) _toggleSidebarCollapsed();
+        WidgetsBinding.instance.addPostFrameCallback(
+          (_) => _sessionSearchFocusNode.requestFocus(),
+        );
+        return;
+      }
+      final scaffold = _scaffoldShortcutContext == null
+          ? null
+          : Scaffold.maybeOf(_scaffoldShortcutContext!);
+      scaffold?.openDrawer();
+      Future<void>.delayed(
+        const Duration(milliseconds: 250),
+        () => _sessionSearchFocusNode.requestFocus(),
+      );
+    }
+
+    return <ShortcutActivator, VoidCallback>{
+      const SingleActivator(LogicalKeyboardKey.keyK, control: true): focusSearch,
+      const SingleActivator(LogicalKeyboardKey.keyK, meta: true): focusSearch,
+      const SingleActivator(LogicalKeyboardKey.keyB, control: true): toggleSidebar,
+      const SingleActivator(LogicalKeyboardKey.keyB, meta: true): toggleSidebar,
+      const SingleActivator(LogicalKeyboardKey.keyO, control: true, shift: true):
+          () => unawaited(_openWorkspacePicker()),
+      const SingleActivator(LogicalKeyboardKey.keyO, meta: true, shift: true):
+          () => unawaited(_openWorkspacePicker()),
+      const SingleActivator(LogicalKeyboardKey.slash, control: true):
+          () => unawaited(_showSlashHelpSheet()),
+      const SingleActivator(LogicalKeyboardKey.slash, meta: true):
+          () => unawaited(_showSlashHelpSheet()),
+    };
+  }
+
+  Future<void> _showUsageSheet() async {
+    await _refreshCodexTooling();
+    if (!mounted) return;
+    final status = _activeCodexTooling?.status;
+    final rows = <(String, String)>[
+      if (status?.usageLabel?.trim().isNotEmpty ?? false)
+        ('Uso', status!.usageLabel!.trim()),
+      if (status?.usageSummary?.trim().isNotEmpty ?? false)
+        ('Detalle', status!.usageSummary!.trim()),
+      if (status != null) ('Cuenta', status.statusSummary),
+      if (status?.version?.trim().isNotEmpty ?? false)
+        ('CLI', status!.version!.trim()),
+    ];
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text('Uso', style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 12),
+              if (rows.isEmpty || !(status?.usageAvailable ?? false))
+                Text(status?.error ??
+                    'Este servidor no informa el uso todavía.'),
+              for (final row in rows)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      SizedBox(
+                        width: 90,
+                        child: Text(row.$1,
+                            style: const TextStyle(color: Color(0xFF8696A0))),
+                      ),
+                      Expanded(child: SelectableText(row.$2)),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  bool get _currentChatIsClaude {
+    final session = _chatController.currentSession;
+    if (session == null) return false;
+    final native = session.providerSessionId ?? '';
+    if (native.startsWith('claude:')) return true;
+    if (native.isNotEmpty) return false;
+    final model = session.agentConfiguration.agents
+        .where((agent) => agent.agentId == AgentId.generator)
+        .map((agent) => agent.model ?? '')
+        .firstOrNull;
+    return model?.startsWith('claude') ?? false;
+  }
+
+  Future<void> _showStatusCommand() async {
+    final session = _chatController.currentSession;
+    final sessionRuns = (_runsMonitor?.overview.runs ?? const <RunCard>[])
+        .where((item) => item.sessionId == session?.id)
+        .toList()
+      ..sort((a, b) {
+        if (a.isActive != b.isActive) return a.isActive ? -1 : 1;
+        return (b.completedAt ?? b.updatedAt ?? DateTime(0))
+            .compareTo(a.completedAt ?? a.updatedAt ?? DateTime(0));
+      });
+    final run = sessionRuns.firstOrNull;
+    final model = session?.agentConfiguration.agents
+        .where((agent) => agent.agentId == AgentId.generator)
+        .map((agent) => agent.model)
+        .firstOrNull;
+    String lastUsage = '';
+    for (final message in (session?.messages ?? const <ChatMessage>[]).reversed) {
+      final usage = message.activities.where((a) => a.kind == 'usage').firstOrNull;
+      if (usage != null) {
+        lastUsage = usage.title;
+        break;
+      }
+    }
+    final rows = <(String, String)>[
+      if (session != null) ('Chat', session.title),
+      if (session != null) ('Agente', _currentChatIsClaude ? 'Claude' : 'Codex'),
+      if (model != null && model.isNotEmpty) ('Modelo', model.replaceFirst('claude:', '')),
+      if (session != null && session.workspacePath.isNotEmpty)
+        ('Proyecto', session.workspacePath),
+      if (run != null)
+        ('Corrida', switch (run.state) {
+          RunState.needsYou => 'Esperando tu respuesta',
+          RunState.working => 'Trabajando: ${run.headline}',
+          RunState.queued => 'En cola',
+          RunState.failed => 'Última: falló',
+          RunState.stopped => 'Última: detenida',
+          RunState.done => 'Última: terminó ${timeAgo(run.completedAt, DateTime.now())}',
+        }),
+      if (lastUsage.isNotEmpty) ('Última respuesta', lastUsage),
+      if (session?.providerSessionId?.isNotEmpty ?? false)
+        ('Sesión nativa', session!.providerSessionId!),
+      if (_activeServer != null)
+        ('Servidor', '${_activeServer!.name} · ${_activeServer!.baseUrl}'),
+    ];
+    if (!mounted) return;
+    await showStatusSheet(
+      context,
+      rows: rows.isEmpty ? <(String, String)>[('Chat', 'Ningún chat abierto')] : rows,
+      onUsage: () => unawaited(_showUsageSheet()),
+      onPermissions: session == null ? null : () => unawaited(_showPermissionsCommand()),
+    );
+  }
+
+  Future<void> _showPermissionsCommand() async {
+    final sessionId = _chatController.selectedSessionId;
+    if (sessionId == null) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+          const SnackBar(content: Text('Abrí un chat para ver sus permisos.')));
+      return;
+    }
+    await showPermissionsSheet(context,
+        client: _chatController.apiClient, sessionId: sessionId);
+  }
+
+  Future<void> _showSubagentCommand() async {
+    final sessionId = _chatController.selectedSessionId;
+    if (sessionId == null) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(
+          content: Text('Abrí un chat para lanzar un subagente.')));
+      return;
+    }
+    final message = await showSubagentSheet(context,
+        client: _chatController.apiClient,
+        sessionId: sessionId,
+        isClaude: _currentChatIsClaude);
+    if (message == null || !mounted) return;
+    _textController.text = message;
+    await _handleSend();
+  }
+
+  Future<void> _showSlashHelpSheet() async {
+    final commands = buildSlashCommands(SlashCommandContext(
+      hasActiveBackend: _activeServer != null,
+      hasProjectWorkspace:
+          _chatController.currentSession?.workspacePath.trim().isNotEmpty ??
+              false,
+    )).where((command) => command.scope != 'skill').toList();
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(context).height * 0.8),
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+            children: <Widget>[
+              Text('Comandos y atajos',
+                  style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 8),
+              const Text(
+                'Escribí / en el mensaje. ↑ ↓ para elegir, Enter para usar, '
+                'Tab para completar, Esc para cerrar. Las skills también '
+                'aparecen al escribir /.\n\n'
+                'Atajos: Ctrl+K buscar chats · Ctrl+B mostrar/ocultar proyectos · '
+                'Ctrl+Shift+O nuevo chat · Ctrl+/ esta ayuda · '
+                'Esc detiene la ejecución en curso.',
+                style: TextStyle(color: Color(0xFF8696A0)),
+              ),
+              const SizedBox(height: 12),
+              for (final command in commands)
+                ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  enabled: command.isEnabled,
+                  title: Text('${command.slash}  ·  ${command.title}'),
+                  subtitle: Text(command.isEnabled
+                      ? command.description
+                      : (command.disabledReason ?? command.description)),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<bool> _handleSlashCommand(String commandId, String payload) async {
+    if (commandId.startsWith('skill:')) {
+      final skillId = commandId.substring('skill:'.length);
+      final draft = _currentComposerDraft();
+      final options = draft.codexRunOptions;
+      final active = options.skillIds.contains(skillId);
+      final next = active
+          ? options.skillIds.where((id) => id != skillId).toList()
+          : <String>[...options.skillIds, skillId];
+      _updateCurrentComposerDraft(
+        _ComposerDraft(
+          text: _textController.text,
+          attachments: draft.attachments,
+          codexRunOptions: options.copyWith(skillIds: next),
+        ),
+      );
+      final name = _activeCodexTooling?.skills
+              .where((skill) => skill.skillId == skillId)
+              .map((skill) => skill.name)
+              .firstOrNull ??
+          skillId;
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+        content: Text(active
+            ? 'Skill $name desactivada'
+            : 'Skill $name activa para el próximo mensaje'),
+        duration: const Duration(seconds: 2),
+      ));
+      return true;
+    }
     switch (commandId) {
+      case 'model':
+        await _openAgentStudio();
+        return true;
+      case 'new':
+        await _openWorkspacePicker();
+        return true;
+      case 'usage':
+        await _showUsageSheet();
+        return true;
+      case 'status':
+        await _showStatusCommand();
+        return true;
+      case 'permissions':
+        await _showPermissionsCommand();
+        return true;
+      case 'agents':
+        await _showSubagentCommand();
+        return true;
+      case 'compact':
+        if (_chatController.selectedSessionId == null) return false;
+        _textController.text = '/compact';
+        await _handleSend();
+        return true;
+      case 'help':
+        await _showSlashHelpSheet();
+        return true;
       case 'new-project':
         await _openNewProjectFactory();
         return true;
@@ -1693,9 +2494,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         return _startUxLane(full: false);
       case 'ux-full':
         return _startUxLane(full: true);
-      case 'status':
       case 'review':
-      case 'compact':
       case 'diff':
         _textController.text = payload;
         _textController.selection = TextSelection.collapsed(
@@ -2226,7 +3025,7 @@ When you create the Project Factory draft, link each asset with POST /project-fa
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          didCancel ? 'Job cancelled.' : 'Could not cancel the job.',
+          didCancel ? 'Ejecución detenida.' : 'No se pudo detener la ejecución.',
         ),
         duration: const Duration(seconds: 2),
       ),
@@ -3541,7 +4340,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
         context: context,
         builder: (context) {
           return Dialog(
-            backgroundColor: const Color(0xFF101931),
+            backgroundColor: const Color(0xFF191B1F),
             insetPadding: const EdgeInsets.symmetric(
               horizontal: 24,
               vertical: 24,
@@ -3559,7 +4358,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      backgroundColor: const Color(0xFF101931),
+      backgroundColor: const Color(0xFF191B1F),
       constraints: BoxConstraints(
         maxWidth: 720,
         maxHeight: MediaQuery.sizeOf(context).height * 0.82,
@@ -3600,7 +4399,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      backgroundColor: const Color(0xFF101931),
+      backgroundColor: const Color(0xFF191B1F),
       constraints: BoxConstraints(
         maxWidth: 640,
         maxHeight: MediaQuery.sizeOf(context).height * 0.86,
@@ -3682,7 +4481,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     final draft = await showModalBottomSheet<_SaveAgentProfileDraft>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF101931),
+      backgroundColor: const Color(0xFF191B1F),
       builder: (context) => _SaveAgentProfileSheet(
         initialName: generator.label,
         initialColorHex: currentSession.agentProfileColor,
@@ -3758,6 +4557,8 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     );
     final activeProfileId = await _serverProfileStore.loadActiveProfileId();
     final sidebarExpanded = await _serverProfileStore.loadSidebarExpanded();
+    final sidebarCollapsed = await _serverProfileStore.loadSidebarCollapsed();
+    final sidebarWidth = await _serverProfileStore.loadSidebarWidth();
     final audioRepliesEnabled = await _serverProfileStore
         .loadAudioRepliesEnabled(widget.initialApiBaseUrl);
     final audioReplyPlaybackSpeed = await _serverProfileStore
@@ -3772,6 +4573,8 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
       _activeServer = resolvedActiveProfile;
       _activeServerHealth = null;
       _sidebarExpanded = sidebarExpanded;
+      _sidebarCollapsed = sidebarCollapsed;
+      _sidebarWidth = sidebarWidth;
       _audioRepliesEnabled = audioRepliesEnabled;
       _audioReplyPlaybackSpeed = audioReplyPlaybackSpeed;
     });
@@ -3830,6 +4633,8 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
       _sessionSearchDebounce?.cancel();
       client.setSessionFilter(archived: _showArchivedChatsInSidebar, search: _sessionSearch);
       _chatController = nextController;
+      _runsMonitor?.attach(client);
+      if (widget.enableServerBootstrap) nextController.startLiveSync();
       _activeServer = profile;
       _activeServerHealth = null;
       _prodUpdateStatus = null;
@@ -4071,7 +4876,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     final draft = await showModalBottomSheet<_AgentStudioDraft>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF101931),
+      backgroundColor: const Color(0xFF191B1F),
       builder: (context) {
         return _AgentStudioSheet(session: currentSession);
       },
@@ -4099,7 +4904,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
   Future<void> _openReplyModePicker() async {
     await showModalBottomSheet<void>(
       context: context,
-      backgroundColor: const Color(0xFF101931),
+      backgroundColor: const Color(0xFF191B1F),
       builder: (context) {
         var sheetAudioRepliesEnabled = _audioRepliesEnabled;
         var sheetPlaybackSpeed = _audioReplyPlaybackSpeed;
@@ -4248,7 +5053,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
   Future<void> _openServerManager() async {
     final result = await showModalBottomSheet<ServerProfile>(
       context: context,
-      backgroundColor: const Color(0xFF101931),
+      backgroundColor: const Color(0xFF191B1F),
       isScrollControlled: true,
       builder: (context) => _ServerManagerSheet(
         profiles: _serverProfiles,
@@ -4301,35 +5106,44 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
 
   Widget _buildAppBarTitle({required bool isCompactAppBar}) {
     final currentSession = _chatController.currentSession;
+    // One compact line (title + environment + agent) and a muted meta line.
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text(
-          currentSession?.title ?? 'Codex Remote',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
+        Row(
+          children: <Widget>[
+            Flexible(
+              child: Text(
+                currentSession?.title ?? 'Codex Remote',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    fontSize: 16, fontWeight: FontWeight.w600, letterSpacing: -0.1),
+              ),
+            ),
+            if (_activeServerHealth?.environmentIdentity != null) ...[
+              const SizedBox(width: 8),
+              _EnvironmentIdentityBadge(
+                identity: _activeServerHealth!.environmentIdentity!,
+              ),
+            ],
+            if (!isCompactAppBar && currentSession != null) ...[
+              const SizedBox(width: 6),
+              _AgentProfilePill(
+                label: currentSession.agentProfileName,
+                color: _colorFromHex(currentSession.agentProfileColor),
+              ),
+            ],
+          ],
         ),
         const SizedBox(height: 2),
         Text(
           _buildAppBarSubtitle(isCompactAppBar: isCompactAppBar),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 12, color: Color(0xFF8B97B5)),
+          style: const TextStyle(fontSize: 12, color: AppPalette.textMuted),
         ),
-        if (_activeServerHealth?.environmentIdentity != null) ...[
-          const SizedBox(height: 6),
-          _EnvironmentIdentityBadge(
-            identity: _activeServerHealth!.environmentIdentity!,
-          ),
-        ],
-        if (!isCompactAppBar && currentSession != null) ...[
-          const SizedBox(height: 6),
-          _AgentProfilePill(
-            label: currentSession.agentProfileName,
-            color: _colorFromHex(currentSession.agentProfileColor),
-          ),
-        ],
       ],
     );
   }
@@ -4337,8 +5151,8 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
   String _buildAppBarSubtitle({required bool isCompactAppBar}) {
     final segments = <String>[
       _activeServer != null
-          ? 'Server: ${_activeServer!.name}'
-          : 'Commands execute on your local machine',
+          ? 'Servidor: ${_activeServer!.name}'
+          : 'Los comandos corren en esta máquina',
     ];
     final currentSession = _chatController.currentSession;
     if (currentSession != null) {
@@ -4356,8 +5170,8 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
       if (_activeServerHealth != null) {
         segments.add(
           _activeServerHealth!.audioTranscriptionReady
-              ? 'Audio ready'
-              : 'Audio unavailable',
+              ? 'Audio listo'
+              : 'Audio no disponible',
         );
       }
     }
@@ -4379,12 +5193,15 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
         notificationService: widget.notificationService,
         onOpenChat: (id) => _chatController.selectSession(id),
       ),
-      AgentStudioStatusButton(
-        session: _chatController.currentSession,
-        onPressed: () async {
-          await _openAgentStudio();
-        },
-      ),
+      // On phones these live in the overflow menu so the title stays legible.
+      if (!isCompactAppBar)
+        AgentStudioStatusButton(
+          session: _chatController.currentSession,
+          onPressed: () async {
+            await _openAgentStudio();
+          },
+        ),
+      if (!isCompactAppBar)
       IconButton(
         onPressed: !showingSummaryView && !canShowAnySummary
             ? null
@@ -4403,15 +5220,35 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
         tooltip: showingSummaryView ? 'Show full chat' : 'View summary',
       ),
     ];
-    if (isCompactAppBar) {
-      primaryActions.add(
-        PopupMenuButton<_AppBarOverflowAction>(
-          tooltip: 'More actions',
+    final overflowMenu = PopupMenuButton<_AppBarOverflowAction>(
+          tooltip: 'Más acciones',
           icon: const Icon(Icons.more_vert),
           onSelected: (action) {
             unawaited(_handleAppBarOverflowAction(action));
           },
           itemBuilder: (context) => <PopupMenuEntry<_AppBarOverflowAction>>[
+            if (isCompactAppBar)
+              _buildAppBarOverflowMenuItem(
+                action: _AppBarOverflowAction.agentStudio,
+                icon: Icons.smart_toy_outlined,
+                label: 'Agente y modelo',
+              ),
+            _buildAppBarOverflowMenuItem(
+              action: _AppBarOverflowAction.newChat,
+              icon: Icons.add,
+              label: 'Choose project for new chat',
+            ),
+            _buildAppBarOverflowMenuItem(
+              action: _AppBarOverflowAction.newProject,
+              icon: Icons.create_new_folder_outlined,
+              label: 'New project',
+            ),
+            _buildAppBarOverflowMenuItem(
+              action: _AppBarOverflowAction.projectHistory,
+              icon: Icons.history,
+              label: 'Project history',
+            ),
+            const PopupMenuDivider(),
             _buildAppBarOverflowMenuItem(action: _AppBarOverflowAction.objectiveTeam, icon: Icons.hub_outlined, label: 'Equipo por objetivos'),
             _buildAppBarOverflowMenuItem(action: _AppBarOverflowAction.deployments,
               icon: Icons.cloud_outlined, label: 'Deploys · Workspace'),
@@ -4446,7 +5283,9 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
             _buildAppBarOverflowMenuItem(
               action: _AppBarOverflowAction.codexTools,
               icon: Icons.tune_rounded,
-              label: 'Codex tools',
+              label: _codexSelectionCount(_currentComposerDraft().codexRunOptions) > 0
+                  ? 'Codex tools (${_codexSelectionCount(_currentComposerDraft().codexRunOptions)} activas)'
+                  : 'Codex tools',
             ),
             _buildAppBarOverflowMenuItem(
               action: _AppBarOverflowAction.saveCurrentAgent,
@@ -4472,139 +5311,34 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
               icon: Icons.computer,
               label: 'Servers',
             ),
-            _buildAppBarOverflowMenuItem(
-              action: _AppBarOverflowAction.newProject,
-              icon: Icons.create_new_folder_outlined,
-              label: 'New project',
-            ),
-            _buildAppBarOverflowMenuItem(
-              action: _AppBarOverflowAction.projectHistory,
-              icon: Icons.history,
-              label: 'Project history',
-            ),
-            _buildAppBarOverflowMenuItem(
-              action: _AppBarOverflowAction.newChat,
-              icon: Icons.add,
-              label: 'Choose project for new chat',
-            ),
           ],
-        ),
-      );
-      return primaryActions;
-    }
-    return <Widget>[
-      ...primaryActions,
-      IconButton(onPressed: () => _openDeployments(), icon: const Icon(Icons.cloud_outlined), tooltip: 'Deploys · Workspace'),
-      IconButton(onPressed:_openWork,icon:const Icon(Icons.playlist_play_rounded),tooltip:'Backlog · Workspace'),
-      IconButton(
-        onPressed: () async {
-          await _openInstallableAppsSheet();
-        },
-        icon: const Icon(Icons.apps_rounded),
-        tooltip: 'Apps',
-      ),
-      IconButton(
-        onPressed: _chatController.currentSession == null
-            ? null
-            : () async {
-                await _openProjectSecretsSheet();
-              },
-        icon: const Icon(Icons.lock_outline_rounded),
-        tooltip: 'Project secrets',
-      ),
-      IconButton(
-        onPressed: _chatController.currentSession == null
-            ? null
-            : () async {
-                await _openConversationContextSheet();
-              },
-        icon: const Icon(Icons.topic_outlined),
-        tooltip: 'What are we doing?',
-      ),
-      IconButton(
-        onPressed: _openOperations,
-        icon: const Icon(Icons.monitor_heart_outlined),
-        tooltip: 'Operations',
-      ),
-      IconButton(
-        onPressed: () async {
-          await _openCodexToolsSheet();
-        },
-        icon: Stack(
-          clipBehavior: Clip.none,
-          children: <Widget>[
-            const Icon(Icons.tune_rounded),
-            if (_currentComposerDraft().codexRunOptions.skillIds.isNotEmpty ||
-                _currentComposerDraft()
-                    .codexRunOptions
-                    .mcpServerIds
-                    .isNotEmpty ||
-                _currentComposerDraft().codexRunOptions.searchEnabled ||
-                (_currentComposerDraft().codexRunOptions.profile?.isNotEmpty ??
-                    false))
-              Positioned(
-                right: -6,
-                top: -6,
-                child: _MenuStatusBadge(
-                  label: _codexSelectionCount(
-                    _currentComposerDraft().codexRunOptions,
-                  ).toString(),
-                  backgroundColor: const Color(0xFF55D6BE),
-                  foregroundColor: const Color(0xFF07131D),
-                ),
-              ),
-          ],
-        ),
-        tooltip: 'Codex tools',
-      ),
-      IconButton(
-        onPressed: () async {
-          await _openSaveCurrentAgentProfile();
-        },
-        icon: const Icon(Icons.bookmark_add_outlined),
-        tooltip: 'Save current agent',
-      ),
-      IconButton(
-        onPressed: () async {
-          await _openReplyModePicker();
-        },
-        icon: Icon(
-          _audioRepliesEnabled
-              ? Icons.volume_up_rounded
-              : Icons.volume_mute_rounded,
-        ),
-        tooltip: _audioRepliesEnabled
-            ? 'Audio replies enabled at ${_formatPlaybackSpeed(_audioReplyPlaybackSpeed)}'
-            : 'Text replies enabled',
-      ),
-      IconButton(
-        onPressed: () async {
-          await _openServerManager();
-        },
-        icon: const Icon(Icons.computer),
-        tooltip: 'Servers',
-      ),
-      IconButton(
-        onPressed: () async {
-          await _openNewProjectFactory();
-        },
-        icon: const Icon(Icons.create_new_folder_outlined),
-        tooltip: 'New project',
-      ),
-      IconButton(
-        onPressed: () async {
-          await _openProjectFactoryHistory();
-        },
-        icon: const Icon(Icons.history),
-        tooltip: 'Project history',
-      ),
-      IconButton(
+        );
+    if (isCompactAppBar) {
+      primaryActions.add(IconButton(
         onPressed: () async {
           await _openWorkspacePicker();
         },
         icon: const Icon(Icons.add),
-        tooltip: 'Choose project for new chat',
+        tooltip: 'Nuevo chat',
+      ));
+      primaryActions.add(overflowMenu);
+      return primaryActions;
+    }
+    return <Widget>[
+      ...primaryActions,
+      const SizedBox(width: 4),
+      Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        child: FilledButton.tonalIcon(
+          onPressed: () async {
+            await _openWorkspacePicker();
+          },
+          icon: const Icon(Icons.add, size: 18),
+          label: const Text('Nuevo chat'),
+        ),
       ),
+      overflowMenu,
+      const SizedBox(width: 8),
     ];
   }
 
@@ -4748,6 +5482,9 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
       case _AppBarOverflowAction.newChat:
         await _openWorkspacePicker();
         return;
+      case _AppBarOverflowAction.agentStudio:
+        await _openAgentStudio();
+        return;
     }
   }
 
@@ -4804,7 +5541,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     final result = await showModalBottomSheet<CodexRunOptions>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF101931),
+      backgroundColor: const Color(0xFF191B1F),
       builder: (context) => _CodexToolsSheet(
         initialOptions: currentDraft.codexRunOptions,
         tooling: _activeCodexTooling,
@@ -4854,7 +5591,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                 Text(
                   label,
                   style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                        color: const Color(0xFF8B97B5),
+                        color: const Color(0xFF939BAD),
                         fontWeight: FontWeight.w700,
                       ),
                 ),
@@ -5155,14 +5892,14 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
           .where((session) => _unreadCountForSession(session) > 0)
           .length;
       final projectCardColor =
-          hasSelected ? const Color(0xFF16213C) : const Color(0xFF121A31);
+          hasSelected ? const Color(0xFF202227) : const Color(0xFF1A1C20);
       final projectBorderColor = activeJobCount > 0
           ? const Color(0x44FFC857)
           : outgoingUploadCount > 0
               ? const Color(0x333F5EF7)
               : unreadChatsCount > 0
                   ? const Color(0x3355D6BE)
-                  : const Color(0xFF23304F);
+                  : const Color(0xFF2C2F36);
 
       sessionGroups.add(
         Container(
@@ -5179,41 +5916,43 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                 context,
               ).copyWith(dividerColor: Colors.transparent),
               child: ExpansionTile(
-                key: PageStorageKey<String>('workspace-${workspace.path}'),
-                initiallyExpanded: hasSelected,
-                tilePadding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 6,
-                ),
+                // While searching, every project with matches opens so the
+                // results are visible without extra taps.
+                key: PageStorageKey<String>(
+                    'workspace-${workspace.path}${_sessionSearch.trim().isEmpty ? '' : '-search'}'),
+                initiallyExpanded:
+                    hasSelected || _sessionSearch.trim().isNotEmpty,
+                tilePadding: const EdgeInsets.only(left: 12, right: 6),
                 childrenPadding: const EdgeInsets.only(bottom: 10),
-                iconColor: const Color(0xFF9AA8C8),
-                collapsedIconColor: const Color(0xFF9AA8C8),
+                iconColor: const Color(0xFFA6ADBC),
+                collapsedIconColor: const Color(0xFFA6ADBC),
                 title: Row(
                   children: <Widget>[
                     Container(
-                      width: 38,
-                      height: 38,
+                      width: 30,
+                      height: 30,
                       decoration: BoxDecoration(
                         color: activeJobCount > 0
                             ? const Color(0x33FFC857)
                             : outgoingUploadCount > 0
                                 ? const Color(0x223F5EF7)
-                                : const Color(0xFF1B2745),
-                        borderRadius: BorderRadius.circular(12),
+                                : const Color(0xFF25282D),
+                        borderRadius: BorderRadius.circular(9),
                       ),
                       alignment: Alignment.center,
                       child: Icon(
                         Icons.folder_rounded,
+                        size: 18,
                         color: activeJobCount > 0
                             ? const Color(0xFFFFC857)
                             : outgoingUploadCount > 0
                                 ? const Color(0xFF8CA8FF)
                                 : unreadChatsCount > 0
                                     ? const Color(0xFF55D6BE)
-                                    : const Color(0xFF9AA8C8),
+                                    : const Color(0xFFA6ADBC),
                       ),
                     ),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 10),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -5234,27 +5973,34 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                             ),
                           ),
                           const SizedBox(height: 2),
-                          Text(
-                            archivedOnly
-                                ? '${workspace.path} • ${visibleSessions.length} archived chat${visibleSessions.length == 1 ? '' : 's'}'
-                                : '${workspace.path} • ${visibleSessions.length} chat${visibleSessions.length == 1 ? '' : 's'}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Color(0xFF8B97B5),
-                              fontSize: 12,
+                          // The full path is long and rarely useful at a
+                          // glance: keep it in a tooltip, show the count.
+                          Tooltip(
+                            message: workspace.path,
+                            child: Text(
+                              archivedOnly
+                                  ? '${visibleSessions.length} archivado${visibleSessions.length == 1 ? '' : 's'}'
+                                  : '${visibleSessions.length} chat${visibleSessions.length == 1 ? '' : 's'}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Color(0xFF939BAD),
+                                fontSize: 12,
+                              ),
                             ),
                           ),
-                          const SizedBox(height: 6),
-                          _ProjectStatusPill(
-                            active: hasBackgroundActivity,
-                            label: _formatProjectActivityLabel(
-                              activeJobCount: activeJobCount,
-                              activeChatCount: activeChatCount,
-                              outgoingUploadCount: outgoingUploadCount,
-                              outgoingChatCount: outgoingChatCount,
+                          if (hasBackgroundActivity) ...[
+                            const SizedBox(height: 6),
+                            _ProjectStatusPill(
+                              active: hasBackgroundActivity,
+                              label: _formatProjectActivityLabel(
+                                activeJobCount: activeJobCount,
+                                activeChatCount: activeChatCount,
+                                outgoingUploadCount: outgoingUploadCount,
+                                outgoingChatCount: outgoingChatCount,
+                              ),
                             ),
-                          ),
+                          ],
                         ],
                       ),
                     ),
@@ -5273,10 +6019,10 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                       ),
                     if (unreadChatsCount > 0)
                       Container(
-                        margin: const EdgeInsets.only(right: 8),
+                        margin: const EdgeInsets.only(right: 4),
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
+                          horizontal: 6,
+                          vertical: 1,
                         ),
                         decoration: BoxDecoration(
                           color: const Color(0xFF55D6BE),
@@ -5285,7 +6031,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                         child: Text(
                           unreadChatsCount.toString(),
                           style: const TextStyle(
-                            color: Color(0xFF07131D),
+                            color: Color(0xFF0E0F11),
                             fontWeight: FontWeight.w700,
                           ),
                         ),
@@ -5296,19 +6042,19 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                       onSelected: (_PinnedWorkspaceAction action) async {
                         switch (action) {
                           case _PinnedWorkspaceAction.deployments:
-                            Navigator.of(context).pop();
+                            _closeSidebarIfDrawer(context);
                             await _openDeployments(workspace);
                             return;
                           case _PinnedWorkspaceAction.notifications:
-                            Navigator.of(context).pop();
+                            _closeSidebarIfDrawer(context);
                             await _openProjectNotifications(workspace);
                             return;
                           case _PinnedWorkspaceAction.backlog:
-                            Navigator.of(context).pop();
+                            _closeSidebarIfDrawer(context);
                             await _openWork(workspace);
                             return;
                           case _PinnedWorkspaceAction.newChat:
-                            Navigator.of(context).pop();
+                            _closeSidebarIfDrawer(context);
                             await _createNewChatForWorkspace(workspace);
                             return;
                           case _PinnedWorkspaceAction.remove:
@@ -5345,15 +6091,15 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                 children: <Widget>[
                   Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: Wrap(spacing: 8, children: [
                     TextButton.icon(onPressed: () async {
-                      Navigator.of(context).pop();
+                      _closeSidebarIfDrawer(context);
                       await _openDeployments(workspace);
                     }, icon: const Icon(Icons.cloud_outlined, size: 18), label: const Text('Deploys')),
                     TextButton.icon(onPressed: () async {
-                      Navigator.of(context).pop();
+                      _closeSidebarIfDrawer(context);
                       await _openProjectNotifications(workspace);
                     }, icon: const Icon(Icons.notifications_outlined, size: 18), label: const Text('Notificaciones')),
                     TextButton.icon(onPressed: () async {
-                      Navigator.of(context).pop();
+                      _closeSidebarIfDrawer(context);
                       await _openWork(workspace);
                     }, icon: const Icon(Icons.playlist_play_rounded, size: 18), label: const Text('Backlog')),
                   ])),
@@ -5367,7 +6113,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                               archivedOnly
                                   ? 'No archived chats in this project'
                                   : 'No active chats in this project',
-                              style: const TextStyle(color: Color(0xFF8B97B5)),
+                              style: const TextStyle(color: Color(0xFF939BAD)),
                             ),
                           ),
                         ),
@@ -5386,11 +6132,11 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                               selected: session.id ==
                                   _chatController.selectedSessionId,
                               onTap: () async {
-                                Navigator.of(context).pop();
+                                _closeSidebarIfDrawer(context);
                                 await _chatController.selectSession(session.id);
                               },
                               onRename: () async {
-                                Navigator.of(context).pop();
+                                _closeSidebarIfDrawer(context);
                                 await _openRenameChatSheet(session);
                               },
                               onArchiveToggle: () async {
@@ -5774,7 +6520,7 @@ class _SessionTile extends StatelessWidget {
     final isActive = activeJobSummary != null;
     final isUploading = outgoingUploadSummary != null;
     final tileBackgroundColor = selected
-        ? const Color(0xFF1C2745)
+        ? const Color(0xFF26282E)
         : isActive
             ? const Color(0x1455D6BE)
             : isUploading
@@ -5802,7 +6548,7 @@ class _SessionTile extends StatelessWidget {
         }.contains(session.agentProfileId);
     final timelineColor = isActive || isUploading
         ? const Color(0xFFA8C7C0)
-        : const Color(0xFF8B97B5);
+        : const Color(0xFF939BAD);
     final displayTitle = _sessionDisplayTitle(session);
 
     return AnimatedContainer(
@@ -5827,7 +6573,7 @@ class _SessionTile extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               color: session.isArchived
-                  ? const Color(0xFFB8C8EA)
+                  ? const Color(0xFFCBCED7)
                   : isWhatsAppIntake
                       ? _colorFromHex(session.agentProfileColor)
                       : titleColor,
@@ -5842,20 +6588,20 @@ class _SessionTile extends StatelessWidget {
               const SizedBox(height: 6),
               _SessionMomentLine(
                 icon: Icons.schedule_rounded,
-                label: 'Latest',
+                label: 'Último',
                 value: _formatSessionMoment(context, session.latestActivityAt),
                 color: session.isArchived
-                    ? const Color(0xFF7F8EAF)
+                    ? const Color(0xFF8891A6)
                     : timelineColor,
               ),
               const SizedBox(height: 3),
               _SessionMomentLine(
                 icon: Icons.flag_outlined,
-                label: 'Started',
+                label: 'Inicio',
                 value: _formatSessionMoment(context, session.createdAt),
                 color: session.isArchived
-                    ? const Color(0xFF7F8EAF)
-                    : const Color(0xFF8B97B5),
+                    ? const Color(0xFF8891A6)
+                    : const Color(0xFF939BAD),
               ),
             ],
           ),
@@ -5880,7 +6626,7 @@ class _SessionTile extends StatelessWidget {
                 ),
               PopupMenuButton<String>(
                 padding: EdgeInsets.zero,
-                tooltip: 'Chat actions',
+                tooltip: 'Acciones del chat',
                 onSelected: (value) {
                   if (value == 'rename') {
                     onRename();
@@ -5897,7 +6643,7 @@ class _SessionTile extends StatelessWidget {
                       children: <Widget>[
                         Icon(Icons.edit_outlined, size: 18),
                         SizedBox(width: 12),
-                        Text('Rename chat'),
+                        Text('Renombrar chat'),
                       ],
                     ),
                   ),
@@ -5914,8 +6660,8 @@ class _SessionTile extends StatelessWidget {
                         const SizedBox(width: 12),
                         Text(
                           session.isArchived
-                              ? 'Unarchive chat'
-                              : 'Archive chat',
+                              ? 'Desarchivar chat'
+                              : 'Archivar chat',
                         ),
                       ],
                     ),
@@ -6005,7 +6751,7 @@ String _formatProjectActivityLabel({
     );
   }
   if (segments.isEmpty) {
-    return 'No active jobs';
+    return 'Sin actividad';
   }
   return segments.join(' • ');
 }
@@ -6060,9 +6806,9 @@ class _ProjectStatusPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final backgroundColor =
-        active ? const Color(0xFF3D2D08) : const Color(0xFF18223D);
+        active ? const Color(0xFF3D2D08) : const Color(0xFF212328);
     final foregroundColor =
-        active ? const Color(0xFFFFC857) : const Color(0xFF8B97B5);
+        active ? const Color(0xFFFFC857) : const Color(0xFF939BAD);
 
     return SizedBox(
       width: double.infinity,
@@ -6256,15 +7002,16 @@ class _EmptyState extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
                 const Text(
-                  'Start a new Codex session',
+                  '¿En qué trabajamos?',
                   style: TextStyle(fontSize: 24, fontWeight: FontWeight.w600),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 12),
                 const Text(
-                  'Each chat maps to a real Codex CLI session and follow-up messages continue that session.',
+                  'Cada chat es una sesión real del agente (Codex o Claude) en esta máquina: '
+                  'los mensajes siguientes continúan esa sesión. Escribí abajo o usá / para comandos.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: Color(0xFF8B97B5), height: 1.5),
+                  style: TextStyle(color: Color(0xFF939BAD), height: 1.5),
                 ),
                 const SizedBox(height: 20),
                 FilledButton.icon(
@@ -6272,7 +7019,7 @@ class _EmptyState extends StatelessWidget {
                     await onCreateChat();
                   },
                   icon: const Icon(Icons.add_comment_outlined),
-                  label: const Text('New Chat'),
+                  label: const Text('Nuevo chat'),
                 ),
               ],
             ),
@@ -6315,7 +7062,7 @@ class _FilteredMessagesPlaceholder extends StatelessWidget {
               Text(
                 _filteredMessagesPlaceholderText(displayMode),
                 textAlign: TextAlign.center,
-                style: const TextStyle(color: Color(0xFF8B97B5), height: 1.5),
+                style: const TextStyle(color: Color(0xFF939BAD), height: 1.5),
               ),
               const SizedBox(height: 20),
               FilledButton.icon(
@@ -6396,9 +7143,9 @@ class _OlderMessagesRow extends StatelessWidget {
           constraints: const BoxConstraints(maxWidth: 420),
           child: DecoratedBox(
             decoration: BoxDecoration(
-              color: const Color(0xFF10182B),
+              color: const Color(0xFF17181C),
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFF24304E)),
+              border: Border.all(color: const Color(0xFF2C2F36)),
             ),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -6425,7 +7172,7 @@ class _OlderMessagesRow extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  TextButton(onPressed: onRetry, child: const Text('Retry')),
+                  TextButton(onPressed: onRetry, child: const Text('Reintentar')),
                 ],
               ),
             ),
@@ -6453,9 +7200,9 @@ class _GuidedProjectIntakeCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: const Color(0xFF111B2D),
+        color: const Color(0xFF181A1D),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFF273A60)),
+        border: Border.all(color: const Color(0xFF343840)),
       ),
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -6489,7 +7236,7 @@ class _GuidedProjectIntakeCard extends StatelessWidget {
             const SizedBox(height: 10),
             const Text(
               'Name, goal, platforms, backend, roles, entities, assets, release, Workbench/SDD, web preview, Android plan, blockers, risks.',
-              style: TextStyle(color: Color(0xFFB8C8EA), height: 1.35),
+              style: TextStyle(color: Color(0xFFCBCED7), height: 1.35),
             ),
             if (isLoading) ...<Widget>[
               const SizedBox(height: 10),
@@ -6535,7 +7282,7 @@ class _ProjectFactoryApprovalButton extends StatelessWidget {
       },
       style: FilledButton.styleFrom(
         backgroundColor: const Color(0xFF55D6BE),
-        foregroundColor: const Color(0xFF07131D),
+        foregroundColor: const Color(0xFF0E0F11),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       ),
@@ -6601,12 +7348,12 @@ class ProjectFactoryInitCard extends StatelessWidget {
             const SizedBox(height: 10),
             Text(
               'Current phase: ${_humanizeInitPhase(currentPhase)}',
-              style: const TextStyle(color: Color(0xFFB8C8EA), height: 1.35),
+              style: const TextStyle(color: Color(0xFFCBCED7), height: 1.35),
             ),
             const SizedBox(height: 6),
             const Text(
               'Preparing repo, preview infrastructure, runtime profile, Workbench, feedback, release wiring, and first-chat context before business work starts.',
-              style: TextStyle(color: Color(0xFF8EA6C7), height: 1.35),
+              style: TextStyle(color: Color(0xFF9FA6B6), height: 1.35),
             ),
             if (isLoading) ...<Widget>[
               const SizedBox(height: 10),
@@ -6656,7 +7403,7 @@ class _SummaryViewBanner extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFF173255),
+        color: const Color(0xFF2A2D33),
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: const Color(0xFF66A8FF), width: 1.2),
       ),
@@ -6705,7 +7452,7 @@ class _SummaryMessagesPlaceholder extends StatelessWidget {
               const Text(
                 'Summary view is enabled for this chat, but the summarizer has not produced an update yet.',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Color(0xFF8B97B5), height: 1.5),
+                style: TextStyle(color: Color(0xFF939BAD), height: 1.5),
               ),
               const SizedBox(height: 20),
               FilledButton.icon(
@@ -6800,7 +7547,7 @@ class _TurnSummariesPlaceholder extends StatelessWidget {
               Text(
                 message,
                 textAlign: TextAlign.center,
-                style: const TextStyle(color: Color(0xFF8B97B5), height: 1.5),
+                style: const TextStyle(color: Color(0xFF939BAD), height: 1.5),
               ),
               const SizedBox(height: 20),
               FilledButton.icon(
@@ -6844,7 +7591,7 @@ class _TurnSummaryCardState extends State<_TurnSummaryCard> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFF181F33),
+        color: const Color(0xFF1D1F23),
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: const Color(0xFF33405D)),
       ),
@@ -6868,7 +7615,7 @@ class _TurnSummaryCardState extends State<_TurnSummaryCard> {
                 sourceMessages.length == 1
                     ? '1 source'
                     : '${sourceMessages.length} sources',
-                style: const TextStyle(color: Color(0xFF9FB0D4), fontSize: 12),
+                style: const TextStyle(color: Color(0xFFB0B6C3), fontSize: 12),
               ),
             ],
           ),
@@ -6881,7 +7628,7 @@ class _TurnSummaryCardState extends State<_TurnSummaryCard> {
           if (sourceMessages.isEmpty)
             const Text(
               'Source message metadata is unavailable for this summary.',
-              style: TextStyle(color: Color(0xFFB8C8EA), height: 1.4),
+              style: TextStyle(color: Color(0xFFCBCED7), height: 1.4),
             )
           else ...<Widget>[
             Align(
@@ -6912,7 +7659,7 @@ class _TurnSummaryCardState extends State<_TurnSummaryCard> {
               const Text(
                 'Provenance',
                 style: TextStyle(
-                  color: Color(0xFF9FB0D4),
+                  color: Color(0xFFB0B6C3),
                   fontSize: 12,
                   fontWeight: FontWeight.w700,
                 ),
@@ -6937,9 +7684,9 @@ class _TurnSummaryCardState extends State<_TurnSummaryCard> {
                     margin: const EdgeInsets.only(bottom: 8),
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF121A2C),
+                      color: const Color(0xFF181A1D),
                       borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: const Color(0xFF27324F)),
+                      border: Border.all(color: const Color(0xFF2E3138)),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -6956,7 +7703,7 @@ class _TurnSummaryCardState extends State<_TurnSummaryCard> {
                         Text(
                           excerptText,
                           style: const TextStyle(
-                            color: Color(0xFFB8C8EA),
+                            color: Color(0xFFCBCED7),
                             height: 1.35,
                           ),
                         ),
@@ -7180,7 +7927,7 @@ class _DevHandoffDialogState extends State<_DevHandoffDialog> {
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+          child: const Text('Cancelar'),
         ),
         FilledButton.icon(
           onPressed: _submit,
@@ -7258,9 +8005,9 @@ class _SlashCommandPalette extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: const Color(0xFF10182B),
+        color: const Color(0xFF17181C),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFF263455)),
+        border: Border.all(color: const Color(0xFF30333A)),
       ),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxHeight: 280),
@@ -7269,7 +8016,7 @@ class _SlashCommandPalette extends StatelessWidget {
                 padding: EdgeInsets.all(14),
                 child: Row(
                   children: <Widget>[
-                    Icon(Icons.search_off_rounded, color: Color(0xFF8B97B5)),
+                    Icon(Icons.search_off_rounded, color: Color(0xFF939BAD)),
                     SizedBox(width: 10),
                     Expanded(
                       child: Text(
@@ -7298,7 +8045,7 @@ class _SlashCommandPalette extends StatelessWidget {
                   final enabled = command.isEnabled;
                   return Material(
                     color:
-                        selected ? const Color(0xFF1B2745) : Colors.transparent,
+                        selected ? const Color(0xFF25282D) : Colors.transparent,
                     child: InkWell(
                       onTap: () => onSelected(command),
                       onHover: (_) => onHighlightChanged(index),
@@ -7315,7 +8062,7 @@ class _SlashCommandPalette extends StatelessWidget {
                                   : Icons.block_rounded,
                               color: enabled
                                   ? const Color(0xFF55D6BE)
-                                  : const Color(0xFF8B97B5),
+                                  : const Color(0xFF939BAD),
                               size: 18,
                             ),
                             const SizedBox(width: 10),
@@ -7328,7 +8075,7 @@ class _SlashCommandPalette extends StatelessWidget {
                                     style: TextStyle(
                                       color: enabled
                                           ? Colors.white
-                                          : const Color(0xFF8B97B5),
+                                          : const Color(0xFF939BAD),
                                       fontWeight: FontWeight.w700,
                                     ),
                                   ),
@@ -7337,7 +8084,7 @@ class _SlashCommandPalette extends StatelessWidget {
                                     command.disabledReason ??
                                         command.description,
                                     style: const TextStyle(
-                                      color: Color(0xFFB8C8EA),
+                                      color: Color(0xFFCBCED7),
                                       fontSize: 12,
                                     ),
                                   ),
@@ -7347,7 +8094,7 @@ class _SlashCommandPalette extends StatelessWidget {
                             Text(
                               command.scope,
                               style: const TextStyle(
-                                color: Color(0xFF8B97B5),
+                                color: Color(0xFF939BAD),
                                 fontSize: 11,
                               ),
                             ),
@@ -7371,6 +8118,9 @@ class _Composer extends StatefulWidget {
     required this.onDraftChanged,
     this.onBackgroundDraftChanged,
     required this.onSend,
+    this.onSteer,
+    this.activeJobCount = 0,
+    this.queuedJobCount = 0,
     required this.onSendAudio,
     required this.onSendAttachments,
     required this.onBeginRecording,
@@ -7391,6 +8141,9 @@ class _Composer extends StatefulWidget {
   final ValueChanged<_ComposerDraft> onDraftChanged;
   final ValueChanged<_ComposerDraft>? onBackgroundDraftChanged;
   final Future<bool> Function() onSend;
+  final Future<bool> Function(String text)? onSteer;
+  final int activeJobCount;
+  final int queuedJobCount;
   final Future<bool> Function(XFile audioFile, {String? message}) onSendAudio;
   final Future<bool> Function(
     List<_PendingAttachmentDraft> attachments, {
@@ -7414,6 +8167,7 @@ class _Composer extends StatefulWidget {
 class _ComposerState extends State<_Composer> {
   late AudioNoteRecorder _audioRecorder;
   final FocusNode _composerFocusNode = FocusNode();
+  bool _refocusAfterBusy = false;
   final ImagePicker _imagePicker = ImagePicker();
   late final ClipboardImagePasteListener _clipboardImagePasteListener;
   Stopwatch? _recordingStopwatch;
@@ -7434,6 +8188,7 @@ class _ComposerState extends State<_Composer> {
   @override
   void initState() {
     super.initState();
+    _composerFocusNode.onKeyEvent = _handleComposerKeyEvent;
     _audioRecorder = widget.audioRecorderFactory();
     _applyDraft(widget.draft, notifyParent: false);
     _hasText = widget.controller.text.trim().isNotEmpty;
@@ -7447,6 +8202,14 @@ class _ComposerState extends State<_Composer> {
   @override
   void didUpdateWidget(covariant _Composer oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!oldWidget.isBusy && widget.isBusy) {
+      _refocusAfterBusy = _composerFocusNode.hasFocus;
+    } else if (oldWidget.isBusy && !widget.isBusy && _refocusAfterBusy) {
+      _refocusAfterBusy = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _composerFocusNode.requestFocus();
+      });
+    }
     if (oldWidget.controller != widget.controller) {
       oldWidget.controller.removeListener(_handleTextChanged);
       _hasText = widget.controller.text.trim().isNotEmpty;
@@ -7522,7 +8285,7 @@ class _ComposerState extends State<_Composer> {
                             foregroundColor: const Color(0xFFE9EDEF),
                           ),
                           icon: const Icon(Icons.close_rounded),
-                          label: const Text('Cancel'),
+                          label: const Text('Cancelar'),
                         ),
                       ),
                       const SizedBox(width: 10),
@@ -7530,7 +8293,7 @@ class _ComposerState extends State<_Composer> {
                         child: FilledButton.icon(
                           onPressed: isDisabled ? null : _stopRecordingAndSend,
                           style: _actionButtonStyle(
-                            backgroundColor: const Color(0xFF25D366),
+                            backgroundColor: AppPalette.accent,
                             foregroundColor: const Color(0xFF0B141A),
                           ),
                           icon: const Icon(Icons.send_rounded),
@@ -7596,7 +8359,7 @@ class _ComposerState extends State<_Composer> {
                       FilledButton(
                         onPressed: isDisabled ? null : _stopRecordingAndSend,
                         style: _actionButtonStyle(
-                          backgroundColor: const Color(0xFF25D366),
+                          backgroundColor: AppPalette.accent,
                           foregroundColor: const Color(0xFF0B141A),
                           minimumSize: const Size(52, 52),
                         ),
@@ -7608,7 +8371,7 @@ class _ComposerState extends State<_Composer> {
                   FilledButton(
                     onPressed: _showVoiceUnavailableMessage,
                     style: _actionButtonStyle(
-                      backgroundColor: const Color(0xFF25D366),
+                      backgroundColor: AppPalette.accent,
                       foregroundColor: const Color(0xFF0B141A),
                     ),
                     child: const Icon(Icons.mic_off_rounded),
@@ -7617,7 +8380,7 @@ class _ComposerState extends State<_Composer> {
                   FilledButton(
                     onPressed: isDisabled ? null : _toggleRecording,
                     style: _actionButtonStyle(
-                      backgroundColor: const Color(0xFF25D366),
+                      backgroundColor: AppPalette.accent,
                       foregroundColor: const Color(0xFF0B141A),
                     ),
                     child: const Icon(Icons.mic_rounded),
@@ -7658,7 +8421,7 @@ class _ComposerState extends State<_Composer> {
         icon: Icons.mic_rounded,
         title: 'Recording',
         subtitle: 'Send now or cancel to discard',
-        color: const Color(0xFF25D366),
+        color: AppPalette.accent,
         trailing: _StatusPill(
           label: _formatDuration(),
           backgroundColor: const Color(0xFF0B3D25),
@@ -7707,6 +8470,29 @@ class _ComposerState extends State<_Composer> {
               },
             ),
           ),
+        if (widget.activeJobCount > 0)
+          Padding(
+            padding: const EdgeInsets.only(left: 12, bottom: 4),
+            child: Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 8,
+              children: <Widget>[
+                Text(
+                  '${widget.activeJobCount - widget.queuedJobCount} en curso · ${widget.queuedJobCount} en cola · Enter encola · Esc detiene',
+                  style: const TextStyle(color: Color(0xFFC5C9D3), fontSize: 12),
+                ),
+                if (widget.onSteer != null)
+                  TextButton.icon(
+                    key: const ValueKey('composer-steer'),
+                    onPressed: _hasText && !_isSubmittingAttachments
+                        ? () => unawaited(_steerNow())
+                        : null,
+                    icon: const Icon(Icons.alt_route_rounded, size: 16),
+                    label: const Text('Redirigir ahora (Ctrl+Enter)'),
+                  ),
+              ],
+            ),
+          ),
         TextField(
           controller: widget.controller,
           focusNode: _composerFocusNode,
@@ -7714,6 +8500,9 @@ class _ComposerState extends State<_Composer> {
           maxLines: 6,
           enabled: !widget.isBusy && !_isSubmittingAttachments,
           textInputAction: TextInputAction.send,
+          // Keep the cursor in the composer after sending (the default for
+          // "send" actions drops focus, forcing a click before every message).
+          onEditingComplete: () {},
           onSubmitted: (_) async {
             await _handlePrimaryAction();
           },
@@ -7763,7 +8552,7 @@ class _ComposerState extends State<_Composer> {
         ? FilledButton.icon(
             onPressed: isDisabled ? null : _handlePrimaryAction,
             style: _actionButtonStyle(
-              backgroundColor: const Color(0xFF25D366),
+              backgroundColor: AppPalette.accent,
               foregroundColor: const Color(0xFF0B141A),
               minimumSize: minimumSize,
             ),
@@ -7773,7 +8562,7 @@ class _ComposerState extends State<_Composer> {
         : FilledButton(
             onPressed: isDisabled ? null : _handlePrimaryAction,
             style: _actionButtonStyle(
-              backgroundColor: const Color(0xFF25D366),
+              backgroundColor: AppPalette.accent,
               foregroundColor: const Color(0xFF0B141A),
               minimumSize: minimumSize,
             ),
@@ -7874,6 +8663,70 @@ class _ComposerState extends State<_Composer> {
     return filterSlashCommands(_slashCommands, query);
   }
 
+  Future<void> _steerNow() async {
+    final onSteer = widget.onSteer;
+    final text = widget.controller.text.trim();
+    if (onSteer == null || text.isEmpty) return;
+    widget.controller.clear();
+    final ok = await onSteer(text);
+    if (!ok && mounted && widget.controller.text.isEmpty) {
+      widget.controller.text = text;
+    }
+  }
+
+  KeyEventResult _handleComposerKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.enter &&
+        (HardwareKeyboard.instance.isControlPressed ||
+            HardwareKeyboard.instance.isMetaPressed) &&
+        widget.activeJobCount > 0 &&
+        widget.onSteer != null &&
+        _slashQuery == null) {
+      unawaited(_steerNow());
+      return KeyEventResult.handled;
+    }
+    final query = _slashQuery;
+    if (query == null) {
+      return KeyEventResult.ignored;
+    }
+    final commands = _filteredSlashCommands(query);
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.arrowDown || key == LogicalKeyboardKey.arrowUp) {
+      if (commands.isEmpty) return KeyEventResult.handled;
+      final delta = key == LogicalKeyboardKey.arrowDown ? 1 : -1;
+      setState(() {
+        _selectedSlashCommandIndex =
+            (_selectedSlashCommandIndex + delta) % commands.length;
+        if (_selectedSlashCommandIndex < 0) {
+          _selectedSlashCommandIndex += commands.length;
+        }
+        _slashCommandErrorText = null;
+      });
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.escape) {
+      widget.controller.clear();
+      setState(() {
+        _selectedSlashCommandIndex = 0;
+        _slashCommandErrorText = null;
+      });
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.tab && commands.isNotEmpty) {
+      final command =
+          commands[_selectedSlashCommandIndex.clamp(0, commands.length - 1)];
+      final completed = '${command.slash} ';
+      widget.controller.value = TextEditingValue(
+        text: completed,
+        selection: TextSelection.collapsed(offset: completed.length),
+      );
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
   Future<void> _selectHighlightedSlashCommand() async {
     final query = _slashQuery;
     if (query == null) {
@@ -7948,7 +8801,7 @@ class _ComposerState extends State<_Composer> {
 
     final choice = await showModalBottomSheet<_AttachmentSourceAction>(
       context: context,
-      backgroundColor: const Color(0xFF101931),
+      backgroundColor: const Color(0xFF191B1F),
       builder: (context) {
         return SafeArea(
           child: Column(
@@ -8695,7 +9548,7 @@ class _ComposerState extends State<_Composer> {
 
   String _composerHintText() {
     if (_pendingAttachments.isEmpty) {
-      return 'Message';
+      return 'Escribí un mensaje · / para comandos';
     }
     if (_pendingAttachments.length == 1 && _pendingAttachments.first.isAudio) {
       return 'Add text for this voice note';
@@ -8928,7 +9781,7 @@ class _RenameChatSheetState extends State<_RenameChatSheet> {
               children: <Widget>[
                 const Expanded(
                   child: Text(
-                    'Rename chat',
+                    'Renombrar chat',
                     style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
                   ),
                 ),
@@ -9025,7 +9878,7 @@ class _RenameChatSheetState extends State<_RenameChatSheet> {
               icon: Icons.mic_rounded,
               title: 'Recording',
               subtitle: 'Speak the title direction',
-              color: const Color(0xFF25D366),
+              color: AppPalette.accent,
               trailing: _StatusPill(
                 label: _formatRenameRecordingDuration(),
                 backgroundColor: const Color(0xFF0B3D25),
@@ -9240,34 +10093,30 @@ class _AgentProfilePill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: Color.alphaBlend(
-          color.withValues(alpha: 0.2),
-          const Color(0xFF121A31),
-        ),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: color.withValues(alpha: 0.45)),
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(6),
       ),
       child: Row(
-        mainAxisSize: MainAxisSize.max,
+        mainAxisSize: MainAxisSize.min,
         children: <Widget>[
           Container(
-            width: 8,
-            height: 8,
+            width: 6,
+            height: 6,
             decoration: BoxDecoration(color: color, shape: BoxShape.circle),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           Flexible(
             child: Text(
               label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               softWrap: false,
-              style: const TextStyle(
-                fontSize: 12,
+              style: TextStyle(
+                fontSize: 11.5,
                 fontWeight: FontWeight.w600,
-                color: Colors.white,
+                color: color,
               ),
             ),
           ),
@@ -9288,7 +10137,7 @@ class _EnvironmentIdentityBadge extends StatelessWidget {
     final foreground =
         ThemeData.estimateBrightnessForColor(color) == Brightness.dark
             ? Colors.white
-            : const Color(0xFF07131D);
+            : const Color(0xFF0E0F11);
     final environment = identity.environment.toLowerCase();
     final label = identity.environment.toUpperCase();
     final details = <String>[
@@ -9311,17 +10160,10 @@ class _EnvironmentIdentityBadge extends StatelessWidget {
           'Environment $label ${details.join(' ')} ${runtimeParts.join(' ')}',
       child: Container(
         key: const ValueKey<String>('environment-identity-badge'),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
         decoration: BoxDecoration(
           color: color,
-          borderRadius: BorderRadius.circular(999),
-          boxShadow: <BoxShadow>[
-            BoxShadow(
-              color: color.withValues(alpha: 0.28),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
+          borderRadius: BorderRadius.circular(6),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -9379,7 +10221,7 @@ class _ProdUpdateStatusBanner extends StatelessWidget {
       decoration: BoxDecoration(
         color: Color.alphaBlend(
           color.withValues(alpha: 0.18),
-          const Color(0xFF101931),
+          const Color(0xFF191B1F),
         ),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: color.withValues(alpha: 0.55)),
@@ -9472,7 +10314,7 @@ class _ProdUpdateForceDialogState extends State<_ProdUpdateForceDialog> {
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+          child: const Text('Cancelar'),
         ),
         FilledButton(
           onPressed: _controller.text == _expected
@@ -9534,7 +10376,7 @@ class _ProjectCreationModeDialog extends StatelessWidget {
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+          child: const Text('Cancelar'),
         ),
         OutlinedButton.icon(
           key: const Key('new-project-scaffold-mode'),
@@ -9751,7 +10593,7 @@ class _ProjectScaffoldDialogState extends State<ProjectScaffoldDialog> {
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+          child: const Text('Cancelar'),
         ),
         FilledButton(
           key: const Key('scaffold-review'),
@@ -9942,7 +10784,7 @@ class ProjectScaffoldResultDialog extends StatelessWidget {
           child: const Text('Close'),
         ),
         if (onRetry != null)
-          OutlinedButton(onPressed: onRetry, child: const Text('Retry')),
+          OutlinedButton(onPressed: onRetry, child: const Text('Reintentar')),
         if (onStartProduct != null)
           FilledButton(
             key: const Key('scaffold-start-product'),
@@ -10229,7 +11071,7 @@ class _NewProjectBasicsDialogState extends State<_NewProjectBasicsDialog> {
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+          child: const Text('Cancelar'),
         ),
         FilledButton(
           onPressed: _canSubmit ? _submit : null,
@@ -10418,9 +11260,9 @@ class _ProjectFactoryGuidedIntakeCardState
     final defaults = _projectFactoryMap(preview['defaults']);
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: const Color(0xFF101931),
+        color: const Color(0xFF191B1F),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF263454)),
+        border: Border.all(color: const Color(0xFF2F323A)),
       ),
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -11927,10 +12769,10 @@ Color _initStatusBackground(String status) {
     'ready' => const Color(0xFF0B3D25),
     'blocked_with_context' => const Color(0xFF3A2714),
     'failed' => const Color(0xFF431B27),
-    'cancelled' => const Color(0xFF2B364D),
+    'cancelled' => const Color(0xFF2E3239),
     'resumable' => const Color(0xFF2A2440),
     'running' => const Color(0xFF133954),
-    _ => const Color(0xFF26324A),
+    _ => const Color(0xFF2B2E35),
   };
 }
 
@@ -11939,7 +12781,7 @@ Color _initStatusForeground(String status) {
     'ready' => const Color(0xFFB7F5CF),
     'blocked_with_context' => const Color(0xFFFFD9A3),
     'failed' => const Color(0xFFFFC4CB),
-    'cancelled' => const Color(0xFFB8C3DA),
+    'cancelled' => const Color(0xFFC1C6D1),
     'resumable' => const Color(0xFFD9CCFF),
     'running' => const Color(0xFFBFE8FF),
     _ => const Color(0xFFDCE5FF),
@@ -12523,7 +13365,7 @@ class _SaveAgentProfileSheetState extends State<_SaveAgentProfileSheet> {
                 children: <Widget>[
                   TextButton(
                     onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Cancel'),
+                    child: const Text('Cancelar'),
                   ),
                   const Spacer(),
                   FilledButton(
@@ -12780,7 +13622,7 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
                 children: <Widget>[
                   TextButton(
                     onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Cancel'),
+                    child: const Text('Cancelar'),
                   ),
                   const Spacer(),
                   FilledButton(
@@ -12885,7 +13727,7 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
       margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFF15203B),
+        color: const Color(0xFF1F2126),
         borderRadius: BorderRadius.circular(18),
       ),
       child: Column(
@@ -13062,7 +13904,7 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
       margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFF15203B),
+        color: const Color(0xFF1F2126),
         borderRadius: BorderRadius.circular(18),
       ),
       child: Column(
@@ -13076,7 +13918,7 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
           const Text(
             'Choose which specialist agents the supervisor can call during the run.',
             style: TextStyle(
-              color: Color(0xFFB8C8EA),
+              color: Color(0xFFCBCED7),
               fontSize: 12,
               height: 1.3,
             ),
@@ -13087,7 +13929,7 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
                 ? 'Supervisor only means selected specialists can be called whenever the supervisor chooses within the supervisor turn budget. Specialist turn budgets are preserved and become active again if you switch back to Each agent.'
                 : 'Each agent means selected specialists keep their own turn budgets in addition to the supervisor budget.',
             style: const TextStyle(
-              color: Color(0xFFB8C8EA),
+              color: Color(0xFFCBCED7),
               fontSize: 12,
               height: 1.3,
             ),
@@ -13390,8 +14232,8 @@ class _ImageEditorScreenState extends State<_ImageEditorScreen> {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
       decoration: const BoxDecoration(
-        color: Color(0xFF0D1427),
-        border: Border(top: BorderSide(color: Color(0xFF1F2945))),
+        color: Color(0xFF141519),
+        border: Border(top: BorderSide(color: Color(0xFF27292F))),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -13968,7 +14810,7 @@ class _VoiceStatusCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: const Color(0xFF15203B),
+        color: const Color(0xFF1F2126),
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: color.withValues(alpha: 0.35)),
       ),
@@ -13992,7 +14834,7 @@ class _VoiceStatusCard extends StatelessWidget {
                   subtitle,
                   maxLines: subtitleMaxLines,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Color(0xFF8B97B5)),
+                  style: const TextStyle(color: Color(0xFF939BAD)),
                 ),
               ],
             ),
@@ -14044,9 +14886,9 @@ class _PendingAttachmentTray extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFF15203B),
+        color: const Color(0xFF1F2126),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFF2B395D)),
+        border: Border.all(color: const Color(0xFF353840)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -14056,8 +14898,8 @@ class _PendingAttachmentTray extends StatelessWidget {
               final useStackedHeader = constraints.maxWidth < 320;
               final statusPill = _StatusPill(
                 label: '${attachments.length} selected',
-                backgroundColor: const Color(0xFF1E2944),
-                foregroundColor: const Color(0xFFB8C8EA),
+                backgroundColor: const Color(0xFF26282E),
+                foregroundColor: const Color(0xFFCBCED7),
               );
 
               if (useStackedHeader) {
@@ -14139,7 +14981,7 @@ class _PendingAttachmentTray extends StatelessWidget {
                 videoCount: videoCount,
                 fileCount: fileCount,
               ),
-              style: const TextStyle(color: Color(0xFF8B97B5), height: 1.4),
+              style: const TextStyle(color: Color(0xFF939BAD), height: 1.4),
             ),
           ),
           if (expanded) ...<Widget>[
@@ -14209,20 +15051,20 @@ class _PendingAttachmentRow extends StatelessWidget {
                             ? const Color(0xFF3B1521)
                             : attachment.isVideo
                                 ? const Color(0xFF2E245F)
-                                : const Color(0xFF1E2944),
+                                : const Color(0xFF26282E),
                     foregroundColor: attachment.isImage
                         ? const Color(0xFF9FF0DC)
                         : attachment.isAudio
                             ? const Color(0xFFFFB3B3)
                             : attachment.isVideo
                                 ? const Color(0xFFC9C0FF)
-                                : const Color(0xFFB8C8EA),
+                                : const Color(0xFFCBCED7),
                   ),
                   if (attachment.sizeBytes != null) ...<Widget>[
                     Text(
                       _formatAttachmentSize(attachment.sizeBytes!),
                       style: const TextStyle(
-                        color: Color(0xFF8B97B5),
+                        color: Color(0xFF939BAD),
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
                       ),
@@ -14406,7 +15248,7 @@ class _CodexOptionTray extends StatelessWidget {
       if (options.profile?.trim().isNotEmpty ?? false)
         _StatusPill(
           label: 'profile:${options.profile!.trim()}',
-          backgroundColor: const Color(0xFF233151),
+          backgroundColor: const Color(0xFF2D3037),
           foregroundColor: const Color(0xFFB7C8F8),
         ),
       if (options.searchEnabled)
@@ -14432,8 +15274,8 @@ class _CodexOptionTray extends StatelessWidget {
       if (options.configOverrides.isNotEmpty)
         const _StatusPill(
           label: 'config',
-          backgroundColor: Color(0xFF2B364D),
-          foregroundColor: Color(0xFFB8C3DA),
+          backgroundColor: Color(0xFF2E3239),
+          foregroundColor: Color(0xFFC1C6D1),
         ),
     ];
 
@@ -14709,9 +15551,9 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
                     margin: const EdgeInsets.only(bottom: 12),
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF15203B),
+                      color: const Color(0xFF1F2126),
                       borderRadius: BorderRadius.circular(18),
-                      border: Border.all(color: const Color(0xFF24355F)),
+                      border: Border.all(color: const Color(0xFF33363E)),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -14741,13 +15583,13 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
                         Text(
                           'Command: ${status.command}'
                           '${status.version == null ? '' : ' · ${status.version}'}',
-                          style: const TextStyle(color: Color(0xFF8B97B5)),
+                          style: const TextStyle(color: Color(0xFF939BAD)),
                         ),
                         if (status.usageSummary != null) ...<Widget>[
                           const SizedBox(height: 8),
                           Text(
                             status.usageSummary!,
-                            style: const TextStyle(color: Color(0xFF8B97B5)),
+                            style: const TextStyle(color: Color(0xFF939BAD)),
                           ),
                         ],
                       ],
@@ -14786,14 +15628,14 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
                   const SizedBox(height: 4),
                   Text(
                     'Recommended for this agent: ${recommendedSkillIds.join(', ')}',
-                    style: const TextStyle(color: Color(0xFF8B97B5)),
+                    style: const TextStyle(color: Color(0xFF939BAD)),
                   ),
                 ],
                 const SizedBox(height: 8),
                 if (tooling == null || tooling.skills.isEmpty)
                   const Text(
                     'No Codex skills were discovered for this backend user.',
-                    style: TextStyle(color: Color(0xFF8B97B5)),
+                    style: TextStyle(color: Color(0xFF939BAD)),
                   )
                 else
                   Wrap(
@@ -14829,7 +15671,7 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
                 if (tooling == null || tooling.mcpApps.isEmpty)
                   const Text(
                     'No repo MCP apps were discovered for this backend.',
-                    style: TextStyle(color: Color(0xFF8B97B5)),
+                    style: TextStyle(color: Color(0xFF939BAD)),
                   )
                 else
                   Column(
@@ -14866,7 +15708,7 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
                     tooling?.mcpRawOutput?.trim().isNotEmpty == true
                         ? tooling!.mcpRawOutput!
                         : 'No MCP servers were reported by `codex mcp list`.',
-                    style: const TextStyle(color: Color(0xFF8B97B5)),
+                    style: const TextStyle(color: Color(0xFF939BAD)),
                   )
                 else
                   Wrap(
@@ -15013,7 +15855,7 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFF111C34),
+        color: const Color(0xFF1B1C21),
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: installStateStyle.$2),
       ),
@@ -15036,7 +15878,7 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
                     const SizedBox(height: 4),
                     Text(
                       app.description,
-                      style: const TextStyle(color: Color(0xFFB9C5E3)),
+                      style: const TextStyle(color: Color(0xFFC7CBD5)),
                     ),
                   ],
                 ),
@@ -15056,7 +15898,7 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
             children: <Widget>[
               _StatusPill(
                 label: 'server:${app.recommendedServerId}',
-                backgroundColor: const Color(0xFF24355F),
+                backgroundColor: const Color(0xFF33363E),
                 foregroundColor: const Color(0xFFDCE5FF),
               ),
               _StatusPill(
@@ -15086,8 +15928,8 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
               ...app.tags.map(
                 (tag) => _StatusPill(
                   label: tag,
-                  backgroundColor: const Color(0xFF2B364D),
-                  foregroundColor: const Color(0xFFB8C3DA),
+                  backgroundColor: const Color(0xFF2E3239),
+                  foregroundColor: const Color(0xFFC1C6D1),
                 ),
               ),
             ],
@@ -15095,7 +15937,7 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
           const SizedBox(height: 10),
           Text(
             'Launch: $launchSummary',
-            style: const TextStyle(color: Color(0xFF8B97B5)),
+            style: const TextStyle(color: Color(0xFF939BAD)),
           ),
           if (validationError != null &&
               validationError.isNotEmpty) ...<Widget>[
@@ -15157,7 +15999,7 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
             const SizedBox(height: 12),
             Text(
               'Tools: ${app.tools.map((tool) => tool.name).join(', ')}',
-              style: const TextStyle(color: Color(0xFF8B97B5)),
+              style: const TextStyle(color: Color(0xFF939BAD)),
             ),
           ],
           const SizedBox(height: 12),
@@ -15207,7 +16049,7 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
                 width: 360,
                 child: Text(
                   installHelpText,
-                  style: const TextStyle(color: Color(0xFF8B97B5)),
+                  style: const TextStyle(color: Color(0xFF939BAD)),
                 ),
               ),
             ],
@@ -15254,7 +16096,7 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
           const Color(0xFF5A1F28),
           const Color(0xFFFFC4CB),
         ),
-      _ => ('missing', const Color(0xFF2B364D), const Color(0xFFB8C3DA)),
+      _ => ('missing', const Color(0xFF2E3239), const Color(0xFFC1C6D1)),
     };
   }
 
@@ -15292,9 +16134,9 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
         width: double.infinity,
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: const Color(0xFF0C152B),
+          color: const Color(0xFF15171A),
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: const Color(0xFF203154)),
+          border: Border.all(color: const Color(0xFF2D3037)),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -15323,12 +16165,12 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
                   if (languages.isNotEmpty)
                     Text(
                       languages,
-                      style: const TextStyle(color: Color(0xFF8B97B5)),
+                      style: const TextStyle(color: Color(0xFF939BAD)),
                     ),
                   if (signatures.isNotEmpty)
                     Text(
                       signatures,
-                      style: const TextStyle(color: Color(0xFF8B97B5)),
+                      style: const TextStyle(color: Color(0xFF939BAD)),
                     ),
                 ],
               ),
@@ -15343,9 +16185,9 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFF0C152B),
+        color: const Color(0xFF15171A),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFF203154)),
+        border: Border.all(color: const Color(0xFF2D3037)),
       ),
       child: SelectableText(
         pretty,
@@ -15493,9 +16335,9 @@ class _McpAppHostScreenState extends State<_McpAppHostScreen> {
     );
 
     return Scaffold(
-      backgroundColor: const Color(0xFF08111F),
+      backgroundColor: const Color(0xFF0F1012),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF0E1730),
+        backgroundColor: const Color(0xFF181A1D),
         foregroundColor: Colors.white,
         title: Text(app.name),
         leading: IconButton(
@@ -15544,7 +16386,7 @@ class _McpAppHostScreenState extends State<_McpAppHostScreen> {
             const SizedBox(height: 8),
             const Text(
               'This MCP app is open full-screen. Close it to return to chat.',
-              style: TextStyle(color: Color(0xFF8B97B5)),
+              style: TextStyle(color: Color(0xFF939BAD)),
             ),
             const SizedBox(height: 16),
             Wrap(
@@ -15553,7 +16395,7 @@ class _McpAppHostScreenState extends State<_McpAppHostScreen> {
               children: <Widget>[
                 _StatusPill(
                   label: installState,
-                  backgroundColor: const Color(0xFF24355F),
+                  backgroundColor: const Color(0xFF33363E),
                   foregroundColor: const Color(0xFFDCE5FF),
                 ),
                 _StatusPill(
@@ -15564,8 +16406,8 @@ class _McpAppHostScreenState extends State<_McpAppHostScreen> {
                 ...app.tags.map(
                   (tag) => _StatusPill(
                     label: tag,
-                    backgroundColor: const Color(0xFF2B364D),
-                    foregroundColor: const Color(0xFFB8C3DA),
+                    backgroundColor: const Color(0xFF2E3239),
+                    foregroundColor: const Color(0xFFC1C6D1),
                   ),
                 ),
               ],
@@ -15630,9 +16472,9 @@ class _McpAppHostScreenState extends State<_McpAppHostScreen> {
                 width: double.infinity,
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF0C152B),
+                  color: const Color(0xFF15171A),
                   borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: const Color(0xFF203154)),
+                  border: Border.all(color: const Color(0xFF2D3037)),
                 ),
                 child: SelectableText(
                   _prettyMcpPreviewJson(preview?.result),
@@ -15655,26 +16497,26 @@ class _McpAppHostScreenState extends State<_McpAppHostScreen> {
               width: double.infinity,
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: const Color(0xFF111C34),
+                color: const Color(0xFF1B1C21),
                 borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: const Color(0xFF203154)),
+                border: Border.all(color: const Color(0xFF2D3037)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
                   Text(
                     'Tools: ${app.tools.isEmpty ? "none" : app.tools.map((tool) => tool.name).join(", ")}',
-                    style: const TextStyle(color: Color(0xFFB9C5E3)),
+                    style: const TextStyle(color: Color(0xFFC7CBD5)),
                   ),
                   const SizedBox(height: 8),
                   Text(
                     'Resources: ${app.resources.isEmpty ? "none" : app.resources.map((resource) => resource.name).join(", ")}',
-                    style: const TextStyle(color: Color(0xFFB9C5E3)),
+                    style: const TextStyle(color: Color(0xFFC7CBD5)),
                   ),
                   const SizedBox(height: 8),
                   Text(
                     'Prompts: ${app.prompts.isEmpty ? "none" : app.prompts.map((prompt) => prompt.name).join(", ")}',
-                    style: const TextStyle(color: Color(0xFFB9C5E3)),
+                    style: const TextStyle(color: Color(0xFFC7CBD5)),
                   ),
                 ],
               ),
@@ -15772,11 +16614,11 @@ class _McpProjectPreviewCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFF111C34),
+        color: const Color(0xFF1B1C21),
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
           color:
-              highlighted ? const Color(0xFF55D6BE) : const Color(0xFF203154),
+              highlighted ? const Color(0xFF55D6BE) : const Color(0xFF2D3037),
           width: highlighted ? 2 : 1,
         ),
       ),
@@ -15797,7 +16639,7 @@ class _McpProjectPreviewCard extends StatelessWidget {
           ),
           if (path.isNotEmpty) ...<Widget>[
             const SizedBox(height: 6),
-            Text(path, style: const TextStyle(color: Color(0xFF8B97B5))),
+            Text(path, style: const TextStyle(color: Color(0xFF939BAD))),
           ],
           if (languages.isNotEmpty) ...<Widget>[
             const SizedBox(height: 10),
@@ -15805,11 +16647,11 @@ class _McpProjectPreviewCard extends StatelessWidget {
           ],
           if (signatures.isNotEmpty) ...<Widget>[
             const SizedBox(height: 8),
-            Text(signatures, style: const TextStyle(color: Color(0xFF8B97B5))),
+            Text(signatures, style: const TextStyle(color: Color(0xFF939BAD))),
           ],
           if (readme != null && readme.isNotEmpty) ...<Widget>[
             const SizedBox(height: 12),
-            Text(readme, style: const TextStyle(color: Color(0xFFB9C5E3))),
+            Text(readme, style: const TextStyle(color: Color(0xFFC7CBD5))),
           ],
         ],
       ),
@@ -15878,9 +16720,9 @@ class _ChatDaySeparator extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           decoration: BoxDecoration(
-            color: const Color(0xFF16213C),
+            color: const Color(0xFF202227),
             borderRadius: BorderRadius.circular(999),
-            border: Border.all(color: const Color(0xFF23304F)),
+            border: Border.all(color: const Color(0xFF2C2F36)),
           ),
           child: Text(
             label,
@@ -15888,6 +16730,72 @@ class _ChatDaySeparator extends StatelessWidget {
               color: Color(0xFFDCE5FF),
               fontSize: 12,
               fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+
+/// Draggable border of the persistent sidebar (double click resets it).
+class _SidebarResizeHandle extends StatefulWidget {
+  const _SidebarResizeHandle({
+    required this.active,
+    required this.onDragStart,
+    required this.onDrag,
+    required this.onDragEnd,
+    required this.onReset,
+  });
+
+  final bool active;
+  final VoidCallback onDragStart;
+
+  /// Total horizontal travel since the drag started.
+  final ValueChanged<double> onDrag;
+  final VoidCallback onDragEnd;
+  final VoidCallback onReset;
+
+  @override
+  State<_SidebarResizeHandle> createState() => _SidebarResizeHandleState();
+}
+
+class _SidebarResizeHandleState extends State<_SidebarResizeHandle> {
+  bool _hover = false;
+  double _startX = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final highlight = _hover || widget.active;
+    return Semantics(
+      label: 'Cambiar el ancho de la barra lateral',
+      child: MouseRegion(
+        cursor: SystemMouseCursors.resizeColumn,
+        onEnter: (_) => setState(() => _hover = true),
+        onExit: (_) => setState(() => _hover = false),
+        child: GestureDetector(
+          key: const ValueKey('sidebar-resize-handle'),
+          behavior: HitTestBehavior.opaque,
+          dragStartBehavior: DragStartBehavior.down,
+          onHorizontalDragDown: (details) {
+            _startX = details.globalPosition.dx;
+            widget.onDragStart();
+          },
+          onHorizontalDragUpdate: (details) =>
+              widget.onDrag(details.globalPosition.dx - _startX),
+          onHorizontalDragEnd: (_) => widget.onDragEnd(),
+          onDoubleTap: widget.onReset,
+          child: SizedBox(
+            width: 8,
+            child: Center(
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 120),
+                width: highlight ? 3 : 1,
+                color: highlight
+                    ? Theme.of(context).colorScheme.primary.withValues(alpha: .7)
+                    : AppPalette.border,
+              ),
             ),
           ),
         ),

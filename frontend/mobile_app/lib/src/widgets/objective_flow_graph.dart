@@ -72,7 +72,7 @@ class ObjectiveFlowGraph extends StatelessWidget {
             attention.needsDecision
                 ? 'Abrí el impedimento para atenderlo.'
                 : 'Se actualiza con la próxima consulta. No significa que la app esté terminada.',
-            const Color(0xFFAAB8D0),
+            const Color(0xFFB4B9C6),
             attention.needsDecision ? onAttention : null),
       LayoutBuilder(builder: (context, constraints) {
         final capacity = constraints.maxWidth >= 850
@@ -127,13 +127,13 @@ class ObjectiveFlowGraph extends StatelessWidget {
             Icons.hourglass_bottom,
             'Trabajo pendiente',
             '${units.where((u) => u['state'] != 'accepted' && !groups.containsKey(u['id'])).length} etapas fuera de ejecución. Tocá para ver dependencias; no es un orden confirmado.',
-            const Color(0xFFAAB8D0),
+            const Color(0xFFB4B9C6),
             () => _pending(context, tasks, units, groups.keys.toSet())),
       ],
       const SizedBox(height: 12),
       const Text(
           'Las ramas son simultáneas. Tocá una tarea para ver responsables y dependencias.',
-          style: TextStyle(color: Color(0xFFAAB8D0), fontSize: 12)),
+          style: TextStyle(color: Color(0xFFB4B9C6), fontSize: 12)),
     ]);
   }
 
@@ -241,7 +241,7 @@ class ObjectiveFlowGraph extends StatelessWidget {
           String subtitle, Color color, VoidCallback? onTap) =>
       Card(
           margin: EdgeInsets.zero,
-          color: const Color(0xFF152139),
+          color: const Color(0xFF1E2025),
           shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(20),
               side: BorderSide(color: color.withValues(alpha: .45))),
@@ -267,7 +267,7 @@ class ObjectiveFlowGraph extends StatelessWidget {
                         ]),
                         const SizedBox(height: 10),
                         Text(subtitle,
-                            style: const TextStyle(color: Color(0xFFCAD5E7))),
+                            style: const TextStyle(color: Color(0xFFD3D6DE))),
                       ]))));
 }
 

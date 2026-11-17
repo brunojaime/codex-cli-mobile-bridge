@@ -36,7 +36,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.widgetWithText(FilledButton, 'New Chat'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Nuevo chat').first);
       await tester.pumpAndSettle();
 
       expect(find.text('Choose Existing Project'), findsOneWidget);
@@ -71,7 +71,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.widgetWithText(FilledButton, 'New Chat'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Nuevo chat').first);
       await tester.pumpAndSettle();
 
       expect(find.text('Choose Existing Project'), findsOneWidget);
@@ -119,7 +119,9 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byTooltip('Choose project for new chat'));
+      await tester.tap(find.byTooltip('Más acciones'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Choose project for new chat').last);
       await tester.pumpAndSettle();
 
       expect(find.text('Choose Existing Project'), findsOneWidget);
@@ -164,7 +166,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(find.widgetWithText(FilledButton, 'New Chat'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Nuevo chat').first);
       await tester.pumpAndSettle();
 
       expect(find.text('Enable chat summary'), findsOneWidget);
