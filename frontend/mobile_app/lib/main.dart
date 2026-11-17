@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter/foundation.dart';
 import 'package:codex_app_updater/codex_app_updater.dart';
 import 'package:codex_bridge_workbench/codex_bridge_workbench.dart';
@@ -8,6 +9,7 @@ import 'src/screens/chat_screen.dart';
 import 'src/models/codex_tooling.dart';
 import 'src/services/chat_notification_service.dart';
 import 'src/services/api_client.dart';
+import 'src/services/runtime_app_configuration.dart';
 
 const _configuredApiBaseUrl = String.fromEnvironment(
   'API_BASE_URL',
@@ -45,11 +47,22 @@ const _configuredBridgeUpdaterChannel = String.fromEnvironment(
 const _fallbackAppVersion = '1.0.0';
 const _fallbackAppBuild = 41;
 
+Map<String, String> _runtimeAppConfiguration = const {};
+String get _bridgeAppLabel =>
+    _runtimeAppConfiguration['app_label'] ?? _configuredBridgeAppLabel;
+String get _bridgeSourceApp =>
+    _runtimeAppConfiguration['source_app'] ?? _configuredBridgeSourceApp;
+String get _bridgeUpdaterChannel =>
+    _runtimeAppConfiguration['updater_channel'] ??
+    _configuredBridgeUpdaterChannel;
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final apiBaseUrl = _configuredApiBaseUrl.isNotEmpty
-      ? _configuredApiBaseUrl
-      : _defaultApiBaseUrl();
+  _runtimeAppConfiguration = await loadRuntimeAppConfiguration();
+  final apiBaseUrl = _runtimeAppConfiguration['api_base_url'] ??
+      (_configuredApiBaseUrl.isNotEmpty
+          ? _configuredApiBaseUrl
+          : _defaultApiBaseUrl());
   final packageInfo = await PackageInfo.fromPlatform();
   final notificationService = createChatNotificationService();
   await notificationService.initialize();
@@ -72,7 +85,7 @@ String _defaultApiBaseUrl() {
   if (kIsWeb) {
     final host = Uri.base.host;
     if (host == 'localhost' || host == '127.0.0.1') {
-      return 'http://localhost:8000';
+      return desktopApiBaseUrl(Uri.base) ?? 'http://localhost:8000';
     }
     return Uri.base.origin;
   }
@@ -169,8 +182,11 @@ class _CodexMobileAppState extends State<CodexMobileApp> {
     );
 
     return MaterialApp(
-      title: _configuredBridgeAppLabel,
+      title: _bridgeAppLabel,
       debugShowCheckedModeBanner: false,
+      locale: const Locale('es'),
+      supportedLocales: const <Locale>[Locale('es'), Locale('en')],
+      localizationsDelegates: GlobalMaterialLocalizations.delegates,
       theme: ThemeData(
         useMaterial3: true,
         brightness: Brightness.dark,
@@ -210,11 +226,11 @@ class _CodexMobileAppState extends State<CodexMobileApp> {
           sddActionSubmitter: _submitBridgeSddCodexAction,
           child: CodexAppUpdater(
             config: CodexAppUpdaterConfig(
-              sourceApp: _configuredBridgeSourceApp,
+              sourceApp: _bridgeSourceApp,
               bridgeUrl: _activeBridgeUrl,
               currentVersion: widget.currentVersion,
               currentBuild: widget.currentBuild,
-              channel: _configuredBridgeUpdaterChannel,
+              channel: _bridgeUpdaterChannel,
               enabled: widget.appUpdaterEnabled,
               autoInstallAvailableUpdates: _configuredAppUpdaterAutoInstall,
             ),
@@ -229,9 +245,9 @@ class _CodexMobileAppState extends State<CodexMobileApp> {
 }
 
 bool _isDevAppBuild() {
-  return _configuredBridgeUpdaterChannel.toLowerCase() == 'dev' ||
-      _configuredBridgeSourceApp.toLowerCase().endsWith('-dev') ||
-      _configuredBridgeAppLabel.toLowerCase().contains('dev');
+  return _bridgeUpdaterChannel.toLowerCase() == 'dev' ||
+      _bridgeSourceApp.toLowerCase().endsWith('-dev') ||
+      _bridgeAppLabel.toLowerCase().contains('dev');
 }
 
 Future<SddFeedbackSubmissionResult> _submitBridgeSddFeedback(
@@ -239,8 +255,8 @@ Future<SddFeedbackSubmissionResult> _submitBridgeSddFeedback(
   SddFeedbackDraft draft,
 ) async {
   final item = await ApiClient(baseUrl: bridgeUrl).createFeedbackQueueItem(
-    sourceApp: _configuredBridgeSourceApp,
-    sourceDisplayName: _configuredBridgeAppLabel,
+    sourceApp: _bridgeSourceApp,
+    sourceDisplayName: _bridgeAppLabel,
     comment: draft.comment,
     feedbackKind: draft.target.feedbackKind,
     contextMetadata: draft.target.toContextMetadata(),

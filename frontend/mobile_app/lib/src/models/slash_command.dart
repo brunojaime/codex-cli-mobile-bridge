@@ -53,6 +53,7 @@ class SlashCommandContext {
     this.isProdEnvironment = false,
     this.bridgeEnvironment,
     this.devHandoffAvailable = false,
+    this.skills = const <SlashSkill>[],
   });
 
   final bool isProjectFactoryIntake;
@@ -63,6 +64,7 @@ class SlashCommandContext {
   final bool isProdEnvironment;
   final String? bridgeEnvironment;
   final bool devHandoffAvailable;
+  final List<SlashSkill> skills;
 
   String? get normalizedBridgeEnvironment {
     final normalized = bridgeEnvironment?.trim().toLowerCase();
@@ -73,6 +75,40 @@ class SlashCommandContext {
 
   bool get isExplicitProdBridgeEnvironment =>
       normalizedBridgeEnvironment == 'prod';
+}
+
+class SlashSkill {
+  const SlashSkill({
+    required this.id,
+    required this.name,
+    this.description = '',
+    this.selected = false,
+  });
+
+  final String id;
+  final String name;
+  final String description;
+  final bool selected;
+}
+
+class SkillSlashCommandProvider extends SlashCommandProvider {
+  const SkillSlashCommandProvider();
+
+  @override
+  Iterable<SlashCommand> commands(SlashCommandContext context) {
+    return context.skills.where((skill) => skill.name.trim().isNotEmpty).map(
+          (skill) => SlashCommand(
+            id: 'skill:${skill.id}',
+            slash: '/${skill.name.trim().replaceAll(RegExp(r'\s+'), '-')}',
+            title: skill.selected ? 'Skill · activa' : 'Skill',
+            description: skill.description.isEmpty
+                ? 'Usar esta skill en el próximo mensaje.'
+                : skill.description,
+            scope: 'skill',
+            actionKind: SlashCommandActionKind.callback,
+          ),
+        );
+  }
 }
 
 abstract class SlashCommandProvider {
@@ -270,14 +306,42 @@ class GlobalSlashCommandProvider extends SlashCommandProvider {
         actionKind: SlashCommandActionKind.disabled,
         disabledReason: 'Goal management is unavailable in this build.',
       ),
-      const SlashCommand(
+      SlashCommand(
         id: 'model',
         slash: '/model',
-        title: 'Model',
-        description: 'Model selection is not exposed in this composer.',
+        title: 'Modelo',
+        description: 'Ver y cambiar el modelo y el agente de este chat.',
         scope: 'global',
-        actionKind: SlashCommandActionKind.disabled,
-        disabledReason: 'Model selection is unavailable in this composer.',
+        actionKind: SlashCommandActionKind.callback,
+        disabledReason: backendDisabledReason,
+      ),
+      SlashCommand(
+        id: 'usage',
+        slash: '/usage',
+        title: 'Uso',
+        description: 'Uso del plan, límites y cuándo se renuevan.',
+        scope: 'global',
+        aliases: const <String>['/cost', '/limits'],
+        actionKind: SlashCommandActionKind.callback,
+        disabledReason: backendDisabledReason,
+      ),
+      SlashCommand(
+        id: 'new',
+        slash: '/new',
+        title: 'Nuevo chat',
+        description: 'Empezar un chat nuevo eligiendo el proyecto.',
+        scope: 'global',
+        aliases: const <String>['/clear'],
+        actionKind: SlashCommandActionKind.callback,
+        disabledReason: backendDisabledReason,
+      ),
+      const SlashCommand(
+        id: 'help',
+        slash: '/help',
+        title: 'Ayuda',
+        description: 'Ver todos los comandos y atajos de teclado.',
+        scope: 'global',
+        actionKind: SlashCommandActionKind.callback,
       ),
       const SlashCommand(
         id: 'permissions',
@@ -319,6 +383,7 @@ const List<SlashCommandProvider> defaultSlashCommandProviders =
     <SlashCommandProvider>[
   GlobalSlashCommandProvider(),
   NewProjectSlashCommandProvider(),
+  SkillSlashCommandProvider(),
 ];
 
 List<SlashCommand> buildSlashCommands(
@@ -334,10 +399,31 @@ List<SlashCommand> filterSlashCommands(
   Iterable<SlashCommand> commands,
   String query,
 ) {
-  final normalized = query.trim();
-  return commands
-      .where((command) => normalized.isEmpty || command.matches(normalized))
-      .toList(growable: false);
+  final normalized = query.trim().toLowerCase().replaceFirst(RegExp(r'^/'), '');
+  int score(SlashCommand command) {
+    if (normalized.isEmpty) return 0;
+    final slash = command.slash.toLowerCase().replaceFirst(RegExp(r'^/'), '');
+    final aliases = command.aliases
+        .map((alias) => alias.toLowerCase().replaceFirst(RegExp(r'^/'), ''));
+    if (slash == normalized) return 0;
+    if (slash.startsWith(normalized)) return 1;
+    if (aliases.any((alias) => alias.startsWith(normalized))) return 2;
+    if (slash.contains(normalized)) return 3;
+    if (command.title.toLowerCase().startsWith(normalized)) return 4;
+    if (command.matches(normalized)) return 5;
+    return -1;
+  }
+
+  final ranked = <(int, int, SlashCommand)>[];
+  var order = 0;
+  for (final command in commands) {
+    final value = score(command);
+    if (value < 0) continue;
+    // Enabled commands first inside each relevance bucket.
+    ranked.add((value * 2 + (command.isEnabled ? 0 : 1), order++, command));
+  }
+  ranked.sort((a, b) => a.$1 != b.$1 ? a.$1.compareTo(b.$1) : a.$2.compareTo(b.$2));
+  return ranked.map((entry) => entry.$3).toList(growable: false);
 }
 
 String? slashQueryForComposerText(String text, {required bool selectionValid}) {

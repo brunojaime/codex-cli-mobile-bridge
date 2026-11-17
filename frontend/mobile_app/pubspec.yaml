@@ -7,6 +7,8 @@ environment:
   sdk: ">=3.4.0 <4.0.0"
 
 dependencies:
+  flutter_localizations:
+    sdk: flutter
   audioplayers: ^6.5.0
   codex_app_updater:
     path: ../../packages/codex_app_updater

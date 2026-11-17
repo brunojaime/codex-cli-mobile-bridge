@@ -2142,6 +2142,7 @@ class MessageService:
             provider_session_id=snapshot.provider_session_id,
             phase=snapshot.phase,
             latest_activity=snapshot.latest_activity,
+            activities=snapshot.activities,
         )
         self._repository.save_job(job)
         if job.status.is_terminal:
@@ -3805,6 +3806,7 @@ class MessageService:
             error=snapshot.error,
             phase=snapshot.phase,
             latest_activity=snapshot.latest_activity,
+            activities=snapshot.activities,
         )
         message.sync(
             status=ChatMessageStatus.PENDING,

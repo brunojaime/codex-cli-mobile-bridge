@@ -73,8 +73,8 @@ void main() {
         expect(field().obscureText, isTrue);
         expect(field().controller.text, isEmpty);
       }
-      await tester.ensureVisible(find.text('Cancel'));
-      await tester.tap(find.text('Cancel'));
+      await tester.ensureVisible(find.text('Cancelar'));
+      await tester.tap(find.text('Cancelar'));
       await tester.pumpAndSettle();
       await open();
       expect(field().obscureText, isTrue);
@@ -288,7 +288,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(confirm
           ? find.byKey(const ValueKey<String>('confirm-delete-secret'))
-          : find.text('Cancel'));
+          : find.text('Cancelar'));
       await tester.pumpAndSettle();
       expect(names.contains('RENAMED'), !confirm);
     }
@@ -326,8 +326,8 @@ void main() {
     expect(input.controller.text, 'private-input');
     expect(find.textContaining('private-server-value'), findsNothing);
     expect(find.textContaining('Could not save the secret'), findsOneWidget);
-    await tester.ensureVisible(find.text('Cancel'));
-    await tester.tap(find.text('Cancel'));
+    await tester.ensureVisible(find.text('Cancelar'));
+    await tester.tap(find.text('Cancelar'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('TOKEN'));
     await tester.pumpAndSettle();

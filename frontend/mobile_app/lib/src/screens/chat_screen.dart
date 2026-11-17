@@ -488,6 +488,7 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final ServerProfileStore _serverProfileStore = ServerProfileStore();
   final TextEditingController _textController = TextEditingController();
+  final FocusNode _sessionSearchFocusNode = FocusNode(debugLabel: 'session-search');
   final ScrollController _scrollController = ScrollController();
   late final ReplyPlaybackService _replyPlaybackService;
   late ChatController _chatController;
@@ -503,6 +504,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   String? _serverErrorText;
   String? _codexToolingErrorText;
   bool _sidebarExpanded = false;
+  bool _sidebarCollapsed = false;
+  bool _persistentSidebarActive = false;
+  BuildContext? _scaffoldShortcutContext;
   bool _showArchivedChatsInSidebar = false;
   String _sessionSearch = '';
   Timer? _sessionSearchDebounce;
@@ -612,11 +616,24 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   String? _filteredMessagesViewErrorText;
   _ChatBodyView _chatBodyView = _ChatBodyView.conversation;
   static const double _compactAppBarBreakpoint = 640;
+  static const double _persistentSidebarBreakpoint = 1100;
+
+  /// Closes the sidebar only when it is shown as a modal drawer.
+  void _closeSidebarIfDrawer(BuildContext context) {
+    if (_persistentSidebarActive) return;
+    Navigator.of(context).pop();
+  }
   static const int _sessionGroupPageSize = 5;
 
   @override
   void initState() {
     super.initState();
+    HardwareKeyboard.instance.addHandler(_handleGlobalShortcut);
+    if (widget.enableServerBootstrap) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _chatController.startLiveSync(),
+      );
+    }
     WidgetsBinding.instance.addObserver(this);
     _replyPlaybackService =
         widget.replyPlaybackServiceOverride ?? ReplyPlaybackService();
@@ -661,6 +678,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleGlobalShortcut);
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_chatNotificationTaps?.cancel());
     _notificationNavigation?.setVisibleChat(null, null);
@@ -675,6 +693,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       _chatController.dispose();
     }
     _textController.dispose();
+    _sessionSearchFocusNode.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -689,6 +708,10 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       unawaited(_markCurrentSessionAsRead());
       _chatController.handleAppResumed();
+      if (widget.enableServerBootstrap) _chatController.startLiveSync();
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      _chatController.stopLiveSync();
     }
   }
 
@@ -730,63 +753,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         final appBarHeight = hasEnvironmentBadge
             ? (isCompactAppBar ? 94.0 : 104.0)
             : kToolbarHeight;
-        return Scaffold(
-          appBar: AppBar(
-            toolbarHeight: appBarHeight,
-            titleSpacing: isCompactAppBar ? 4 : null,
-            leading: Builder(
-              builder: (context) {
-                return IconButton(
-                  onPressed: () => Scaffold.of(context).openDrawer(),
-                  tooltip: 'Projects',
-                  icon: Stack(
-                    clipBehavior: Clip.none,
-                    children: <Widget>[
-                      Icon(
-                        Icons.menu,
-                        color: totalActivePinnedProjectsCount > 0
-                            ? const Color(0xFFFFC857)
-                            : null,
-                      ),
-                      if (totalActivePinnedProjectsCount > 0)
-                        Positioned(
-                          left: -10,
-                          top: -6,
-                          child: _MenuStatusBadge(
-                            label: totalActivePinnedJobsCount.toString(),
-                            backgroundColor: const Color(0xFFFFC857),
-                            foregroundColor: const Color(0xFF2A1600),
-                          ),
-                        ),
-                      if (totalUnreadChatsCount > 0)
-                        Positioned(
-                          right: -8,
-                          top: -6,
-                          child: _MenuStatusBadge(
-                            label: totalUnreadChatsCount.toString(),
-                            backgroundColor: const Color(0xFF55D6BE),
-                            foregroundColor: const Color(0xFF07131D),
-                          ),
-                        ),
-                    ],
-                  ),
-                );
-              },
-            ),
-            title: _buildAppBarTitle(isCompactAppBar: isCompactAppBar),
-            actions: _buildAppBarActions(isCompactAppBar: isCompactAppBar),
-          ),
-          drawer: Drawer(
-            width: drawerWidth,
-            backgroundColor: const Color(0xFF101931),
-            child: SafeArea(
+        final usePersistentSidebar = screenWidth >= _persistentSidebarBreakpoint;
+        _persistentSidebarActive = usePersistentSidebar;
+        final Widget sidebarContent = SafeArea(
               child: Column(
                 children: <Widget>[
                   ListTile(
-                    title: const Text('Projects'),
+                    title: const Text('Proyectos'),
                     subtitle: InkWell(
                       onTap: () async {
-                        Navigator.of(context).pop();
+                        _closeSidebarIfDrawer(context);
                         await _openObjectiveTeam();
                       },
                       child: const Padding(padding: EdgeInsets.symmetric(vertical: 8),
@@ -799,7 +775,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           tooltip: 'Equipo por objetivos',
                           icon: const Icon(Icons.hub_outlined),
                           onPressed: () async {
-                            Navigator.of(context).pop();
+                            _closeSidebarIfDrawer(context);
                             await _openObjectiveTeam();
                           },
                         ),
@@ -820,7 +796,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           onPressed: () async {
                             await _openWorkspacePicker();
                             if (context.mounted) {
-                              Navigator.of(context).pop();
+                              _closeSidebarIfDrawer(context);
                             }
                           },
                           icon: const Icon(Icons.add),
@@ -836,7 +812,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                       children: <Widget>[
                         Expanded(
                           child: ChoiceChip(
-                            label: const Text('Active'),
+                            label: const Text('Activos'),
                             selected: !_showArchivedChatsInSidebar,
                             onSelected: (selected) {
                               if (!selected || !_showArchivedChatsInSidebar) {
@@ -861,7 +837,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                         const SizedBox(width: 10),
                         Expanded(
                           child: ChoiceChip(
-                            label: const Text('Archived'),
+                            label: const Text('Archivados'),
                             selected: _showArchivedChatsInSidebar,
                             onSelected: (selected) {
                               if (!selected || _showArchivedChatsInSidebar) {
@@ -890,8 +866,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
                     child: TextField(
                       key: const ValueKey('session-search'),
+                      focusNode: _sessionSearchFocusNode,
                       decoration: const InputDecoration(
-                        hintText: 'Search chats by title or project',
+                        hintText: 'Buscar chats (Ctrl+K)',
                         prefixIcon: Icon(Icons.search), isDense: true),
                       onChanged: (value) {
                         _sessionSearch = value;
@@ -908,12 +885,12 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                         ? Center(
                             child: Text(
                               _sidebarWorkspaces.isEmpty
-                                  ? 'No projects pinned yet'
+                                  ? 'Todavía no hay proyectos fijados'
                                   : _sessionSearch.trim().isNotEmpty
-                                      ? 'No matching chats'
+                                      ? 'Ningún chat coincide'
                                       : _showArchivedChatsInSidebar
-                                      ? 'No archived chats yet'
-                                      : 'No chats yet',
+                                      ? 'No hay chats archivados'
+                                      : 'Todavía no hay chats',
                               style: const TextStyle(color: Color(0xFF8B97B5)),
                             ),
                           )
@@ -921,9 +898,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   ),
                 ],
               ),
-            ),
-          ),
-          body: SafeArea(
+            );
+        final Widget mainBody = SafeArea(
             bottom: false,
             child: Column(
               children: <Widget>[
@@ -1584,11 +1560,24 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   onDraftChanged: _draftUpdaterForCurrentSession(),
                   onBackgroundDraftChanged: _draftUpdaterForCurrentSession(onlyIfUnchanged: true),
                   onSend: _handleSend,
+                  activeJobCount: _chatController.selectedSessionId == null ? 0 : _chatController.activeJobCountForSession(_chatController.selectedSessionId!),
+                  queuedJobCount: _chatController.selectedSessionId == null ? 0 : _chatController.queuedJobCountForSession(_chatController.selectedSessionId!),
                   onSendAudio: _audioSenderForCurrentSession(),
                   onSendAttachments: _attachmentSenderForCurrentSession(),
                   onBeginRecording: _handleBeginRecording,
                   onSlashCommand: _handleSlashCommand,
                   slashCommandContext: SlashCommandContext(
+                    skills: (_activeCodexTooling?.skills ?? const <CodexSkill>[])
+                        .map((skill) => SlashSkill(
+                              id: skill.skillId,
+                              name: skill.name,
+                              description: skill.description,
+                              selected: _currentComposerDraft()
+                                  .codexRunOptions
+                                  .skillIds
+                                  .contains(skill.skillId),
+                            ))
+                        .toList(growable: false),
                     isProjectFactoryIntake: isProjectFactoryIntakeConfiguration(
                       _chatController.currentSession?.agentConfiguration,
                     ),
@@ -1623,6 +1612,100 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   voiceStatusText: _resolveVoiceStatusText(),
                 ),
               ],
+            ),
+          );
+        return CallbackShortcuts(
+          bindings: const <ShortcutActivator, VoidCallback>{},
+          child: Focus(
+            autofocus: true,
+            child: Builder(
+              builder: (context) {
+                _scaffoldShortcutContext = context;
+                return Scaffold(
+          appBar: AppBar(
+            toolbarHeight: appBarHeight,
+            titleSpacing: isCompactAppBar ? 4 : null,
+            leading: Builder(
+              builder: (context) {
+                return IconButton(
+                  onPressed: () {
+                    if (usePersistentSidebar) {
+                      _toggleSidebarCollapsed();
+                      return;
+                    }
+                    Scaffold.of(context).openDrawer();
+                  },
+                  tooltip: usePersistentSidebar
+                      ? (_sidebarCollapsed ? 'Mostrar proyectos' : 'Ocultar proyectos')
+                      : 'Proyectos',
+                  icon: Stack(
+                    clipBehavior: Clip.none,
+                    children: <Widget>[
+                      Icon(
+                        Icons.menu,
+                        color: totalActivePinnedProjectsCount > 0
+                            ? const Color(0xFFFFC857)
+                            : null,
+                      ),
+                      if (totalActivePinnedProjectsCount > 0)
+                        Positioned(
+                          left: -10,
+                          top: -6,
+                          child: _MenuStatusBadge(
+                            label: totalActivePinnedJobsCount.toString(),
+                            backgroundColor: const Color(0xFFFFC857),
+                            foregroundColor: const Color(0xFF2A1600),
+                          ),
+                        ),
+                      if (totalUnreadChatsCount > 0)
+                        Positioned(
+                          right: -8,
+                          top: -6,
+                          child: _MenuStatusBadge(
+                            label: totalUnreadChatsCount.toString(),
+                            backgroundColor: const Color(0xFF55D6BE),
+                            foregroundColor: const Color(0xFF07131D),
+                          ),
+                        ),
+                    ],
+                  ),
+                );
+              },
+            ),
+            title: _buildAppBarTitle(isCompactAppBar: isCompactAppBar),
+            actions: _buildAppBarActions(isCompactAppBar: isCompactAppBar),
+          ),
+          drawer: usePersistentSidebar
+              ? null
+              : Drawer(
+                  width: drawerWidth,
+                  backgroundColor: const Color(0xFF101931),
+                  child: sidebarContent,
+                ),
+          body: usePersistentSidebar
+              ? Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    AnimatedSize(
+                      duration: const Duration(milliseconds: 180),
+                      child: _sidebarCollapsed
+                          ? const SizedBox.shrink()
+                          : SizedBox(
+                              width: _sidebarExpanded ? 440.0 : 320.0,
+                              child: Material(
+                                color: const Color(0xFF101931),
+                                child: sidebarContent,
+                              ),
+                            ),
+                    ),
+                    if (!_sidebarCollapsed)
+                      const VerticalDivider(width: 1, color: Color(0xFF26324A)),
+                    Expanded(child: mainBody),
+                  ],
+                )
+              : mainBody,
+        );
+              },
             ),
           ),
         );
@@ -1681,8 +1764,249 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     return didSend;
   }
 
+  void _toggleSidebarCollapsed() {
+    setState(() => _sidebarCollapsed = !_sidebarCollapsed);
+    unawaited(_serverProfileStore.saveSidebarCollapsed(_sidebarCollapsed));
+  }
+
+  /// Esc stops the newest running job of the open chat, like in the CLI.
+  bool _cancelRunningJobWithEscape() {
+    final session = _chatController.currentSession;
+    if (session == null) return false;
+    if (_textController.text.trimLeft().startsWith('/')) return false;
+    for (final message in session.messages.reversed) {
+      final jobId = message.jobId;
+      if (jobId == null || message.isUser) continue;
+      if (message.isPendingLike) {
+        unawaited(_handleCancelJob(jobId));
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(
+          content: Text('Deteniendo la ejecución…'),
+          duration: Duration(seconds: 2),
+        ));
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool _handleGlobalShortcut(KeyEvent event) {
+    if (event is! KeyDownEvent || !mounted) return false;
+    if (ModalRoute.of(context)?.isCurrent == false) return false;
+    if (event.logicalKey == LogicalKeyboardKey.escape &&
+        !HardwareKeyboard.instance.isControlPressed &&
+        !HardwareKeyboard.instance.isMetaPressed &&
+        _chatController.selectedSessionId != null &&
+        _chatController.activeJobCountForSession(
+              _chatController.selectedSessionId!,
+            ) >
+            0) {
+      return _cancelRunningJobWithEscape();
+    }
+    final bindings = _globalShortcutBindings(
+      usePersistentSidebar: _persistentSidebarActive,
+    );
+    for (final entry in bindings.entries) {
+      if (entry.key.accepts(event, HardwareKeyboard.instance)) {
+        entry.value();
+        return true;
+      }
+    }
+    return false;
+  }
+
+  Map<ShortcutActivator, VoidCallback> _globalShortcutBindings({
+    required bool usePersistentSidebar,
+  }) {
+    void toggleSidebar() {
+      if (usePersistentSidebar) {
+        _toggleSidebarCollapsed();
+        return;
+      }
+      final scaffold = _scaffoldShortcutContext == null
+          ? null
+          : Scaffold.maybeOf(_scaffoldShortcutContext!);
+      if (scaffold == null) return;
+      if (scaffold.isDrawerOpen) {
+        scaffold.closeDrawer();
+      } else {
+        scaffold.openDrawer();
+      }
+    }
+
+    void focusSearch() {
+      if (usePersistentSidebar) {
+        if (_sidebarCollapsed) _toggleSidebarCollapsed();
+        WidgetsBinding.instance.addPostFrameCallback(
+          (_) => _sessionSearchFocusNode.requestFocus(),
+        );
+        return;
+      }
+      final scaffold = _scaffoldShortcutContext == null
+          ? null
+          : Scaffold.maybeOf(_scaffoldShortcutContext!);
+      scaffold?.openDrawer();
+      Future<void>.delayed(
+        const Duration(milliseconds: 250),
+        () => _sessionSearchFocusNode.requestFocus(),
+      );
+    }
+
+    return <ShortcutActivator, VoidCallback>{
+      const SingleActivator(LogicalKeyboardKey.keyK, control: true): focusSearch,
+      const SingleActivator(LogicalKeyboardKey.keyK, meta: true): focusSearch,
+      const SingleActivator(LogicalKeyboardKey.keyB, control: true): toggleSidebar,
+      const SingleActivator(LogicalKeyboardKey.keyB, meta: true): toggleSidebar,
+      const SingleActivator(LogicalKeyboardKey.keyO, control: true, shift: true):
+          () => unawaited(_openWorkspacePicker()),
+      const SingleActivator(LogicalKeyboardKey.keyO, meta: true, shift: true):
+          () => unawaited(_openWorkspacePicker()),
+      const SingleActivator(LogicalKeyboardKey.slash, control: true):
+          () => unawaited(_showSlashHelpSheet()),
+      const SingleActivator(LogicalKeyboardKey.slash, meta: true):
+          () => unawaited(_showSlashHelpSheet()),
+    };
+  }
+
+  Future<void> _showUsageSheet() async {
+    await _refreshCodexTooling();
+    if (!mounted) return;
+    final status = _activeCodexTooling?.status;
+    final rows = <(String, String)>[
+      if (status?.usageLabel?.trim().isNotEmpty ?? false)
+        ('Uso', status!.usageLabel!.trim()),
+      if (status?.usageSummary?.trim().isNotEmpty ?? false)
+        ('Detalle', status!.usageSummary!.trim()),
+      if (status != null) ('Cuenta', status.statusSummary),
+      if (status?.version?.trim().isNotEmpty ?? false)
+        ('CLI', status!.version!.trim()),
+    ];
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text('Uso', style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 12),
+              if (rows.isEmpty || !(status?.usageAvailable ?? false))
+                Text(status?.error ??
+                    'Este servidor no informa el uso todavía.'),
+              for (final row in rows)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      SizedBox(
+                        width: 90,
+                        child: Text(row.$1,
+                            style: const TextStyle(color: Color(0xFF8696A0))),
+                      ),
+                      Expanded(child: SelectableText(row.$2)),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showSlashHelpSheet() async {
+    final commands = buildSlashCommands(SlashCommandContext(
+      hasActiveBackend: _activeServer != null,
+      hasProjectWorkspace:
+          _chatController.currentSession?.workspacePath.trim().isNotEmpty ??
+              false,
+    )).where((command) => command.scope != 'skill').toList();
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(context).height * 0.8),
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+            children: <Widget>[
+              Text('Comandos y atajos',
+                  style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 8),
+              const Text(
+                'Escribí / en el mensaje. ↑ ↓ para elegir, Enter para usar, '
+                'Tab para completar, Esc para cerrar. Las skills también '
+                'aparecen al escribir /.\n\n'
+                'Atajos: Ctrl+K buscar chats · Ctrl+B mostrar/ocultar proyectos · '
+                'Ctrl+Shift+O nuevo chat · Ctrl+/ esta ayuda · '
+                'Esc detiene la ejecución en curso.',
+                style: TextStyle(color: Color(0xFF8696A0)),
+              ),
+              const SizedBox(height: 12),
+              for (final command in commands)
+                ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  enabled: command.isEnabled,
+                  title: Text('${command.slash}  ·  ${command.title}'),
+                  subtitle: Text(command.isEnabled
+                      ? command.description
+                      : (command.disabledReason ?? command.description)),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<bool> _handleSlashCommand(String commandId, String payload) async {
+    if (commandId.startsWith('skill:')) {
+      final skillId = commandId.substring('skill:'.length);
+      final draft = _currentComposerDraft();
+      final options = draft.codexRunOptions;
+      final active = options.skillIds.contains(skillId);
+      final next = active
+          ? options.skillIds.where((id) => id != skillId).toList()
+          : <String>[...options.skillIds, skillId];
+      _updateCurrentComposerDraft(
+        _ComposerDraft(
+          text: _textController.text,
+          attachments: draft.attachments,
+          codexRunOptions: options.copyWith(skillIds: next),
+        ),
+      );
+      final name = _activeCodexTooling?.skills
+              .where((skill) => skill.skillId == skillId)
+              .map((skill) => skill.name)
+              .firstOrNull ??
+          skillId;
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+        content: Text(active
+            ? 'Skill $name desactivada'
+            : 'Skill $name activa para el próximo mensaje'),
+        duration: const Duration(seconds: 2),
+      ));
+      return true;
+    }
     switch (commandId) {
+      case 'model':
+        await _openAgentStudio();
+        return true;
+      case 'new':
+        await _openWorkspacePicker();
+        return true;
+      case 'usage':
+        await _showUsageSheet();
+        return true;
+      case 'help':
+        await _showSlashHelpSheet();
+        return true;
       case 'new-project':
         await _openNewProjectFactory();
         return true;
@@ -2226,7 +2550,7 @@ When you create the Project Factory draft, link each asset with POST /project-fa
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          didCancel ? 'Job cancelled.' : 'Could not cancel the job.',
+          didCancel ? 'Ejecución detenida.' : 'No se pudo detener la ejecución.',
         ),
         duration: const Duration(seconds: 2),
       ),
@@ -3758,6 +4082,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     );
     final activeProfileId = await _serverProfileStore.loadActiveProfileId();
     final sidebarExpanded = await _serverProfileStore.loadSidebarExpanded();
+    final sidebarCollapsed = await _serverProfileStore.loadSidebarCollapsed();
     final audioRepliesEnabled = await _serverProfileStore
         .loadAudioRepliesEnabled(widget.initialApiBaseUrl);
     final audioReplyPlaybackSpeed = await _serverProfileStore
@@ -3772,6 +4097,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
       _activeServer = resolvedActiveProfile;
       _activeServerHealth = null;
       _sidebarExpanded = sidebarExpanded;
+      _sidebarCollapsed = sidebarCollapsed;
       _audioRepliesEnabled = audioRepliesEnabled;
       _audioReplyPlaybackSpeed = audioReplyPlaybackSpeed;
     });
@@ -3830,6 +4156,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
       _sessionSearchDebounce?.cancel();
       client.setSessionFilter(archived: _showArchivedChatsInSidebar, search: _sessionSearch);
       _chatController = nextController;
+      if (widget.enableServerBootstrap) nextController.startLiveSync();
       _activeServer = profile;
       _activeServerHealth = null;
       _prodUpdateStatus = null;
@@ -4337,8 +4664,8 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
   String _buildAppBarSubtitle({required bool isCompactAppBar}) {
     final segments = <String>[
       _activeServer != null
-          ? 'Server: ${_activeServer!.name}'
-          : 'Commands execute on your local machine',
+          ? 'Servidor: ${_activeServer!.name}'
+          : 'Los comandos corren en esta máquina',
     ];
     final currentSession = _chatController.currentSession;
     if (currentSession != null) {
@@ -4356,8 +4683,8 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
       if (_activeServerHealth != null) {
         segments.add(
           _activeServerHealth!.audioTranscriptionReady
-              ? 'Audio ready'
-              : 'Audio unavailable',
+              ? 'Audio listo'
+              : 'Audio no disponible',
         );
       }
     }
@@ -4403,15 +4730,29 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
         tooltip: showingSummaryView ? 'Show full chat' : 'View summary',
       ),
     ];
-    if (isCompactAppBar) {
-      primaryActions.add(
-        PopupMenuButton<_AppBarOverflowAction>(
-          tooltip: 'More actions',
+    final overflowMenu = PopupMenuButton<_AppBarOverflowAction>(
+          tooltip: 'Más acciones',
           icon: const Icon(Icons.more_vert),
           onSelected: (action) {
             unawaited(_handleAppBarOverflowAction(action));
           },
           itemBuilder: (context) => <PopupMenuEntry<_AppBarOverflowAction>>[
+            _buildAppBarOverflowMenuItem(
+              action: _AppBarOverflowAction.newChat,
+              icon: Icons.add,
+              label: 'Choose project for new chat',
+            ),
+            _buildAppBarOverflowMenuItem(
+              action: _AppBarOverflowAction.newProject,
+              icon: Icons.create_new_folder_outlined,
+              label: 'New project',
+            ),
+            _buildAppBarOverflowMenuItem(
+              action: _AppBarOverflowAction.projectHistory,
+              icon: Icons.history,
+              label: 'Project history',
+            ),
+            const PopupMenuDivider(),
             _buildAppBarOverflowMenuItem(action: _AppBarOverflowAction.objectiveTeam, icon: Icons.hub_outlined, label: 'Equipo por objetivos'),
             _buildAppBarOverflowMenuItem(action: _AppBarOverflowAction.deployments,
               icon: Icons.cloud_outlined, label: 'Deploys · Workspace'),
@@ -4446,7 +4787,9 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
             _buildAppBarOverflowMenuItem(
               action: _AppBarOverflowAction.codexTools,
               icon: Icons.tune_rounded,
-              label: 'Codex tools',
+              label: _codexSelectionCount(_currentComposerDraft().codexRunOptions) > 0
+                  ? 'Codex tools (${_codexSelectionCount(_currentComposerDraft().codexRunOptions)} activas)'
+                  : 'Codex tools',
             ),
             _buildAppBarOverflowMenuItem(
               action: _AppBarOverflowAction.saveCurrentAgent,
@@ -4472,139 +4815,34 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
               icon: Icons.computer,
               label: 'Servers',
             ),
-            _buildAppBarOverflowMenuItem(
-              action: _AppBarOverflowAction.newProject,
-              icon: Icons.create_new_folder_outlined,
-              label: 'New project',
-            ),
-            _buildAppBarOverflowMenuItem(
-              action: _AppBarOverflowAction.projectHistory,
-              icon: Icons.history,
-              label: 'Project history',
-            ),
-            _buildAppBarOverflowMenuItem(
-              action: _AppBarOverflowAction.newChat,
-              icon: Icons.add,
-              label: 'Choose project for new chat',
-            ),
           ],
-        ),
-      );
-      return primaryActions;
-    }
-    return <Widget>[
-      ...primaryActions,
-      IconButton(onPressed: () => _openDeployments(), icon: const Icon(Icons.cloud_outlined), tooltip: 'Deploys · Workspace'),
-      IconButton(onPressed:_openWork,icon:const Icon(Icons.playlist_play_rounded),tooltip:'Backlog · Workspace'),
-      IconButton(
-        onPressed: () async {
-          await _openInstallableAppsSheet();
-        },
-        icon: const Icon(Icons.apps_rounded),
-        tooltip: 'Apps',
-      ),
-      IconButton(
-        onPressed: _chatController.currentSession == null
-            ? null
-            : () async {
-                await _openProjectSecretsSheet();
-              },
-        icon: const Icon(Icons.lock_outline_rounded),
-        tooltip: 'Project secrets',
-      ),
-      IconButton(
-        onPressed: _chatController.currentSession == null
-            ? null
-            : () async {
-                await _openConversationContextSheet();
-              },
-        icon: const Icon(Icons.topic_outlined),
-        tooltip: 'What are we doing?',
-      ),
-      IconButton(
-        onPressed: _openOperations,
-        icon: const Icon(Icons.monitor_heart_outlined),
-        tooltip: 'Operations',
-      ),
-      IconButton(
-        onPressed: () async {
-          await _openCodexToolsSheet();
-        },
-        icon: Stack(
-          clipBehavior: Clip.none,
-          children: <Widget>[
-            const Icon(Icons.tune_rounded),
-            if (_currentComposerDraft().codexRunOptions.skillIds.isNotEmpty ||
-                _currentComposerDraft()
-                    .codexRunOptions
-                    .mcpServerIds
-                    .isNotEmpty ||
-                _currentComposerDraft().codexRunOptions.searchEnabled ||
-                (_currentComposerDraft().codexRunOptions.profile?.isNotEmpty ??
-                    false))
-              Positioned(
-                right: -6,
-                top: -6,
-                child: _MenuStatusBadge(
-                  label: _codexSelectionCount(
-                    _currentComposerDraft().codexRunOptions,
-                  ).toString(),
-                  backgroundColor: const Color(0xFF55D6BE),
-                  foregroundColor: const Color(0xFF07131D),
-                ),
-              ),
-          ],
-        ),
-        tooltip: 'Codex tools',
-      ),
-      IconButton(
-        onPressed: () async {
-          await _openSaveCurrentAgentProfile();
-        },
-        icon: const Icon(Icons.bookmark_add_outlined),
-        tooltip: 'Save current agent',
-      ),
-      IconButton(
-        onPressed: () async {
-          await _openReplyModePicker();
-        },
-        icon: Icon(
-          _audioRepliesEnabled
-              ? Icons.volume_up_rounded
-              : Icons.volume_mute_rounded,
-        ),
-        tooltip: _audioRepliesEnabled
-            ? 'Audio replies enabled at ${_formatPlaybackSpeed(_audioReplyPlaybackSpeed)}'
-            : 'Text replies enabled',
-      ),
-      IconButton(
-        onPressed: () async {
-          await _openServerManager();
-        },
-        icon: const Icon(Icons.computer),
-        tooltip: 'Servers',
-      ),
-      IconButton(
-        onPressed: () async {
-          await _openNewProjectFactory();
-        },
-        icon: const Icon(Icons.create_new_folder_outlined),
-        tooltip: 'New project',
-      ),
-      IconButton(
-        onPressed: () async {
-          await _openProjectFactoryHistory();
-        },
-        icon: const Icon(Icons.history),
-        tooltip: 'Project history',
-      ),
-      IconButton(
+        );
+    if (isCompactAppBar) {
+      primaryActions.add(IconButton(
         onPressed: () async {
           await _openWorkspacePicker();
         },
         icon: const Icon(Icons.add),
-        tooltip: 'Choose project for new chat',
+        tooltip: 'Nuevo chat',
+      ));
+      primaryActions.add(overflowMenu);
+      return primaryActions;
+    }
+    return <Widget>[
+      ...primaryActions,
+      const SizedBox(width: 4),
+      Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        child: FilledButton.tonalIcon(
+          onPressed: () async {
+            await _openWorkspacePicker();
+          },
+          icon: const Icon(Icons.add, size: 18),
+          label: const Text('Nuevo chat'),
+        ),
       ),
+      overflowMenu,
+      const SizedBox(width: 8),
     ];
   }
 
@@ -5296,19 +5534,19 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                       onSelected: (_PinnedWorkspaceAction action) async {
                         switch (action) {
                           case _PinnedWorkspaceAction.deployments:
-                            Navigator.of(context).pop();
+                            _closeSidebarIfDrawer(context);
                             await _openDeployments(workspace);
                             return;
                           case _PinnedWorkspaceAction.notifications:
-                            Navigator.of(context).pop();
+                            _closeSidebarIfDrawer(context);
                             await _openProjectNotifications(workspace);
                             return;
                           case _PinnedWorkspaceAction.backlog:
-                            Navigator.of(context).pop();
+                            _closeSidebarIfDrawer(context);
                             await _openWork(workspace);
                             return;
                           case _PinnedWorkspaceAction.newChat:
-                            Navigator.of(context).pop();
+                            _closeSidebarIfDrawer(context);
                             await _createNewChatForWorkspace(workspace);
                             return;
                           case _PinnedWorkspaceAction.remove:
@@ -5345,15 +5583,15 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                 children: <Widget>[
                   Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: Wrap(spacing: 8, children: [
                     TextButton.icon(onPressed: () async {
-                      Navigator.of(context).pop();
+                      _closeSidebarIfDrawer(context);
                       await _openDeployments(workspace);
                     }, icon: const Icon(Icons.cloud_outlined, size: 18), label: const Text('Deploys')),
                     TextButton.icon(onPressed: () async {
-                      Navigator.of(context).pop();
+                      _closeSidebarIfDrawer(context);
                       await _openProjectNotifications(workspace);
                     }, icon: const Icon(Icons.notifications_outlined, size: 18), label: const Text('Notificaciones')),
                     TextButton.icon(onPressed: () async {
-                      Navigator.of(context).pop();
+                      _closeSidebarIfDrawer(context);
                       await _openWork(workspace);
                     }, icon: const Icon(Icons.playlist_play_rounded, size: 18), label: const Text('Backlog')),
                   ])),
@@ -5386,11 +5624,11 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                               selected: session.id ==
                                   _chatController.selectedSessionId,
                               onTap: () async {
-                                Navigator.of(context).pop();
+                                _closeSidebarIfDrawer(context);
                                 await _chatController.selectSession(session.id);
                               },
                               onRename: () async {
-                                Navigator.of(context).pop();
+                                _closeSidebarIfDrawer(context);
                                 await _openRenameChatSheet(session);
                               },
                               onArchiveToggle: () async {
@@ -5842,7 +6080,7 @@ class _SessionTile extends StatelessWidget {
               const SizedBox(height: 6),
               _SessionMomentLine(
                 icon: Icons.schedule_rounded,
-                label: 'Latest',
+                label: 'Último',
                 value: _formatSessionMoment(context, session.latestActivityAt),
                 color: session.isArchived
                     ? const Color(0xFF7F8EAF)
@@ -5851,7 +6089,7 @@ class _SessionTile extends StatelessWidget {
               const SizedBox(height: 3),
               _SessionMomentLine(
                 icon: Icons.flag_outlined,
-                label: 'Started',
+                label: 'Inicio',
                 value: _formatSessionMoment(context, session.createdAt),
                 color: session.isArchived
                     ? const Color(0xFF7F8EAF)
@@ -5880,7 +6118,7 @@ class _SessionTile extends StatelessWidget {
                 ),
               PopupMenuButton<String>(
                 padding: EdgeInsets.zero,
-                tooltip: 'Chat actions',
+                tooltip: 'Acciones del chat',
                 onSelected: (value) {
                   if (value == 'rename') {
                     onRename();
@@ -5897,7 +6135,7 @@ class _SessionTile extends StatelessWidget {
                       children: <Widget>[
                         Icon(Icons.edit_outlined, size: 18),
                         SizedBox(width: 12),
-                        Text('Rename chat'),
+                        Text('Renombrar chat'),
                       ],
                     ),
                   ),
@@ -5914,8 +6152,8 @@ class _SessionTile extends StatelessWidget {
                         const SizedBox(width: 12),
                         Text(
                           session.isArchived
-                              ? 'Unarchive chat'
-                              : 'Archive chat',
+                              ? 'Desarchivar chat'
+                              : 'Archivar chat',
                         ),
                       ],
                     ),
@@ -6005,7 +6243,7 @@ String _formatProjectActivityLabel({
     );
   }
   if (segments.isEmpty) {
-    return 'No active jobs';
+    return 'Sin actividad';
   }
   return segments.join(' • ');
 }
@@ -6256,13 +6494,14 @@ class _EmptyState extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
                 const Text(
-                  'Start a new Codex session',
+                  '¿En qué trabajamos?',
                   style: TextStyle(fontSize: 24, fontWeight: FontWeight.w600),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 12),
                 const Text(
-                  'Each chat maps to a real Codex CLI session and follow-up messages continue that session.',
+                  'Cada chat es una sesión real del agente (Codex o Claude) en esta máquina: '
+                  'los mensajes siguientes continúan esa sesión. Escribí abajo o usá / para comandos.',
                   textAlign: TextAlign.center,
                   style: TextStyle(color: Color(0xFF8B97B5), height: 1.5),
                 ),
@@ -6272,7 +6511,7 @@ class _EmptyState extends StatelessWidget {
                     await onCreateChat();
                   },
                   icon: const Icon(Icons.add_comment_outlined),
-                  label: const Text('New Chat'),
+                  label: const Text('Nuevo chat'),
                 ),
               ],
             ),
@@ -6425,7 +6664,7 @@ class _OlderMessagesRow extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  TextButton(onPressed: onRetry, child: const Text('Retry')),
+                  TextButton(onPressed: onRetry, child: const Text('Reintentar')),
                 ],
               ),
             ),
@@ -7180,7 +7419,7 @@ class _DevHandoffDialogState extends State<_DevHandoffDialog> {
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+          child: const Text('Cancelar'),
         ),
         FilledButton.icon(
           onPressed: _submit,
@@ -7371,6 +7610,8 @@ class _Composer extends StatefulWidget {
     required this.onDraftChanged,
     this.onBackgroundDraftChanged,
     required this.onSend,
+    this.activeJobCount = 0,
+    this.queuedJobCount = 0,
     required this.onSendAudio,
     required this.onSendAttachments,
     required this.onBeginRecording,
@@ -7391,6 +7632,8 @@ class _Composer extends StatefulWidget {
   final ValueChanged<_ComposerDraft> onDraftChanged;
   final ValueChanged<_ComposerDraft>? onBackgroundDraftChanged;
   final Future<bool> Function() onSend;
+  final int activeJobCount;
+  final int queuedJobCount;
   final Future<bool> Function(XFile audioFile, {String? message}) onSendAudio;
   final Future<bool> Function(
     List<_PendingAttachmentDraft> attachments, {
@@ -7434,6 +7677,7 @@ class _ComposerState extends State<_Composer> {
   @override
   void initState() {
     super.initState();
+    _composerFocusNode.onKeyEvent = _handleComposerKeyEvent;
     _audioRecorder = widget.audioRecorderFactory();
     _applyDraft(widget.draft, notifyParent: false);
     _hasText = widget.controller.text.trim().isNotEmpty;
@@ -7522,7 +7766,7 @@ class _ComposerState extends State<_Composer> {
                             foregroundColor: const Color(0xFFE9EDEF),
                           ),
                           icon: const Icon(Icons.close_rounded),
-                          label: const Text('Cancel'),
+                          label: const Text('Cancelar'),
                         ),
                       ),
                       const SizedBox(width: 10),
@@ -7707,6 +7951,14 @@ class _ComposerState extends State<_Composer> {
               },
             ),
           ),
+        if (widget.activeJobCount > 0)
+          Padding(
+            padding: const EdgeInsets.only(left: 12, bottom: 8),
+            child: Text(
+              '${widget.activeJobCount - widget.queuedJobCount} en curso · ${widget.queuedJobCount} en cola · Podés seguir enviando',
+              style: const TextStyle(color: Color(0xFFB8C8E0), fontSize: 12),
+            ),
+          ),
         TextField(
           controller: widget.controller,
           focusNode: _composerFocusNode,
@@ -7872,6 +8124,50 @@ class _ComposerState extends State<_Composer> {
 
   List<SlashCommand> _filteredSlashCommands(String query) {
     return filterSlashCommands(_slashCommands, query);
+  }
+
+  KeyEventResult _handleComposerKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    final query = _slashQuery;
+    if (query == null) {
+      return KeyEventResult.ignored;
+    }
+    final commands = _filteredSlashCommands(query);
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.arrowDown || key == LogicalKeyboardKey.arrowUp) {
+      if (commands.isEmpty) return KeyEventResult.handled;
+      final delta = key == LogicalKeyboardKey.arrowDown ? 1 : -1;
+      setState(() {
+        _selectedSlashCommandIndex =
+            (_selectedSlashCommandIndex + delta) % commands.length;
+        if (_selectedSlashCommandIndex < 0) {
+          _selectedSlashCommandIndex += commands.length;
+        }
+        _slashCommandErrorText = null;
+      });
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.escape) {
+      widget.controller.clear();
+      setState(() {
+        _selectedSlashCommandIndex = 0;
+        _slashCommandErrorText = null;
+      });
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.tab && commands.isNotEmpty) {
+      final command =
+          commands[_selectedSlashCommandIndex.clamp(0, commands.length - 1)];
+      final completed = '${command.slash} ';
+      widget.controller.value = TextEditingValue(
+        text: completed,
+        selection: TextSelection.collapsed(offset: completed.length),
+      );
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
   }
 
   Future<void> _selectHighlightedSlashCommand() async {
@@ -8695,7 +8991,7 @@ class _ComposerState extends State<_Composer> {
 
   String _composerHintText() {
     if (_pendingAttachments.isEmpty) {
-      return 'Message';
+      return 'Escribí un mensaje · / para comandos';
     }
     if (_pendingAttachments.length == 1 && _pendingAttachments.first.isAudio) {
       return 'Add text for this voice note';
@@ -8928,7 +9224,7 @@ class _RenameChatSheetState extends State<_RenameChatSheet> {
               children: <Widget>[
                 const Expanded(
                   child: Text(
-                    'Rename chat',
+                    'Renombrar chat',
                     style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
                   ),
                 ),
@@ -9472,7 +9768,7 @@ class _ProdUpdateForceDialogState extends State<_ProdUpdateForceDialog> {
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+          child: const Text('Cancelar'),
         ),
         FilledButton(
           onPressed: _controller.text == _expected
@@ -9534,7 +9830,7 @@ class _ProjectCreationModeDialog extends StatelessWidget {
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+          child: const Text('Cancelar'),
         ),
         OutlinedButton.icon(
           key: const Key('new-project-scaffold-mode'),
@@ -9751,7 +10047,7 @@ class _ProjectScaffoldDialogState extends State<ProjectScaffoldDialog> {
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+          child: const Text('Cancelar'),
         ),
         FilledButton(
           key: const Key('scaffold-review'),
@@ -9942,7 +10238,7 @@ class ProjectScaffoldResultDialog extends StatelessWidget {
           child: const Text('Close'),
         ),
         if (onRetry != null)
-          OutlinedButton(onPressed: onRetry, child: const Text('Retry')),
+          OutlinedButton(onPressed: onRetry, child: const Text('Reintentar')),
         if (onStartProduct != null)
           FilledButton(
             key: const Key('scaffold-start-product'),
@@ -10229,7 +10525,7 @@ class _NewProjectBasicsDialogState extends State<_NewProjectBasicsDialog> {
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
+          child: const Text('Cancelar'),
         ),
         FilledButton(
           onPressed: _canSubmit ? _submit : null,
@@ -12523,7 +12819,7 @@ class _SaveAgentProfileSheetState extends State<_SaveAgentProfileSheet> {
                 children: <Widget>[
                   TextButton(
                     onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Cancel'),
+                    child: const Text('Cancelar'),
                   ),
                   const Spacer(),
                   FilledButton(
@@ -12780,7 +13076,7 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
                 children: <Widget>[
                   TextButton(
                     onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Cancel'),
+                    child: const Text('Cancelar'),
                   ),
                   const Spacer(),
                   FilledButton(

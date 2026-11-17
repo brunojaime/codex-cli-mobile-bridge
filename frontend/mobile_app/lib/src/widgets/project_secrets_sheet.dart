@@ -156,7 +156,7 @@ class _ProjectSecretsSheetState extends State<ProjectSecretsSheet> {
         actions: <Widget>[
           TextButton(
               onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel')),
+              child: const Text('Cancelar')),
           FilledButton(
             key: const ValueKey<String>('confirm-delete-secret'),
             onPressed: () => Navigator.pop(context, true),
@@ -467,7 +467,7 @@ class _ProjectSecretsSheetState extends State<ProjectSecretsSheet> {
                           ),
                           TextButton(
                             onPressed: _isSaving ? null : _cancelEdit,
-                            child: const Text('Cancel'),
+                            child: const Text('Cancelar'),
                           ),
                         ],
                       ),

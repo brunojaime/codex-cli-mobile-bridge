@@ -99,6 +99,7 @@ void main() {
       'transcript': 'Voice note transcript.',
       'latest_activity': 'Done',
       'run_id': 'run-3',
+      'activities': <Object>[],
     });
   });
 }

@@ -71,12 +71,19 @@ def test_claude_protocol_resume_images_and_watch(tmp_path):
     assert any(s.latest_activity == "Claude: Read" for s in snapshots)
 
 
-@pytest.mark.parametrize(
-    "prompt", ["ERROR_FIXTURE", "MISSING_RESULT_FIXTURE", "DENIED_FIXTURE"]
-)
+@pytest.mark.parametrize("prompt", ["ERROR_FIXTURE", "MISSING_RESULT_FIXTURE"])
 def test_claude_failure_is_not_success(prompt):
     p = provider()
     assert wait(p, p.execute(prompt, model="claude:sonnet")).status == JobStatus.FAILED
+
+
+def test_claude_answer_with_denied_tools_completes_with_visible_warning():
+    p = provider()
+    result = wait(p, p.execute("DENIED_FIXTURE", model="claude:sonnet"))
+    assert result.status == JobStatus.COMPLETED
+    warning = next(a for a in result.activities if a["id"] == "permission-denials")
+    assert warning["status"] == "warning"
+    assert "bloqueado" in warning["title"]
 
 
 def test_claude_rejects_codex_options_and_foreign_resume():

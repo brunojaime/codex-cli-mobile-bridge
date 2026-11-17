@@ -1251,7 +1251,7 @@ class _ErrorPanel extends StatelessWidget {
           OutlinedButton.icon(
             onPressed: onRetry,
             icon: const Icon(Icons.refresh),
-            label: const Text('Retry'),
+            label: const Text('Reintentar'),
           ),
         ],
       ),

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -10,7 +11,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, Literal
 from uuid import uuid4
@@ -19,6 +20,7 @@ from backend.app.domain.entities.codex_options import CodexRunOptions
 from backend.app.domain.engine import is_claude_model, session_matches_model
 from backend.app.domain.ai_runtime import AiRuntimePolicy
 from backend.app.domain.entities.job import JobStatus
+from backend.app.infrastructure.execution.activity import activity_item, entry as activity_entry
 from backend.app.domain.video_handoff import VIDEO_HANDOFF_HINT, with_video_handoff
 from backend.app.infrastructure.codex_tooling import sync_repo_skills
 from backend.app.infrastructure.execution.base import (
@@ -109,6 +111,7 @@ class _ExecutionState:
     provider_session_id: str | None = None
     phase: str | None = None
     latest_activity: str | None = None
+    activities: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -258,6 +261,10 @@ class LocalExecutionProvider(ExecutionProvider):
     def get_latest_activity(self, job_id: str) -> str | None:
         state = self._get_state(job_id)
         return state.latest_activity if state else None
+
+    def get_snapshot(self, job_id: str) -> ExecutionSnapshot:
+        with self._lock:
+            return self._snapshot_from_state(job_id, self._states.get(job_id))
 
     def watch_job(
         self,
@@ -1332,7 +1339,22 @@ class LocalExecutionProvider(ExecutionProvider):
         if not isinstance(method, str):
             return False
 
+        if method == "turn/plan/updated":
+            params = payload.get("params")
+            if isinstance(params, dict):
+                for step in params.get("plan", []):
+                    if not isinstance(step, dict) or not isinstance(step.get("step"), str):
+                        continue
+                    title = step["step"]
+                    state = {"inProgress": "running", "in_progress": "running", "pending": "pending", "completed": "completed"}.get(str(step.get("status")), "unknown")
+                    step_id = "plan-" + hashlib.sha256(title.encode()).hexdigest()[:16]
+                    self._record_activity(job_id, activity_entry(step_id, "plan", title, "", state))
+            return False
+
         if method in {"item/started", "item/completed"}:
+            item = self._app_server_item(payload)
+            if item is not None:
+                self._record_activity(job_id, activity_item(item, completed=method == "item/completed"))
             self._track_app_server_agent_message_item(
                 payload,
                 final_agent_message_item_ids=final_agent_message_item_ids,
@@ -1357,6 +1379,10 @@ class LocalExecutionProvider(ExecutionProvider):
             item_id = params.get("itemId")
             if isinstance(item_id, str):
                 if item_id in non_final_agent_message_item_ids:
+                    snapshot = self.get_snapshot(job_id)
+                    previous = next((item for item in snapshot.activities if item["id"] == item_id), None)
+                    text = (previous["title"] if previous else "") + delta
+                    self._record_activity(job_id, activity_entry(item_id, "commentary", text, "", "running"))
                     return False
                 if (
                     final_agent_message_item_ids
@@ -1648,6 +1674,11 @@ class LocalExecutionProvider(ExecutionProvider):
             )
             return
 
+        if payload.get("type") in {"item.started", "item.completed"} and isinstance(payload.get("item"), dict):
+            item = payload["item"]
+            if item.get("type") == "agent_message" and not item.get("phase"):
+                item = {**item, "phase": "commentary"}
+            self._record_activity(job_id, activity_item(item, completed=payload["type"] == "item.completed"))
         provider_session_id = payload.get("thread_id")
         phase, latest_activity = self._describe_event(payload)
         self._set_state(
@@ -1799,6 +1830,32 @@ class LocalExecutionProvider(ExecutionProvider):
                 return line.strip()
         return None
 
+    def _record_activity(self, job_id: str, activity: dict[str, str] | None) -> None:
+        if activity is None:
+            return
+        with self._lock:
+            current = self._states.get(job_id)
+            if current is None or current.status.is_terminal:
+                return
+            activities = [dict(item) for item in current.activities]
+            for index, previous in enumerate(activities):
+                if previous["id"] == activity["id"]:
+                    activity["created_at"] = previous["created_at"]
+                    if previous["status"] in {"completed", "failed", "cancelled", "unknown"} and activity["status"] in {"running", "pending"}:
+                        return
+                    if previous["detail"] and not activity["detail"].startswith(previous["detail"]):
+                        activity["detail"] = (previous["detail"] + "\n\n" + activity["detail"])[:16000]
+                    if activity["title"] in {"Herramienta", "Comando"}:
+                        activity["title"] = previous["title"]
+                    if previous.get("parent_id") and not activity.get("parent_id"):
+                        activity["parent_id"] = previous["parent_id"]
+                    activities[index] = activity
+                    break
+            else:
+                activities.append(activity)
+            current.activities = activities
+        self._set_state(job_id, status=current.status)
+
     def _set_state(
         self,
         job_id: str,
@@ -1818,8 +1875,8 @@ class LocalExecutionProvider(ExecutionProvider):
             current = self._states.get(job_id)
             if (
                 current is not None
-                and current.status == JobStatus.CANCELLED
-                and status != JobStatus.CANCELLED
+                and current.status.is_terminal
+                and status != current.status
             ):
                 snapshot = self._snapshot_from_state(job_id, current)
                 listeners = list(self._subscribers.get(job_id, ()))
@@ -1838,10 +1895,17 @@ class LocalExecutionProvider(ExecutionProvider):
                     phase=phase
                     if phase is not None
                     else (current.phase if current else None),
+                    activities=[dict(item) for item in current.activities] if current else [],
                     latest_activity=latest_activity
                     if latest_activity is not None
                     else (current.latest_activity if current else None),
                 )
+                if status.is_terminal:
+                    self._states[job_id].activities = [
+                        {**item, "status": status.value if status != JobStatus.COMPLETED else "unknown"}
+                        if item["status"] in {"running", "pending"} else item
+                        for item in self._states[job_id].activities
+                    ]
                 snapshot = self._snapshot_from_state(job_id, self._states[job_id])
                 listeners = list(self._subscribers.get(job_id, ()))
                 should_start_successor = (
@@ -1886,6 +1950,7 @@ class LocalExecutionProvider(ExecutionProvider):
             provider_session_id=state.provider_session_id,
             phase=state.phase,
             latest_activity=state.latest_activity,
+            activities=[dict(item) for item in state.activities],
         )
 
     def _remove_queued_job(self, job_id: str) -> None:

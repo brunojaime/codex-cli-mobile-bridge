@@ -6,6 +6,7 @@ import '../models/agent_configuration.dart';
 import '../models/chat_message.dart';
 import '../utils/chat_timestamp_formatter.dart';
 import 'rich_message_content.dart';
+import 'agent_activity_timeline.dart';
 
 class ChatBubble extends StatelessWidget {
   const ChatBubble({
@@ -145,17 +146,39 @@ class ChatBubble extends StatelessWidget {
               ],
               if (isUser && message.status == ChatMessageStatus.sending) ...[
                 Text('Enviando…',
-                    style: TextStyle(color: textColor.withValues(alpha: 0.74),
+                    style: TextStyle(
+                        color: textColor.withValues(alpha: 0.74),
                         fontSize: 12)),
                 const SizedBox(height: 6),
               ],
-              if (activityPresentation != null) ...[
+              if (isUser &&
+                  message.status != ChatMessageStatus.sending &&
+                  (message.jobStatus == 'pending' ||
+                      message.jobStatus == 'running')) ...[
+                Text(
+                    message.jobStatus == 'pending'
+                        ? 'En cola'
+                        : 'El agente lo está atendiendo',
+                    style: TextStyle(
+                        color: textColor.withValues(alpha: 0.8), fontSize: 12)),
+                const SizedBox(height: 6),
+              ],
+              if (activityPresentation != null &&
+                  (message.activities.isEmpty || isCollapsed)) ...[
                 _ActivityStatusStrip(
                   presentation: activityPresentation,
                   textColor: textColor,
                 ),
                 const SizedBox(height: 10),
               ],
+              if (!isUser && !isCollapsed && message.activities.isNotEmpty)
+                AgentActivityTimeline(
+                  key: ValueKey('activity-${message.id}'),
+                  activities: message.activities,
+                  isRunning: message.isPendingLike,
+                  responseText: message.text,
+                  onLinkTap: onLinkTap,
+                ),
               if (isCollapsed)
                 _CollapsedMessagePreview(
                   text: collapsedPreview,
@@ -185,8 +208,8 @@ class ChatBubble extends StatelessWidget {
                     isSummaryAgent
                         ? 'Summary agent is preparing a user-facing update...'
                         : isGeneratorAgent
-                            ? 'Waiting for generator output...'
-                            : 'Waiting for Codex output...',
+                            ? 'Esperando la respuesta del agente…'
+                            : 'Esperando la respuesta del agente…',
                     style: TextStyle(
                       color: textColor.withValues(alpha: 0.78),
                       fontSize: 14,
@@ -246,19 +269,41 @@ class ChatBubble extends StatelessWidget {
                       if (displayContent.copyText.isNotEmpty) ...[
                         _MessageAction(
                           icon: Icons.copy_rounded,
-                          label: 'Copy',
+                          label: 'Copiar',
                           onTap: () async {
                             await Clipboard.setData(
                               ClipboardData(text: displayContent.copyText),
                             );
                           },
                         ),
+                        if (_usageLabel(message) case final usage?) ...[
+                          const SizedBox(width: 8),
+                          Tooltip(
+                            message: 'Tokens y costo de esta respuesta',
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: <Widget>[
+                                Icon(Icons.data_usage_rounded,
+                                    size: 13,
+                                    color: textColor.withValues(alpha: 0.64)),
+                                const SizedBox(width: 4),
+                                Text(
+                                  usage,
+                                  style: TextStyle(
+                                    color: textColor.withValues(alpha: 0.72),
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                         if (message.providerSessionId != null &&
                             message.providerSessionId!.isNotEmpty) ...[
                           const SizedBox(width: 8),
                           Flexible(
                             child: Text(
-                              'Session ${_shortId(message.providerSessionId!)}',
+                              'Sesión ${_shortId(message.providerSessionId!)}',
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
                                 color: textColor.withValues(alpha: 0.64),
@@ -272,7 +317,7 @@ class ChatBubble extends StatelessWidget {
                         const SizedBox(width: 8),
                         _MessageAction(
                           icon: Icons.stop_circle_outlined,
-                          label: 'Cancel',
+                          label: 'Cancelar',
                           onTap: () async {
                             await onCancelJob!();
                           },
@@ -282,7 +327,7 @@ class ChatBubble extends StatelessWidget {
                         const SizedBox(width: 8),
                         _MessageAction(
                           icon: Icons.refresh_rounded,
-                          label: 'Retry',
+                          label: 'Reintentar',
                           onTap: () async {
                             await onRetryJob!();
                           },
@@ -365,7 +410,7 @@ class _BubbleCollapseToggle extends StatelessWidget {
             ),
             const SizedBox(width: 4),
             Text(
-              isCollapsed ? 'Expand' : 'Collapse',
+              isCollapsed ? 'Expandir' : 'Contraer',
               style: TextStyle(
                 color: textColor.withValues(alpha: 0.72),
                 fontSize: 11,
@@ -774,7 +819,7 @@ class _AssistantHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final phase = message.jobPhase ?? _fallbackPhase(message);
+    final phase = localizedJobPhase(message.jobPhase ?? _fallbackPhase(message));
     final elapsedLabel = _formatElapsed(message.jobElapsedSeconds);
     final agentLabel =
         message.agentLabel ?? _defaultAgentLabel(message.agentId);
@@ -1399,4 +1444,36 @@ String? _diagnosticReasonText(ChatMessageReasonCode? reasonCode) {
     case null:
       return null;
   }
+}
+
+const Map<String, String> _jobPhaseLabels = <String, String>{
+  'completed': 'Completado',
+  'failed': 'Falló',
+  'cancelled': 'Cancelado',
+  'queued': 'En cola',
+  'timed out': 'Tiempo agotado',
+  'starting codex cli': 'Iniciando Codex',
+  'starting claude code': 'Iniciando Claude',
+  'starting session': 'Iniciando sesión',
+  'claude working': 'Claude trabajando',
+  'claude responding': 'Claude respondiendo',
+  'codex is working': 'Codex trabajando',
+  'reasoning': 'Pensando',
+  'running tools': 'Usando herramientas',
+  'drafting reply': 'Escribiendo respuesta',
+  'execution failed': 'Falló la ejecución',
+  'submission state unknown': 'Envío sin confirmar',
+};
+
+/// Shows backend job phases in Spanish; unknown phases pass through as-is.
+String localizedJobPhase(String phase) =>
+    _jobPhaseLabels[phase.trim().toLowerCase()] ?? phase;
+
+String? _usageLabel(ChatMessage message) {
+  for (final activity in message.activities) {
+    if (activity.kind == 'usage' && activity.title.trim().isNotEmpty) {
+      return activity.title.trim();
+    }
+  }
+  return null;
 }

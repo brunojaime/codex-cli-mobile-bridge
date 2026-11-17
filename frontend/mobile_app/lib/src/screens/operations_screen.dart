@@ -153,7 +153,7 @@ class _OperationsScreenState extends State<OperationsScreen> {
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
+            child: const Text('Cancelar'),
           ),
           FilledButton(
             onPressed: () {
@@ -219,7 +219,7 @@ class _OperationsScreenState extends State<OperationsScreen> {
             actions: <Widget>[
               TextButton(
                 onPressed: () => Navigator.of(context).pop(false),
-                child: const Text('Cancel'),
+                child: const Text('Cancelar'),
               ),
               FilledButton(
                 style: force
@@ -865,7 +865,7 @@ class _ErrorCard extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
-            TextButton(onPressed: onRetry, child: const Text('Retry')),
+            TextButton(onPressed: onRetry, child: const Text('Reintentar')),
           ],
         ),
       ),

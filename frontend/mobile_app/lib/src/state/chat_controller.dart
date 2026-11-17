@@ -1,3 +1,4 @@
+import '../models/agent_activity.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -166,6 +167,9 @@ class ChatController extends ChangeNotifier {
       ...optimisticMessages,
     ]);
   }
+
+  int queuedJobCountForSession(String sessionId) => _pendingJobs.entries
+      .where((entry) => entry.value == sessionId && _jobSnapshots[entry.key]?.status == 'pending').length;
 
   int activeJobCountForSession(String sessionId) {
     return _pendingJobs.values
@@ -434,6 +438,52 @@ class ChatController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Timer? _liveSyncTimer;
+  bool _liveSyncInFlight = false;
+
+  /// Keeps the session list and the open chat in sync with changes made from
+  /// other devices. Running jobs already stream through their own channel, so
+  /// the tick is skipped while any job is pending.
+  void startLiveSync({Duration interval = const Duration(seconds: 8)}) {
+    if (_disposed) return;
+    _liveSyncTimer ??=
+        Timer.periodic(interval, (_) => unawaited(_liveSyncTick()));
+  }
+
+  void stopLiveSync() {
+    _liveSyncTimer?.cancel();
+    _liveSyncTimer = null;
+  }
+
+  Future<void> _liveSyncTick() async {
+    if (_disposed || _liveSyncInFlight || _pendingJobs.isNotEmpty) return;
+    _liveSyncInFlight = true;
+    try {
+      await refreshSessions();
+      final id = _selectedSessionId;
+      final current = _currentSession;
+      if (_disposed || id == null || current == null || current.id != id) {
+        return;
+      }
+      final remote = _sessionSummaryForId(id)?.lastMessageAt;
+      if (remote == null) return;
+      DateTime? local;
+      for (final message in current.messages) {
+        if (local == null || message.createdAt.isAfter(local)) {
+          local = message.createdAt;
+        }
+      }
+      if (local == null ||
+          remote.toUtc().isAfter(local.toUtc().add(const Duration(seconds: 1)))) {
+        await selectSession(id, preserveCurrentOnError: true);
+      }
+    } catch (_) {
+      // Best effort: the next tick or an explicit refresh will retry.
+    } finally {
+      _liveSyncInFlight = false;
+    }
+  }
+
   Future<void> handleAppResumed() async {
     _outboxCapabilityCheckedAt = null;
     await refreshAppState(failurePrefix: 'Failed to reconnect to the backend.');
@@ -697,8 +747,10 @@ class ChatController extends ChangeNotifier {
   void _cacheSession(SessionDetail session) {
     _sessionCache.remove(session.id);
     _sessionCache[session.id] = session;
-    int characters() => _sessionCache.values.fold(0, (total, item) =>
-        total + item.messages.fold(0, (sum, message) => sum + message.text.length));
+    int characters() => _sessionCache.values.fold(0, (total, session) =>
+        total + session.messages.fold(0, (sum, message) =>
+            sum + message.text.length + message.activities.fold(0,
+                (size, activity) => size + activity.title.length + activity.detail.length)));
     while (_sessionCache.length > sessionCacheLimit ||
         characters() > sessionCacheCharacterLimit) {
       _sessionCache.remove(_sessionCache.keys.first);
@@ -1026,7 +1078,8 @@ class ChatController extends ChangeNotifier {
           text: entry.job!['user_text'] as String? ?? entry.payload['message'] as String,
           isUser: true, authorType: ChatMessageAuthorType.human,
           agentId: AgentId.user, agentType: AgentType.human,
-          status: ChatMessageStatus.completed, createdAt: entry.createdAt, updatedAt: entry.createdAt),
+          status: ChatMessageStatus.completed, jobId: accepted.jobId, jobStatus: accepted.status,
+          createdAt: entry.createdAt, updatedAt: entry.createdAt),
       )..accepted = true
        ..runId = accepted.runId;
       unawaited(_registerAcceptedJob(accepted,
@@ -1094,6 +1147,9 @@ class ChatController extends ChangeNotifier {
       optimistic.runId = accepted.runId;
       optimistic.message = optimistic.message.copyWith(
         status: ChatMessageStatus.completed,
+        jobId: accepted.jobId,
+        jobStatus: accepted.status,
+        jobPhase: accepted.phase,
       );
       if (_currentSession != null) _reconcileOptimisticText(_currentSession!);
       await _registerAcceptedJob(accepted,
@@ -1376,6 +1432,7 @@ class ChatController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    stopLiveSync();
     _outbox?.removeListener(_handleOutboxChanged);
     _sessionCache.clear();
     _optimisticTextMessages.clear();
@@ -1609,7 +1666,7 @@ class ChatController extends ChangeNotifier {
     }
 
     for (final message in session.messages) {
-      if (message.jobId == null) {
+      if (message.isUser || message.jobId == null) {
         continue;
       }
       final jobStatus = message.jobStatus ?? '';
@@ -1632,6 +1689,7 @@ class ChatController extends ChangeNotifier {
         runId: message.runId,
         phase: message.jobPhase,
         latestActivity: message.jobLatestActivity,
+        activities: message.activities,
         updatedAt: message.updatedAt,
         completedAt: message.completedAt,
       );
@@ -1700,6 +1758,10 @@ class ChatController extends ChangeNotifier {
   void _applyJobSnapshot(JobStatusResponse snapshot) {
     final previous = _jobSnapshots[snapshot.jobId];
     if (previous != null && previous.sameUpdateAs(snapshot)) return;
+    if (previous != null &&
+        ((previous.isTerminal && !snapshot.isTerminal) ||
+            (previous.updatedAt != null && snapshot.updatedAt != null &&
+                snapshot.updatedAt!.isBefore(previous.updatedAt!)))) return;
     _jobSnapshots[snapshot.jobId] = snapshot;
     _maybeNotifyForTerminalJob(snapshot);
 
@@ -1735,20 +1797,49 @@ class ChatController extends ChangeNotifier {
     if (message.jobId != snapshot.jobId) {
       return message;
     }
+    // A delayed stream event must not erase newer persisted tool history.
+    if (snapshot.updatedAt != null && snapshot.updatedAt!.isBefore(message.updatedAt)) {
+      return message;
+    }
+    if ((message.jobStatus == 'completed' || message.jobStatus == 'failed' || message.jobStatus == 'cancelled') && !snapshot.isTerminal) {
+      return message;
+    }
 
+    if (message.isUser) {
+      return message.copyWith(
+        jobStatus: snapshot.status,
+        jobPhase: snapshot.phase,
+        jobElapsedSeconds: snapshot.elapsedSeconds,
+      );
+    }
+    final activities = snapshot.activities.isNotEmpty
+        ? snapshot.activities
+        : _legacyActivities(message, snapshot);
     return message.copyWith(
       text: snapshot.status == 'failed' || snapshot.status == 'cancelled'
-          ? (snapshot.error ?? message.text)
+          ? _localizedJobError(snapshot.error) ?? message.text
           : (snapshot.response ?? message.text),
       status: _statusFromJob(snapshot.status),
       jobStatus: snapshot.status,
       jobPhase: snapshot.phase,
       jobLatestActivity: snapshot.latestActivity,
+      activities: activities,
       jobElapsedSeconds: snapshot.elapsedSeconds,
       providerSessionId: snapshot.providerSessionId,
       updatedAt: snapshot.updatedAt ?? message.updatedAt,
       completedAt: snapshot.completedAt ?? message.completedAt,
     );
+  }
+
+  List<AgentActivity> _legacyActivities(ChatMessage message, JobStatusResponse snapshot) {
+    if (message.activities.any((item) => item.kind != 'status')) return message.activities;
+    final title = snapshot.latestActivity?.trim() ?? '';
+    final history = message.activities.where((item) => item.kind == 'status').toList();
+    if (title.isNotEmpty && (history.isEmpty || history.last.title != title)) {
+      history.add(AgentActivity(id: 'status-${snapshot.jobId}-${history.length}',
+        kind: 'status', title: title, status: 'observed', createdAt: snapshot.updatedAt));
+    }
+    return history.isEmpty ? message.activities : history;
   }
 
   SessionDetail _overlaySessionWithJobSnapshots(SessionDetail session) {
@@ -1987,7 +2078,24 @@ class ChatController extends ChangeNotifier {
   ) {
     final byId = <String, ChatMessage>{};
     for (final message in <ChatMessage>[...left, ...right]) {
-      byId[message.id] = message;
+      final previous = byId[message.id];
+      if (previous != null && previous.activities.isNotEmpty &&
+          message.activities.every((item) => item.kind == 'status')) {
+        if (previous.activities.any((item) => item.kind != 'status')) {
+          byId[message.id] = message.copyWith(activities: previous.activities);
+        } else {
+          final history = previous.activities.toList();
+          for (final item in message.activities) {
+            if (history.last.title != item.title) {
+              history.add(AgentActivity(id: 'status-${message.jobId}-${history.length}',
+                  kind: 'status', title: item.title, status: 'observed', createdAt: item.createdAt));
+            }
+          }
+          byId[message.id] = message.copyWith(activities: history);
+        }
+      } else {
+        byId[message.id] = message;
+      }
     }
     final messages = byId.values.toList(growable: false)
       ..sort((left, right) {
@@ -2516,3 +2624,9 @@ class _OptimisticTextMessage {
       !knownMessageIds.contains(candidate.id) &&
       (runId == null || candidate.runId == runId));
 }
+
+String? _localizedJobError(String? error) => switch (error?.trim()) {
+      'Cancelled by user.' => 'Cancelado por el usuario.',
+      'Claude execution timed out.' => 'Claude tardó demasiado y se detuvo.',
+      _ => error,
+    };

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from backend.app.domain.entities.codex_options import CodexRunOptions
 from backend.app.domain.entities.job import JobStatus
@@ -17,6 +17,7 @@ class ExecutionSnapshot:
     provider_session_id: str | None = None
     phase: str | None = None
     latest_activity: str | None = None
+    activities: list[dict[str, str]] = field(default_factory=list)
 
 
 class ExecutionProvider(ABC):

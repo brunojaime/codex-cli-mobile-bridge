@@ -61,7 +61,7 @@ void main() {
       apiClient: apiClient,
     );
 
-    await tester.tap(find.byTooltip('More actions'));
+    await tester.tap(find.byTooltip('Más acciones'));
     await tester.pumpAndSettle();
 
     expect(find.text('New project'), findsOneWidget);
@@ -128,7 +128,11 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byTooltip('What are we doing?'));
+    await tester.tap(find.byTooltip('Más acciones'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('What are we doing?'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('What are we doing?'));
     await tester.pumpAndSettle();
 
     final bottomSheet = find.byType(BottomSheet);
@@ -314,7 +318,7 @@ void main() {
     final session = _buildSession(messages: const <ChatMessage>[]);
     await _pumpChatScreen(tester, session: session, width: 430, height: 932,
       sidebarWorkspaces: const [Workspace(name: 'Workspace A', path: '/workspace/a')]);
-    await tester.tap(find.byTooltip('Projects'));
+    await tester.tap(find.byTooltip('Proyectos'));
     await tester.pumpAndSettle();
     expect(find.text('Deploys'), findsOneWidget);
     expect(find.text('Notificaciones'), findsOneWidget);
@@ -334,7 +338,7 @@ void main() {
 
   testWidgets('global deployments are available without selecting a project', (tester) async {
     await _pumpChatScreen(tester, session: _buildSession(messages: const <ChatMessage>[]), width: 430, height: 932);
-    await tester.tap(find.byTooltip('More actions'));
+    await tester.tap(find.byTooltip('Más acciones'));
     await tester.pumpAndSettle();
     expect(find.text('Deploys · Workspace'), findsOneWidget);
     expect(find.text('Backlog · Workspace'), findsOneWidget);
@@ -418,7 +422,7 @@ void main() {
     expect(
       find.descendant(
         of: drawer,
-        matching: find.text('Latest', skipOffstage: false),
+        matching: find.text('Último', skipOffstage: false),
       ),
       findsWidgets,
     );
@@ -439,7 +443,7 @@ void main() {
     expect(
       find.descendant(
         of: drawer,
-        matching: find.text('Started', skipOffstage: false),
+        matching: find.text('Inicio', skipOffstage: false),
       ),
       findsWidgets,
     );
@@ -660,7 +664,7 @@ void main() {
     expect(
       find.descendant(
         of: drawer,
-        matching: find.text('Latest', skipOffstage: false),
+        matching: find.text('Último', skipOffstage: false),
       ),
       findsNWidgets(expectedOrder.length),
     );
@@ -674,7 +678,7 @@ void main() {
     expect(
       find.descendant(
         of: drawer,
-        matching: find.text('Started', skipOffstage: false),
+        matching: find.text('Inicio', skipOffstage: false),
       ),
       findsNWidgets(expectedOrder.length),
     );
@@ -847,10 +851,10 @@ void main() {
     expect(find.byType(CustomScrollView), findsOneWidget);
     expect(find.text('Safety Reviewer running'), findsOneWidget);
     expect(find.text('Run history'), findsNothing);
-    expect(find.text('Message'), findsOneWidget);
+    expect(find.text('Escribí un mensaje · / para comandos'), findsOneWidget);
 
     await tester.ensureVisible(
-      find.text('Start a new Codex session', skipOffstage: false),
+      find.text('¿En qué trabajamos?', skipOffstage: false),
     );
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
@@ -980,7 +984,7 @@ void main() {
     );
 
     expect(tester.takeException(), isNull);
-    expect(find.text('Message'), findsOneWidget);
+    expect(find.text('Escribí un mensaje · / para comandos'), findsOneWidget);
 
     await tester.scrollUntilVisible(
       find.text('Assistant reply'),
@@ -1048,14 +1052,14 @@ void main() {
     await tester.tap(
       find.descendant(
         of: userBubble,
-        matching: find.text('Collapse'),
+        matching: find.text('Contraer'),
       ),
     );
     await tester.pumpAndSettle();
 
     expect(tester.takeException(), isNull);
     expect(
-      find.descendant(of: userBubble, matching: find.text('Expand')),
+      find.descendant(of: userBubble, matching: find.text('Expandir')),
       findsOneWidget,
     );
     expect(
@@ -1067,14 +1071,14 @@ void main() {
     await tester.tap(
       find.descendant(
         of: firstBubble,
-        matching: find.text('Collapse'),
+        matching: find.text('Contraer'),
       ),
     );
     await tester.pumpAndSettle();
 
     expect(tester.takeException(), isNull);
     expect(
-      find.descendant(of: firstBubble, matching: find.text('Expand')),
+      find.descendant(of: firstBubble, matching: find.text('Expandir')),
       findsOneWidget,
     );
     expect(
@@ -1094,7 +1098,7 @@ void main() {
 
     expect(secondBubble, findsOneWidget);
     expect(
-      find.descendant(of: secondBubble, matching: find.text('Collapse')),
+      find.descendant(of: secondBubble, matching: find.text('Contraer')),
       findsOneWidget,
     );
     expect(find.text('Second visible message'), findsOneWidget);
@@ -1122,9 +1126,9 @@ void main() {
     );
 
     expect(tester.takeException(), isNull);
-    expect(find.text('Start a new Codex session'), findsNothing);
+    expect(find.text('¿En qué trabajamos?'), findsNothing);
     expect(find.text('Run history'), findsNothing);
-    expect(find.text('Message'), findsOneWidget);
+    expect(find.text('Escribí un mensaje · / para comandos'), findsOneWidget);
 
     await tester.ensureVisible(
       find.text('Messages hidden in this view', skipOffstage: false),
@@ -1182,9 +1186,9 @@ void main() {
     );
 
     expect(tester.takeException(), isNull);
-    expect(find.text('Start a new Codex session'), findsNothing);
+    expect(find.text('¿En qué trabajamos?'), findsNothing);
     expect(find.text('Run history'), findsNothing);
-    expect(find.text('Message'), findsOneWidget);
+    expect(find.text('Escribí un mensaje · / para comandos'), findsOneWidget);
 
     await tester.ensureVisible(
       find.text('Messages hidden in this view', skipOffstage: false),
@@ -1343,7 +1347,7 @@ void main() {
     expect(find.byKey(kChatScreenBodyScrollViewKey), findsOneWidget);
     expect(find.text('Run history'), findsNothing);
     expect(find.textContaining('Completed run run-0004'), findsNothing);
-    expect(find.text('Message'), findsOneWidget);
+    expect(find.text('Escribí un mensaje · / para comandos'), findsOneWidget);
 
     await tester.ensureVisible(
       find.text('Safety Reviewer running', skipOffstage: false),
@@ -1400,14 +1404,14 @@ void main() {
     expect(
       find.descendant(
         of: drawer,
-        matching: find.widgetWithText(ChoiceChip, 'Active'),
+        matching: find.widgetWithText(ChoiceChip, 'Activos'),
       ),
       findsOneWidget,
     );
     expect(
       find.descendant(
         of: drawer,
-        matching: find.widgetWithText(ChoiceChip, 'Archived'),
+        matching: find.widgetWithText(ChoiceChip, 'Archivados'),
       ),
       findsOneWidget,
     );
@@ -1429,7 +1433,7 @@ void main() {
     await tester.tap(
       find.descendant(
         of: drawer,
-        matching: find.widgetWithText(ChoiceChip, 'Archived'),
+        matching: find.widgetWithText(ChoiceChip, 'Archivados'),
       ),
     );
     await tester.pumpAndSettle();
@@ -1581,7 +1585,7 @@ void main() {
     expect(
       find.descendant(
         of: drawer,
-        matching: find.text('No projects pinned yet', skipOffstage: false),
+        matching: find.text('Todavía no hay proyectos fijados', skipOffstage: false),
       ),
       findsNothing,
     );
@@ -1631,7 +1635,7 @@ void main() {
     expect(
       find.descendant(
         of: rebuiltDrawer,
-        matching: find.text('No projects pinned yet', skipOffstage: false),
+        matching: find.text('Todavía no hay proyectos fijados', skipOffstage: false),
       ),
       findsNothing,
     );
