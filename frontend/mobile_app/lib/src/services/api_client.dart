@@ -174,6 +174,21 @@ class ApiClient {
     return jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
   }
 
+  /// Saves the Claude permission mode for this chat's project (`null` goes
+  /// back to the server default) and returns the updated permissions.
+  Future<Map<String, dynamic>> setPermissionMode(
+      String sessionId, String? mode) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/sessions/$sessionId/permissions/mode'),
+      headers: const <String, String>{'Content-Type': 'application/json'},
+      body: jsonEncode(<String, String?>{'mode': mode}),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Failed to change permission mode: ${response.body}');
+    }
+    return jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+  }
+
   Future<bool> removePermissionRule(
       String sessionId, String list, String rule) async {
     final response = await _client.post(

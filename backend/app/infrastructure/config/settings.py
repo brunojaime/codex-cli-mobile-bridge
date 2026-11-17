@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
     codex_command: str = "codex"
     claude_command: str = "claude"
-    claude_permission_mode: Literal["default", "acceptEdits", "auto", "dontAsk"] = "default"
+    claude_permission_mode: Literal["default", "acceptEdits", "auto", "dontAsk"] = "acceptEdits"
     claude_effort: Literal["low", "medium", "high", "xhigh", "max"] = "medium"
     agent_default_model: str | None = None
     ai_provider: Literal["auto", "codex", "claude"] = "auto"
