@@ -6,10 +6,10 @@ import '../models/run_overview.dart';
 import '../state/runs_monitor.dart';
 import 'interaction_card.dart';
 
-const _surface = Color(0xFF131C33);
-const _border = Color(0xFF26324A);
+const _surface = Color(0xFF1B1D21);
+const _border = Color(0xFF2B2E35);
 const _text = Color(0xFFDCE5FF);
-const _muted = Color(0xFF8B97B5);
+const _muted = Color(0xFF939BAD);
 const _teal = Color(0xFF55D6BE);
 const _amber = Color(0xFFFFC857);
 const _red = Color(0xFFFF6B81);

@@ -3,12 +3,12 @@ import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 
 import '../models/run_overview.dart';
 
-const _card = Color(0xFF1B2440);
+const _card = Color(0xFF23262B);
 const _border = Color(0xFF3A3420);
 const _amber = Color(0xFFFFC857);
 const _text = Color(0xFFDCE5FF);
-const _muted = Color(0xFF8B97B5);
-const _code = Color(0xFF0D1428);
+const _muted = Color(0xFF939BAD);
+const _code = Color(0xFF151619);
 
 typedef InteractionDecider = Future<bool> Function(InteractionDecision decision);
 

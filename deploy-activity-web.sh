@@ -4,7 +4,7 @@ set -euo pipefail
 cd /home/brunojaime/.local/share/codex-bridge-runtime/activity-preview/frontend/mobile_app
 CFG=$(mktemp -d)
 cp build/web/bridge-config.json build/web/version.json "$CFG"/
-/home/brunojaime/tools/flutter/bin/flutter build web --release --no-wasm-dry-run 2>&1 | tail -1
+/home/brunojaime/tools/flutter/bin/flutter build web --release --no-wasm-dry-run --no-web-resources-cdn 2>&1 | tail -1
 cp "$CFG"/bridge-config.json build/web/
 python3 - "$CFG/version.json" <<'PY'
 import json, sys, datetime

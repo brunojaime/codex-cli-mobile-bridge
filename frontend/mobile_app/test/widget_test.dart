@@ -1201,7 +1201,8 @@ flowchart LR
     );
     await tester.pump();
 
-    expect(find.byIcon(Icons.hub_outlined), findsOneWidget);
+    // The agent button lives in the overflow menu on phones.
+    expect(find.byIcon(Icons.hub_outlined), findsNothing);
     expect(find.byIcon(Icons.more_vert), findsOneWidget);
     expect(find.byIcon(Icons.computer), findsNothing);
     // New chat stays one tap away on phones.

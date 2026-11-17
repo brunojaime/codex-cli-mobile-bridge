@@ -156,7 +156,7 @@ class _RichMessageContentState extends State<RichMessageContent> {
                     style: OutlinedButton.styleFrom(
                       alignment: Alignment.centerLeft,
                       foregroundColor: textColor,
-                      backgroundColor: const Color(0xFF223153),
+                      backgroundColor: const Color(0xFF2D3037),
                       side: const BorderSide(color: Color(0xFF314569)),
                       minimumSize: const Size(48, 48),
                       padding: const EdgeInsets.symmetric(
@@ -409,9 +409,9 @@ class _CodeCard extends StatelessWidget {
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
-        color: const Color(0xFF0E162A),
+        color: const Color(0xFF16171A),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFF273453)),
+        border: Border.all(color: const Color(0xFF2F323A)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -424,13 +424,13 @@ class _CodeCard extends StatelessWidget {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF1B2742),
+                    color: const Color(0xFF24262C),
                     borderRadius: BorderRadius.circular(999),
                   ),
                   child: Text(
                     title,
                     style: const TextStyle(
-                      color: Color(0xFFB7C5E5),
+                      color: Color(0xFFC7CBD5),
                       fontSize: 11,
                       fontWeight: FontWeight.w600,
                     ),
@@ -483,9 +483,9 @@ class _SectionCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0x141C273D),
+        color: const Color(0x1422252A),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFF2A3654)),
+        border: Border.all(color: const Color(0xFF31343C)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -522,7 +522,7 @@ class _ValidationCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFF111A2E),
+        color: const Color(0xFF181A1E),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: const Color(0xFF2C3B60)),
       ),
@@ -548,7 +548,7 @@ class _ValidationCard extends StatelessWidget {
             Text(
               title,
               style: const TextStyle(
-                color: Color(0xFF9EB3D8),
+                color: Color(0xFFB1B7C5),
                 fontSize: 12,
               ),
             ),
@@ -575,7 +575,7 @@ class _ValidationRow extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
       decoration: BoxDecoration(
-        color: const Color(0xFF18233C),
+        color: const Color(0xFF212328),
         borderRadius: BorderRadius.circular(10),
       ),
       child: Row(
@@ -1066,7 +1066,7 @@ class _SelectableInlineTextState extends State<_SelectableInlineText> {
             color: ThemeData.estimateBrightnessForColor(widget.textColor) ==
                     Brightness.light
                 ? const Color(0xFFB9D8FF)
-                : const Color(0xFF123C69),
+                : const Color(0xFF30333A),
             decoration: TextDecoration.underline,
           );
         }

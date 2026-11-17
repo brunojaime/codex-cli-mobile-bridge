@@ -1,3 +1,4 @@
+import 'src/ui/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter/foundation.dart';
@@ -173,17 +174,7 @@ class _CodexMobileAppState extends State<CodexMobileApp> {
 
   @override
   Widget build(BuildContext context) {
-    const background = Color(0xFF0B1020);
-    const panel = Color(0xFF141C33);
-    final accent =
-        _isDevAppBuild() ? const Color(0xFF38BDF8) : const Color(0xFF55D6BE);
-    const muted = Color(0xFF8B97B5);
-
-    final scheme = ColorScheme.fromSeed(
-      seedColor: accent,
-      brightness: Brightness.dark,
-      surface: panel,
-    );
+    final accent = _isDevAppBuild() ? AppPalette.accentDev : AppPalette.accent;
 
     return MaterialApp(
       title: _bridgeAppLabel,
@@ -191,30 +182,7 @@ class _CodexMobileAppState extends State<CodexMobileApp> {
       locale: const Locale('es'),
       supportedLocales: const <Locale>[Locale('es'), Locale('en')],
       localizationsDelegates: GlobalMaterialLocalizations.delegates,
-      theme: ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.dark,
-        colorScheme: scheme,
-        scaffoldBackgroundColor: background,
-        textTheme: ThemeData.dark().textTheme.apply(
-              bodyColor: Colors.white,
-              displayColor: Colors.white,
-            ),
-        inputDecorationTheme: InputDecorationTheme(
-          filled: true,
-          fillColor: panel,
-          hintStyle: const TextStyle(color: muted),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(18),
-            borderSide: BorderSide.none,
-          ),
-        ),
-        appBarTheme: const AppBarTheme(
-          backgroundColor: background,
-          foregroundColor: Colors.white,
-          elevation: 0,
-        ),
-      ),
+      theme: buildAppTheme(accent: accent),
       home: ChatScreen(
         initialApiBaseUrl: widget.initialApiBaseUrl,
         notificationService: widget.notificationService,

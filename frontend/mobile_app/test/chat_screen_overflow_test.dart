@@ -1005,12 +1005,14 @@ void main() {
       (WidgetTester tester) async {
     await _pumpChatScreen(
       tester,
+      height: 2600,
       session: _buildSession(
         messages: <ChatMessage>[
           _message(
             id: 'user-a',
             text:
-                'User-authored note that should still be individually collapsible.',
+                'User-authored note that should still be individually collapsible.' +
+                    '\nline' * 12,
             isUser: true,
             authorType: ChatMessageAuthorType.human,
             agentId: AgentId.user,
@@ -1018,11 +1020,11 @@ void main() {
           ),
           _message(
             id: 'assistant-a',
-            text: 'First visible message',
+            text: 'First visible message' + '\nline' * 12,
           ),
           _message(
             id: 'assistant-b',
-            text: 'Second visible message',
+            text: 'Second visible message' + '\nline' * 12,
           ),
         ],
       ),
@@ -1066,7 +1068,7 @@ void main() {
       find.descendant(of: userBubble, matching: find.text('Message collapsed')),
       findsOneWidget,
     );
-    expect(find.text('First visible message'), findsOneWidget);
+    expect(find.textContaining('First visible message'), findsOneWidget);
 
     await tester.tap(
       find.descendant(
@@ -1090,7 +1092,7 @@ void main() {
     );
 
     await tester.scrollUntilVisible(
-      find.text('Second visible message'),
+      find.textContaining('Second visible message'),
       120,
       scrollable: _chatBodyScrollable(),
     );
@@ -1101,7 +1103,7 @@ void main() {
       find.descendant(of: secondBubble, matching: find.text('Contraer')),
       findsOneWidget,
     );
-    expect(find.text('Second visible message'), findsOneWidget);
+    expect(find.textContaining('Second visible message'), findsOneWidget);
   });
 
   testWidgets(
@@ -1404,14 +1406,14 @@ void main() {
     expect(
       find.descendant(
         of: drawer,
-        matching: find.widgetWithText(ChoiceChip, 'Activos'),
+        matching: find.widgetWithText(SegmentedButton<bool>, 'Activos'),
       ),
       findsOneWidget,
     );
     expect(
       find.descendant(
         of: drawer,
-        matching: find.widgetWithText(ChoiceChip, 'Archivados'),
+        matching: find.widgetWithText(SegmentedButton<bool>, 'Archivados'),
       ),
       findsOneWidget,
     );
@@ -1431,10 +1433,7 @@ void main() {
     );
 
     await tester.tap(
-      find.descendant(
-        of: drawer,
-        matching: find.widgetWithText(ChoiceChip, 'Archivados'),
-      ),
+      find.descendant(of: drawer, matching: find.text('Archivados')),
     );
     await tester.pumpAndSettle();
 

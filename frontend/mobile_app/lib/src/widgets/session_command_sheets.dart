@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../services/api_client.dart';
 
-const _muted = Color(0xFF8B97B5);
+const _muted = Color(0xFF939BAD);
 const _text = Color(0xFFDCE5FF);
 const _teal = Color(0xFF55D6BE);
 

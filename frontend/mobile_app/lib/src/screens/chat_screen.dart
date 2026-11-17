@@ -1,3 +1,4 @@
+import '../ui/app_theme.dart';
 import '../models/run_overview.dart';
 import '../services/run_alerts.dart';
 import '../state/runs_monitor.dart';
@@ -436,6 +437,7 @@ enum _AppBarOverflowAction {
   newProject,
   projectHistory,
   newChat,
+  agentStudio,
 }
 
 enum _PinnedWorkspaceAction { newChat, deployments, notifications, backlog, remove }
@@ -515,6 +517,46 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   String? _codexToolingErrorText;
   bool _sidebarExpanded = false;
   bool _sidebarCollapsed = false;
+  double? _sidebarWidth;
+  bool _resizingSidebar = false;
+  static const double _minSidebarWidth = 220;
+  static const double _maxSidebarWidth = 640;
+
+  double _effectiveSidebarWidth(double screenWidth) {
+    final preferred = _sidebarWidth ?? (_sidebarExpanded ? 440.0 : 320.0);
+    final max = math.min(_maxSidebarWidth, screenWidth * 0.5);
+    return preferred.clamp(_minSidebarWidth, math.max(_minSidebarWidth, max));
+  }
+
+  void _resizeSidebar(double delta, double screenWidth) {
+    setState(() {
+      _resizingSidebar = true;
+      final current = _sidebarWidth ?? _effectiveSidebarWidth(screenWidth);
+      _sidebarWidth = (current + delta)
+          .clamp(160.0, math.min(_maxSidebarWidth, screenWidth * 0.5));
+    });
+  }
+
+  void _finishSidebarResize() {
+    final width = _sidebarWidth;
+    setState(() {
+      _resizingSidebar = false;
+      if (width != null && width < _minSidebarWidth - 20) {
+        // Dragged nearly closed: hide it, like editors do.
+        _sidebarCollapsed = true;
+        _sidebarWidth = _minSidebarWidth;
+      }
+    });
+    unawaited(_serverProfileStore.saveSidebarWidth(_sidebarWidth));
+    if (_sidebarCollapsed) {
+      unawaited(_serverProfileStore.saveSidebarCollapsed(true));
+    }
+  }
+
+  void _resetSidebarWidth() {
+    setState(() => _sidebarWidth = null);
+    unawaited(_serverProfileStore.saveSidebarWidth(null));
+  }
   bool _persistentSidebarActive = false;
   BuildContext? _scaffoldShortcutContext;
   bool _showArchivedChatsInSidebar = false;
@@ -977,9 +1019,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         final totalActivePinnedJobsCount = _totalActivePinnedJobsCount();
         final hasEnvironmentBadge =
             _activeServerHealth?.environmentIdentity != null;
-        final appBarHeight = hasEnvironmentBadge
-            ? (isCompactAppBar ? 94.0 : 104.0)
-            : kToolbarHeight;
+        final appBarHeight = hasEnvironmentBadge ? 64.0 : kToolbarHeight;
         final usePersistentSidebar = screenWidth >= _persistentSidebarBreakpoint;
         _persistentSidebarActive = usePersistentSidebar;
         final Widget sidebarContent = SafeArea(
@@ -1035,58 +1075,36 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   const Divider(height: 1),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                    child: Row(
-                      children: <Widget>[
-                        Expanded(
-                          child: ChoiceChip(
-                            label: const Text('Activos'),
-                            selected: !_showArchivedChatsInSidebar,
-                            onSelected: (selected) {
-                              if (!selected || !_showArchivedChatsInSidebar) {
-                                return;
-                              }
-                              setState(() {
-                                _showArchivedChatsInSidebar = false;
-                              });
-                              _filterSidebarSessions();
-                            },
-                            selectedColor: const Color(0xFF55D6BE),
-                            backgroundColor: const Color(0xFF16213C),
-                            labelStyle: TextStyle(
-                              color: !_showArchivedChatsInSidebar
-                                  ? const Color(0xFF07131D)
-                                  : const Color(0xFFDCE5FF),
-                              fontWeight: FontWeight.w700,
-                            ),
-                            side: const BorderSide(color: Color(0xFF23304F)),
-                          ),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: SegmentedButton<bool>(
+                        showSelectedIcon: false,
+                        segments: const <ButtonSegment<bool>>[
+                          ButtonSegment<bool>(
+                              value: false, label: Text('Activos')),
+                          ButtonSegment<bool>(
+                              value: true, label: Text('Archivados')),
+                        ],
+                        selected: <bool>{_showArchivedChatsInSidebar},
+                        style: SegmentedButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          backgroundColor: AppPalette.surface,
+                          selectedBackgroundColor: AppPalette.surfaceHigher,
+                          selectedForegroundColor: AppPalette.text,
+                          foregroundColor: AppPalette.textMuted,
+                          side: const BorderSide(color: AppPalette.border),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10)),
                         ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: ChoiceChip(
-                            label: const Text('Archivados'),
-                            selected: _showArchivedChatsInSidebar,
-                            onSelected: (selected) {
-                              if (!selected || _showArchivedChatsInSidebar) {
-                                return;
-                              }
-                              setState(() {
-                                _showArchivedChatsInSidebar = true;
-                              });
-                              _filterSidebarSessions();
-                            },
-                            selectedColor: const Color(0xFF8CA8FF),
-                            backgroundColor: const Color(0xFF16213C),
-                            labelStyle: TextStyle(
-                              color: _showArchivedChatsInSidebar
-                                  ? const Color(0xFF07131D)
-                                  : const Color(0xFFDCE5FF),
-                              fontWeight: FontWeight.w700,
-                            ),
-                            side: const BorderSide(color: Color(0xFF23304F)),
-                          ),
-                        ),
-                      ],
+                        onSelectionChanged: (selection) {
+                          final archived = selection.first;
+                          if (archived == _showArchivedChatsInSidebar) return;
+                          setState(() {
+                            _showArchivedChatsInSidebar = archived;
+                          });
+                          _filterSidebarSessions();
+                        },
+                      ),
                     ),
                   ),
                   Padding(
@@ -1118,7 +1136,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                       : _showArchivedChatsInSidebar
                                       ? 'No hay chats archivados'
                                       : 'Todavía no hay chats',
-                              style: const TextStyle(color: Color(0xFF8B97B5)),
+                              style: const TextStyle(color: Color(0xFF939BAD)),
                             ),
                           )
                         : ListView(children: sessionGroups),
@@ -1266,18 +1284,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                   0xFF55D6BE,
                                                 ),
                                                 backgroundColor: const Color(
-                                                  0xFF16213C,
+                                                  0xFF202227,
                                                 ),
                                                 labelStyle: TextStyle(
                                                   color: _chatBodyView ==
                                                           _ChatBodyView
                                                               .conversation
-                                                      ? const Color(0xFF07131D)
+                                                      ? const Color(0xFF0E0F11)
                                                       : const Color(0xFFDCE5FF),
                                                   fontWeight: FontWeight.w700,
                                                 ),
                                                 side: const BorderSide(
-                                                  color: Color(0xFF23304F),
+                                                  color: Color(0xFF2C2F36),
                                                 ),
                                               ),
                                               Tooltip(
@@ -1306,13 +1324,13 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                     0xFF8CA8FF,
                                                   ),
                                                   backgroundColor: const Color(
-                                                    0xFF16213C,
+                                                    0xFF202227,
                                                   ),
                                                   labelStyle: TextStyle(
                                                     color:
                                                         isShowingAgentSummaries
                                                             ? const Color(
-                                                                0xFF07131D,
+                                                                0xFF0E0F11,
                                                               )
                                                             : const Color(
                                                                 0xFFDCE5FF,
@@ -1320,7 +1338,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                     fontWeight: FontWeight.w700,
                                                   ),
                                                   side: const BorderSide(
-                                                    color: Color(0xFF23304F),
+                                                    color: Color(0xFF2C2F36),
                                                   ),
                                                 ),
                                               ),
@@ -1350,7 +1368,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                   0xFFFFC857,
                                                 ),
                                                 backgroundColor: const Color(
-                                                  0xFF16213C,
+                                                  0xFF202227,
                                                 ),
                                                 labelStyle: TextStyle(
                                                   color: isShowingTurnSummaries
@@ -1359,7 +1377,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                   fontWeight: FontWeight.w700,
                                                 ),
                                                 side: const BorderSide(
-                                                  color: Color(0xFF23304F),
+                                                  color: Color(0xFF2C2F36),
                                                 ),
                                               ),
                                               ChoiceChip(
@@ -1368,7 +1386,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                   Icons.description_outlined,
                                                   size: 18,
                                                   color: isShowingDocuments
-                                                      ? const Color(0xFF07131D)
+                                                      ? const Color(0xFF0E0F11)
                                                       : const Color(0xFFDCE5FF),
                                                 ),
                                                 selected: isShowingDocuments,
@@ -1387,16 +1405,16 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                                   0xFF55D6BE,
                                                 ),
                                                 backgroundColor: const Color(
-                                                  0xFF16213C,
+                                                  0xFF202227,
                                                 ),
                                                 labelStyle: TextStyle(
                                                   color: isShowingDocuments
-                                                      ? const Color(0xFF07131D)
+                                                      ? const Color(0xFF0E0F11)
                                                       : const Color(0xFFDCE5FF),
                                                   fontWeight: FontWeight.w700,
                                                 ),
                                                 side: const BorderSide(
-                                                  color: Color(0xFF23304F),
+                                                  color: Color(0xFF2C2F36),
                                                 ),
                                               ),
                                             ],
@@ -1757,7 +1775,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                                         _updateStickToBottom(true);
                                         _scrollToBottom();
                                       },
-                                      backgroundColor: const Color(0xFF1C2745),
+                                      backgroundColor: const Color(0xFF26282E),
                                       foregroundColor: const Color(0xFF55D6BE),
                                       child: const Icon(Icons.south_rounded),
                                     ),
@@ -1896,7 +1914,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                           child: _MenuStatusBadge(
                             label: totalUnreadChatsCount.toString(),
                             backgroundColor: const Color(0xFF55D6BE),
-                            foregroundColor: const Color(0xFF07131D),
+                            foregroundColor: const Color(0xFF0E0F11),
                           ),
                         ),
                     ],
@@ -1915,7 +1933,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               ? null
               : Drawer(
                   width: drawerWidth,
-                  backgroundColor: const Color(0xFF101931),
+                  backgroundColor: const Color(0xFF191B1F),
                   child: sidebarContent,
                 ),
           body: usePersistentSidebar
@@ -1923,19 +1941,28 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: <Widget>[
                     AnimatedSize(
-                      duration: const Duration(milliseconds: 180),
+                      duration: _resizingSidebar
+                          ? Duration.zero
+                          : const Duration(milliseconds: 180),
                       child: _sidebarCollapsed
                           ? const SizedBox.shrink()
                           : SizedBox(
-                              width: _sidebarExpanded ? 440.0 : 320.0,
+                              width: _sidebarWidth != null && _resizingSidebar
+                                  ? _sidebarWidth!.clamp(160.0, _maxSidebarWidth)
+                                  : _effectiveSidebarWidth(screenWidth),
                               child: Material(
-                                color: const Color(0xFF101931),
+                                color: AppPalette.sidebar,
                                 child: sidebarContent,
                               ),
                             ),
                     ),
                     if (!_sidebarCollapsed)
-                      const VerticalDivider(width: 1, color: Color(0xFF26324A)),
+                      _SidebarResizeHandle(
+                        active: _resizingSidebar,
+                        onDrag: (delta) => _resizeSidebar(delta, screenWidth),
+                        onDragEnd: _finishSidebarResize,
+                        onReset: _resetSidebarWidth,
+                      ),
                     Expanded(child: mainBody),
                   ],
                 )
@@ -4271,7 +4298,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
         context: context,
         builder: (context) {
           return Dialog(
-            backgroundColor: const Color(0xFF101931),
+            backgroundColor: const Color(0xFF191B1F),
             insetPadding: const EdgeInsets.symmetric(
               horizontal: 24,
               vertical: 24,
@@ -4289,7 +4316,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      backgroundColor: const Color(0xFF101931),
+      backgroundColor: const Color(0xFF191B1F),
       constraints: BoxConstraints(
         maxWidth: 720,
         maxHeight: MediaQuery.sizeOf(context).height * 0.82,
@@ -4330,7 +4357,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      backgroundColor: const Color(0xFF101931),
+      backgroundColor: const Color(0xFF191B1F),
       constraints: BoxConstraints(
         maxWidth: 640,
         maxHeight: MediaQuery.sizeOf(context).height * 0.86,
@@ -4412,7 +4439,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     final draft = await showModalBottomSheet<_SaveAgentProfileDraft>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF101931),
+      backgroundColor: const Color(0xFF191B1F),
       builder: (context) => _SaveAgentProfileSheet(
         initialName: generator.label,
         initialColorHex: currentSession.agentProfileColor,
@@ -4489,6 +4516,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     final activeProfileId = await _serverProfileStore.loadActiveProfileId();
     final sidebarExpanded = await _serverProfileStore.loadSidebarExpanded();
     final sidebarCollapsed = await _serverProfileStore.loadSidebarCollapsed();
+    final sidebarWidth = await _serverProfileStore.loadSidebarWidth();
     final audioRepliesEnabled = await _serverProfileStore
         .loadAudioRepliesEnabled(widget.initialApiBaseUrl);
     final audioReplyPlaybackSpeed = await _serverProfileStore
@@ -4504,6 +4532,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
       _activeServerHealth = null;
       _sidebarExpanded = sidebarExpanded;
       _sidebarCollapsed = sidebarCollapsed;
+      _sidebarWidth = sidebarWidth;
       _audioRepliesEnabled = audioRepliesEnabled;
       _audioReplyPlaybackSpeed = audioReplyPlaybackSpeed;
     });
@@ -4805,7 +4834,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     final draft = await showModalBottomSheet<_AgentStudioDraft>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF101931),
+      backgroundColor: const Color(0xFF191B1F),
       builder: (context) {
         return _AgentStudioSheet(session: currentSession);
       },
@@ -4833,7 +4862,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
   Future<void> _openReplyModePicker() async {
     await showModalBottomSheet<void>(
       context: context,
-      backgroundColor: const Color(0xFF101931),
+      backgroundColor: const Color(0xFF191B1F),
       builder: (context) {
         var sheetAudioRepliesEnabled = _audioRepliesEnabled;
         var sheetPlaybackSpeed = _audioReplyPlaybackSpeed;
@@ -4982,7 +5011,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
   Future<void> _openServerManager() async {
     final result = await showModalBottomSheet<ServerProfile>(
       context: context,
-      backgroundColor: const Color(0xFF101931),
+      backgroundColor: const Color(0xFF191B1F),
       isScrollControlled: true,
       builder: (context) => _ServerManagerSheet(
         profiles: _serverProfiles,
@@ -5035,35 +5064,44 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
 
   Widget _buildAppBarTitle({required bool isCompactAppBar}) {
     final currentSession = _chatController.currentSession;
+    // One compact line (title + environment + agent) and a muted meta line.
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text(
-          currentSession?.title ?? 'Codex Remote',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
+        Row(
+          children: <Widget>[
+            Flexible(
+              child: Text(
+                currentSession?.title ?? 'Codex Remote',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    fontSize: 16, fontWeight: FontWeight.w600, letterSpacing: -0.1),
+              ),
+            ),
+            if (_activeServerHealth?.environmentIdentity != null) ...[
+              const SizedBox(width: 8),
+              _EnvironmentIdentityBadge(
+                identity: _activeServerHealth!.environmentIdentity!,
+              ),
+            ],
+            if (!isCompactAppBar && currentSession != null) ...[
+              const SizedBox(width: 6),
+              _AgentProfilePill(
+                label: currentSession.agentProfileName,
+                color: _colorFromHex(currentSession.agentProfileColor),
+              ),
+            ],
+          ],
         ),
         const SizedBox(height: 2),
         Text(
           _buildAppBarSubtitle(isCompactAppBar: isCompactAppBar),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 12, color: Color(0xFF8B97B5)),
+          style: const TextStyle(fontSize: 12, color: AppPalette.textMuted),
         ),
-        if (_activeServerHealth?.environmentIdentity != null) ...[
-          const SizedBox(height: 6),
-          _EnvironmentIdentityBadge(
-            identity: _activeServerHealth!.environmentIdentity!,
-          ),
-        ],
-        if (!isCompactAppBar && currentSession != null) ...[
-          const SizedBox(height: 6),
-          _AgentProfilePill(
-            label: currentSession.agentProfileName,
-            color: _colorFromHex(currentSession.agentProfileColor),
-          ),
-        ],
       ],
     );
   }
@@ -5113,12 +5151,15 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
         notificationService: widget.notificationService,
         onOpenChat: (id) => _chatController.selectSession(id),
       ),
-      AgentStudioStatusButton(
-        session: _chatController.currentSession,
-        onPressed: () async {
-          await _openAgentStudio();
-        },
-      ),
+      // On phones these live in the overflow menu so the title stays legible.
+      if (!isCompactAppBar)
+        AgentStudioStatusButton(
+          session: _chatController.currentSession,
+          onPressed: () async {
+            await _openAgentStudio();
+          },
+        ),
+      if (!isCompactAppBar)
       IconButton(
         onPressed: !showingSummaryView && !canShowAnySummary
             ? null
@@ -5144,6 +5185,12 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
             unawaited(_handleAppBarOverflowAction(action));
           },
           itemBuilder: (context) => <PopupMenuEntry<_AppBarOverflowAction>>[
+            if (isCompactAppBar)
+              _buildAppBarOverflowMenuItem(
+                action: _AppBarOverflowAction.agentStudio,
+                icon: Icons.smart_toy_outlined,
+                label: 'Agente y modelo',
+              ),
             _buildAppBarOverflowMenuItem(
               action: _AppBarOverflowAction.newChat,
               icon: Icons.add,
@@ -5393,6 +5440,9 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
       case _AppBarOverflowAction.newChat:
         await _openWorkspacePicker();
         return;
+      case _AppBarOverflowAction.agentStudio:
+        await _openAgentStudio();
+        return;
     }
   }
 
@@ -5449,7 +5499,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
     final result = await showModalBottomSheet<CodexRunOptions>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF101931),
+      backgroundColor: const Color(0xFF191B1F),
       builder: (context) => _CodexToolsSheet(
         initialOptions: currentDraft.codexRunOptions,
         tooling: _activeCodexTooling,
@@ -5499,7 +5549,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                 Text(
                   label,
                   style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                        color: const Color(0xFF8B97B5),
+                        color: const Color(0xFF939BAD),
                         fontWeight: FontWeight.w700,
                       ),
                 ),
@@ -5800,14 +5850,14 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
           .where((session) => _unreadCountForSession(session) > 0)
           .length;
       final projectCardColor =
-          hasSelected ? const Color(0xFF16213C) : const Color(0xFF121A31);
+          hasSelected ? const Color(0xFF202227) : const Color(0xFF1A1C20);
       final projectBorderColor = activeJobCount > 0
           ? const Color(0x44FFC857)
           : outgoingUploadCount > 0
               ? const Color(0x333F5EF7)
               : unreadChatsCount > 0
                   ? const Color(0x3355D6BE)
-                  : const Color(0xFF23304F);
+                  : const Color(0xFF2C2F36);
 
       sessionGroups.add(
         Container(
@@ -5835,8 +5885,8 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                   vertical: 6,
                 ),
                 childrenPadding: const EdgeInsets.only(bottom: 10),
-                iconColor: const Color(0xFF9AA8C8),
-                collapsedIconColor: const Color(0xFF9AA8C8),
+                iconColor: const Color(0xFFA6ADBC),
+                collapsedIconColor: const Color(0xFFA6ADBC),
                 title: Row(
                   children: <Widget>[
                     Container(
@@ -5847,7 +5897,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                             ? const Color(0x33FFC857)
                             : outgoingUploadCount > 0
                                 ? const Color(0x223F5EF7)
-                                : const Color(0xFF1B2745),
+                                : const Color(0xFF25282D),
                         borderRadius: BorderRadius.circular(12),
                       ),
                       alignment: Alignment.center,
@@ -5859,7 +5909,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                                 ? const Color(0xFF8CA8FF)
                                 : unreadChatsCount > 0
                                     ? const Color(0xFF55D6BE)
-                                    : const Color(0xFF9AA8C8),
+                                    : const Color(0xFFA6ADBC),
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -5890,7 +5940,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
-                              color: Color(0xFF8B97B5),
+                              color: Color(0xFF939BAD),
                               fontSize: 12,
                             ),
                           ),
@@ -5934,7 +5984,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                         child: Text(
                           unreadChatsCount.toString(),
                           style: const TextStyle(
-                            color: Color(0xFF07131D),
+                            color: Color(0xFF0E0F11),
                             fontWeight: FontWeight.w700,
                           ),
                         ),
@@ -6016,7 +6066,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                               archivedOnly
                                   ? 'No archived chats in this project'
                                   : 'No active chats in this project',
-                              style: const TextStyle(color: Color(0xFF8B97B5)),
+                              style: const TextStyle(color: Color(0xFF939BAD)),
                             ),
                           ),
                         ),
@@ -6423,7 +6473,7 @@ class _SessionTile extends StatelessWidget {
     final isActive = activeJobSummary != null;
     final isUploading = outgoingUploadSummary != null;
     final tileBackgroundColor = selected
-        ? const Color(0xFF1C2745)
+        ? const Color(0xFF26282E)
         : isActive
             ? const Color(0x1455D6BE)
             : isUploading
@@ -6451,7 +6501,7 @@ class _SessionTile extends StatelessWidget {
         }.contains(session.agentProfileId);
     final timelineColor = isActive || isUploading
         ? const Color(0xFFA8C7C0)
-        : const Color(0xFF8B97B5);
+        : const Color(0xFF939BAD);
     final displayTitle = _sessionDisplayTitle(session);
 
     return AnimatedContainer(
@@ -6476,7 +6526,7 @@ class _SessionTile extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               color: session.isArchived
-                  ? const Color(0xFFB8C8EA)
+                  ? const Color(0xFFCBCED7)
                   : isWhatsAppIntake
                       ? _colorFromHex(session.agentProfileColor)
                       : titleColor,
@@ -6494,7 +6544,7 @@ class _SessionTile extends StatelessWidget {
                 label: 'Último',
                 value: _formatSessionMoment(context, session.latestActivityAt),
                 color: session.isArchived
-                    ? const Color(0xFF7F8EAF)
+                    ? const Color(0xFF8891A6)
                     : timelineColor,
               ),
               const SizedBox(height: 3),
@@ -6503,8 +6553,8 @@ class _SessionTile extends StatelessWidget {
                 label: 'Inicio',
                 value: _formatSessionMoment(context, session.createdAt),
                 color: session.isArchived
-                    ? const Color(0xFF7F8EAF)
-                    : const Color(0xFF8B97B5),
+                    ? const Color(0xFF8891A6)
+                    : const Color(0xFF939BAD),
               ),
             ],
           ),
@@ -6709,9 +6759,9 @@ class _ProjectStatusPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final backgroundColor =
-        active ? const Color(0xFF3D2D08) : const Color(0xFF18223D);
+        active ? const Color(0xFF3D2D08) : const Color(0xFF212328);
     final foregroundColor =
-        active ? const Color(0xFFFFC857) : const Color(0xFF8B97B5);
+        active ? const Color(0xFFFFC857) : const Color(0xFF939BAD);
 
     return SizedBox(
       width: double.infinity,
@@ -6914,7 +6964,7 @@ class _EmptyState extends StatelessWidget {
                   'Cada chat es una sesión real del agente (Codex o Claude) en esta máquina: '
                   'los mensajes siguientes continúan esa sesión. Escribí abajo o usá / para comandos.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: Color(0xFF8B97B5), height: 1.5),
+                  style: TextStyle(color: Color(0xFF939BAD), height: 1.5),
                 ),
                 const SizedBox(height: 20),
                 FilledButton.icon(
@@ -6965,7 +7015,7 @@ class _FilteredMessagesPlaceholder extends StatelessWidget {
               Text(
                 _filteredMessagesPlaceholderText(displayMode),
                 textAlign: TextAlign.center,
-                style: const TextStyle(color: Color(0xFF8B97B5), height: 1.5),
+                style: const TextStyle(color: Color(0xFF939BAD), height: 1.5),
               ),
               const SizedBox(height: 20),
               FilledButton.icon(
@@ -7046,9 +7096,9 @@ class _OlderMessagesRow extends StatelessWidget {
           constraints: const BoxConstraints(maxWidth: 420),
           child: DecoratedBox(
             decoration: BoxDecoration(
-              color: const Color(0xFF10182B),
+              color: const Color(0xFF17181C),
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFF24304E)),
+              border: Border.all(color: const Color(0xFF2C2F36)),
             ),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -7103,9 +7153,9 @@ class _GuidedProjectIntakeCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: const Color(0xFF111B2D),
+        color: const Color(0xFF181A1D),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFF273A60)),
+        border: Border.all(color: const Color(0xFF343840)),
       ),
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -7139,7 +7189,7 @@ class _GuidedProjectIntakeCard extends StatelessWidget {
             const SizedBox(height: 10),
             const Text(
               'Name, goal, platforms, backend, roles, entities, assets, release, Workbench/SDD, web preview, Android plan, blockers, risks.',
-              style: TextStyle(color: Color(0xFFB8C8EA), height: 1.35),
+              style: TextStyle(color: Color(0xFFCBCED7), height: 1.35),
             ),
             if (isLoading) ...<Widget>[
               const SizedBox(height: 10),
@@ -7185,7 +7235,7 @@ class _ProjectFactoryApprovalButton extends StatelessWidget {
       },
       style: FilledButton.styleFrom(
         backgroundColor: const Color(0xFF55D6BE),
-        foregroundColor: const Color(0xFF07131D),
+        foregroundColor: const Color(0xFF0E0F11),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       ),
@@ -7251,12 +7301,12 @@ class ProjectFactoryInitCard extends StatelessWidget {
             const SizedBox(height: 10),
             Text(
               'Current phase: ${_humanizeInitPhase(currentPhase)}',
-              style: const TextStyle(color: Color(0xFFB8C8EA), height: 1.35),
+              style: const TextStyle(color: Color(0xFFCBCED7), height: 1.35),
             ),
             const SizedBox(height: 6),
             const Text(
               'Preparing repo, preview infrastructure, runtime profile, Workbench, feedback, release wiring, and first-chat context before business work starts.',
-              style: TextStyle(color: Color(0xFF8EA6C7), height: 1.35),
+              style: TextStyle(color: Color(0xFF9FA6B6), height: 1.35),
             ),
             if (isLoading) ...<Widget>[
               const SizedBox(height: 10),
@@ -7306,7 +7356,7 @@ class _SummaryViewBanner extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFF173255),
+        color: const Color(0xFF2A2D33),
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: const Color(0xFF66A8FF), width: 1.2),
       ),
@@ -7355,7 +7405,7 @@ class _SummaryMessagesPlaceholder extends StatelessWidget {
               const Text(
                 'Summary view is enabled for this chat, but the summarizer has not produced an update yet.',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Color(0xFF8B97B5), height: 1.5),
+                style: TextStyle(color: Color(0xFF939BAD), height: 1.5),
               ),
               const SizedBox(height: 20),
               FilledButton.icon(
@@ -7450,7 +7500,7 @@ class _TurnSummariesPlaceholder extends StatelessWidget {
               Text(
                 message,
                 textAlign: TextAlign.center,
-                style: const TextStyle(color: Color(0xFF8B97B5), height: 1.5),
+                style: const TextStyle(color: Color(0xFF939BAD), height: 1.5),
               ),
               const SizedBox(height: 20),
               FilledButton.icon(
@@ -7494,7 +7544,7 @@ class _TurnSummaryCardState extends State<_TurnSummaryCard> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFF181F33),
+        color: const Color(0xFF1D1F23),
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: const Color(0xFF33405D)),
       ),
@@ -7518,7 +7568,7 @@ class _TurnSummaryCardState extends State<_TurnSummaryCard> {
                 sourceMessages.length == 1
                     ? '1 source'
                     : '${sourceMessages.length} sources',
-                style: const TextStyle(color: Color(0xFF9FB0D4), fontSize: 12),
+                style: const TextStyle(color: Color(0xFFB0B6C3), fontSize: 12),
               ),
             ],
           ),
@@ -7531,7 +7581,7 @@ class _TurnSummaryCardState extends State<_TurnSummaryCard> {
           if (sourceMessages.isEmpty)
             const Text(
               'Source message metadata is unavailable for this summary.',
-              style: TextStyle(color: Color(0xFFB8C8EA), height: 1.4),
+              style: TextStyle(color: Color(0xFFCBCED7), height: 1.4),
             )
           else ...<Widget>[
             Align(
@@ -7562,7 +7612,7 @@ class _TurnSummaryCardState extends State<_TurnSummaryCard> {
               const Text(
                 'Provenance',
                 style: TextStyle(
-                  color: Color(0xFF9FB0D4),
+                  color: Color(0xFFB0B6C3),
                   fontSize: 12,
                   fontWeight: FontWeight.w700,
                 ),
@@ -7587,9 +7637,9 @@ class _TurnSummaryCardState extends State<_TurnSummaryCard> {
                     margin: const EdgeInsets.only(bottom: 8),
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF121A2C),
+                      color: const Color(0xFF181A1D),
                       borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: const Color(0xFF27324F)),
+                      border: Border.all(color: const Color(0xFF2E3138)),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -7606,7 +7656,7 @@ class _TurnSummaryCardState extends State<_TurnSummaryCard> {
                         Text(
                           excerptText,
                           style: const TextStyle(
-                            color: Color(0xFFB8C8EA),
+                            color: Color(0xFFCBCED7),
                             height: 1.35,
                           ),
                         ),
@@ -7908,9 +7958,9 @@ class _SlashCommandPalette extends StatelessWidget {
   Widget build(BuildContext context) {
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: const Color(0xFF10182B),
+        color: const Color(0xFF17181C),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFF263455)),
+        border: Border.all(color: const Color(0xFF30333A)),
       ),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxHeight: 280),
@@ -7919,7 +7969,7 @@ class _SlashCommandPalette extends StatelessWidget {
                 padding: EdgeInsets.all(14),
                 child: Row(
                   children: <Widget>[
-                    Icon(Icons.search_off_rounded, color: Color(0xFF8B97B5)),
+                    Icon(Icons.search_off_rounded, color: Color(0xFF939BAD)),
                     SizedBox(width: 10),
                     Expanded(
                       child: Text(
@@ -7948,7 +7998,7 @@ class _SlashCommandPalette extends StatelessWidget {
                   final enabled = command.isEnabled;
                   return Material(
                     color:
-                        selected ? const Color(0xFF1B2745) : Colors.transparent,
+                        selected ? const Color(0xFF25282D) : Colors.transparent,
                     child: InkWell(
                       onTap: () => onSelected(command),
                       onHover: (_) => onHighlightChanged(index),
@@ -7965,7 +8015,7 @@ class _SlashCommandPalette extends StatelessWidget {
                                   : Icons.block_rounded,
                               color: enabled
                                   ? const Color(0xFF55D6BE)
-                                  : const Color(0xFF8B97B5),
+                                  : const Color(0xFF939BAD),
                               size: 18,
                             ),
                             const SizedBox(width: 10),
@@ -7978,7 +8028,7 @@ class _SlashCommandPalette extends StatelessWidget {
                                     style: TextStyle(
                                       color: enabled
                                           ? Colors.white
-                                          : const Color(0xFF8B97B5),
+                                          : const Color(0xFF939BAD),
                                       fontWeight: FontWeight.w700,
                                     ),
                                   ),
@@ -7987,7 +8037,7 @@ class _SlashCommandPalette extends StatelessWidget {
                                     command.disabledReason ??
                                         command.description,
                                     style: const TextStyle(
-                                      color: Color(0xFFB8C8EA),
+                                      color: Color(0xFFCBCED7),
                                       fontSize: 12,
                                     ),
                                   ),
@@ -7997,7 +8047,7 @@ class _SlashCommandPalette extends StatelessWidget {
                             Text(
                               command.scope,
                               style: const TextStyle(
-                                color: Color(0xFF8B97B5),
+                                color: Color(0xFF939BAD),
                                 fontSize: 11,
                               ),
                             ),
@@ -8196,7 +8246,7 @@ class _ComposerState extends State<_Composer> {
                         child: FilledButton.icon(
                           onPressed: isDisabled ? null : _stopRecordingAndSend,
                           style: _actionButtonStyle(
-                            backgroundColor: const Color(0xFF25D366),
+                            backgroundColor: AppPalette.accent,
                             foregroundColor: const Color(0xFF0B141A),
                           ),
                           icon: const Icon(Icons.send_rounded),
@@ -8262,7 +8312,7 @@ class _ComposerState extends State<_Composer> {
                       FilledButton(
                         onPressed: isDisabled ? null : _stopRecordingAndSend,
                         style: _actionButtonStyle(
-                          backgroundColor: const Color(0xFF25D366),
+                          backgroundColor: AppPalette.accent,
                           foregroundColor: const Color(0xFF0B141A),
                           minimumSize: const Size(52, 52),
                         ),
@@ -8274,7 +8324,7 @@ class _ComposerState extends State<_Composer> {
                   FilledButton(
                     onPressed: _showVoiceUnavailableMessage,
                     style: _actionButtonStyle(
-                      backgroundColor: const Color(0xFF25D366),
+                      backgroundColor: AppPalette.accent,
                       foregroundColor: const Color(0xFF0B141A),
                     ),
                     child: const Icon(Icons.mic_off_rounded),
@@ -8283,7 +8333,7 @@ class _ComposerState extends State<_Composer> {
                   FilledButton(
                     onPressed: isDisabled ? null : _toggleRecording,
                     style: _actionButtonStyle(
-                      backgroundColor: const Color(0xFF25D366),
+                      backgroundColor: AppPalette.accent,
                       foregroundColor: const Color(0xFF0B141A),
                     ),
                     child: const Icon(Icons.mic_rounded),
@@ -8324,7 +8374,7 @@ class _ComposerState extends State<_Composer> {
         icon: Icons.mic_rounded,
         title: 'Recording',
         subtitle: 'Send now or cancel to discard',
-        color: const Color(0xFF25D366),
+        color: AppPalette.accent,
         trailing: _StatusPill(
           label: _formatDuration(),
           backgroundColor: const Color(0xFF0B3D25),
@@ -8382,7 +8432,7 @@ class _ComposerState extends State<_Composer> {
               children: <Widget>[
                 Text(
                   '${widget.activeJobCount - widget.queuedJobCount} en curso · ${widget.queuedJobCount} en cola · Enter encola · Esc detiene',
-                  style: const TextStyle(color: Color(0xFFB8C8E0), fontSize: 12),
+                  style: const TextStyle(color: Color(0xFFC5C9D3), fontSize: 12),
                 ),
                 if (widget.onSteer != null)
                   TextButton.icon(
@@ -8455,7 +8505,7 @@ class _ComposerState extends State<_Composer> {
         ? FilledButton.icon(
             onPressed: isDisabled ? null : _handlePrimaryAction,
             style: _actionButtonStyle(
-              backgroundColor: const Color(0xFF25D366),
+              backgroundColor: AppPalette.accent,
               foregroundColor: const Color(0xFF0B141A),
               minimumSize: minimumSize,
             ),
@@ -8465,7 +8515,7 @@ class _ComposerState extends State<_Composer> {
         : FilledButton(
             onPressed: isDisabled ? null : _handlePrimaryAction,
             style: _actionButtonStyle(
-              backgroundColor: const Color(0xFF25D366),
+              backgroundColor: AppPalette.accent,
               foregroundColor: const Color(0xFF0B141A),
               minimumSize: minimumSize,
             ),
@@ -8704,7 +8754,7 @@ class _ComposerState extends State<_Composer> {
 
     final choice = await showModalBottomSheet<_AttachmentSourceAction>(
       context: context,
-      backgroundColor: const Color(0xFF101931),
+      backgroundColor: const Color(0xFF191B1F),
       builder: (context) {
         return SafeArea(
           child: Column(
@@ -9781,7 +9831,7 @@ class _RenameChatSheetState extends State<_RenameChatSheet> {
               icon: Icons.mic_rounded,
               title: 'Recording',
               subtitle: 'Speak the title direction',
-              color: const Color(0xFF25D366),
+              color: AppPalette.accent,
               trailing: _StatusPill(
                 label: _formatRenameRecordingDuration(),
                 backgroundColor: const Color(0xFF0B3D25),
@@ -9996,34 +10046,30 @@ class _AgentProfilePill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: Color.alphaBlend(
-          color.withValues(alpha: 0.2),
-          const Color(0xFF121A31),
-        ),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: color.withValues(alpha: 0.45)),
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(6),
       ),
       child: Row(
-        mainAxisSize: MainAxisSize.max,
+        mainAxisSize: MainAxisSize.min,
         children: <Widget>[
           Container(
-            width: 8,
-            height: 8,
+            width: 6,
+            height: 6,
             decoration: BoxDecoration(color: color, shape: BoxShape.circle),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           Flexible(
             child: Text(
               label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               softWrap: false,
-              style: const TextStyle(
-                fontSize: 12,
+              style: TextStyle(
+                fontSize: 11.5,
                 fontWeight: FontWeight.w600,
-                color: Colors.white,
+                color: color,
               ),
             ),
           ),
@@ -10044,7 +10090,7 @@ class _EnvironmentIdentityBadge extends StatelessWidget {
     final foreground =
         ThemeData.estimateBrightnessForColor(color) == Brightness.dark
             ? Colors.white
-            : const Color(0xFF07131D);
+            : const Color(0xFF0E0F11);
     final environment = identity.environment.toLowerCase();
     final label = identity.environment.toUpperCase();
     final details = <String>[
@@ -10067,17 +10113,10 @@ class _EnvironmentIdentityBadge extends StatelessWidget {
           'Environment $label ${details.join(' ')} ${runtimeParts.join(' ')}',
       child: Container(
         key: const ValueKey<String>('environment-identity-badge'),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
         decoration: BoxDecoration(
           color: color,
-          borderRadius: BorderRadius.circular(999),
-          boxShadow: <BoxShadow>[
-            BoxShadow(
-              color: color.withValues(alpha: 0.28),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
+          borderRadius: BorderRadius.circular(6),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -10135,7 +10174,7 @@ class _ProdUpdateStatusBanner extends StatelessWidget {
       decoration: BoxDecoration(
         color: Color.alphaBlend(
           color.withValues(alpha: 0.18),
-          const Color(0xFF101931),
+          const Color(0xFF191B1F),
         ),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: color.withValues(alpha: 0.55)),
@@ -11174,9 +11213,9 @@ class _ProjectFactoryGuidedIntakeCardState
     final defaults = _projectFactoryMap(preview['defaults']);
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: const Color(0xFF101931),
+        color: const Color(0xFF191B1F),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF263454)),
+        border: Border.all(color: const Color(0xFF2F323A)),
       ),
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -12683,10 +12722,10 @@ Color _initStatusBackground(String status) {
     'ready' => const Color(0xFF0B3D25),
     'blocked_with_context' => const Color(0xFF3A2714),
     'failed' => const Color(0xFF431B27),
-    'cancelled' => const Color(0xFF2B364D),
+    'cancelled' => const Color(0xFF2E3239),
     'resumable' => const Color(0xFF2A2440),
     'running' => const Color(0xFF133954),
-    _ => const Color(0xFF26324A),
+    _ => const Color(0xFF2B2E35),
   };
 }
 
@@ -12695,7 +12734,7 @@ Color _initStatusForeground(String status) {
     'ready' => const Color(0xFFB7F5CF),
     'blocked_with_context' => const Color(0xFFFFD9A3),
     'failed' => const Color(0xFFFFC4CB),
-    'cancelled' => const Color(0xFFB8C3DA),
+    'cancelled' => const Color(0xFFC1C6D1),
     'resumable' => const Color(0xFFD9CCFF),
     'running' => const Color(0xFFBFE8FF),
     _ => const Color(0xFFDCE5FF),
@@ -13641,7 +13680,7 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
       margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFF15203B),
+        color: const Color(0xFF1F2126),
         borderRadius: BorderRadius.circular(18),
       ),
       child: Column(
@@ -13818,7 +13857,7 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
       margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFF15203B),
+        color: const Color(0xFF1F2126),
         borderRadius: BorderRadius.circular(18),
       ),
       child: Column(
@@ -13832,7 +13871,7 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
           const Text(
             'Choose which specialist agents the supervisor can call during the run.',
             style: TextStyle(
-              color: Color(0xFFB8C8EA),
+              color: Color(0xFFCBCED7),
               fontSize: 12,
               height: 1.3,
             ),
@@ -13843,7 +13882,7 @@ class _AgentStudioSheetState extends State<_AgentStudioSheet> {
                 ? 'Supervisor only means selected specialists can be called whenever the supervisor chooses within the supervisor turn budget. Specialist turn budgets are preserved and become active again if you switch back to Each agent.'
                 : 'Each agent means selected specialists keep their own turn budgets in addition to the supervisor budget.',
             style: const TextStyle(
-              color: Color(0xFFB8C8EA),
+              color: Color(0xFFCBCED7),
               fontSize: 12,
               height: 1.3,
             ),
@@ -14146,8 +14185,8 @@ class _ImageEditorScreenState extends State<_ImageEditorScreen> {
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
       decoration: const BoxDecoration(
-        color: Color(0xFF0D1427),
-        border: Border(top: BorderSide(color: Color(0xFF1F2945))),
+        color: Color(0xFF141519),
+        border: Border(top: BorderSide(color: Color(0xFF27292F))),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -14724,7 +14763,7 @@ class _VoiceStatusCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: const Color(0xFF15203B),
+        color: const Color(0xFF1F2126),
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: color.withValues(alpha: 0.35)),
       ),
@@ -14748,7 +14787,7 @@ class _VoiceStatusCard extends StatelessWidget {
                   subtitle,
                   maxLines: subtitleMaxLines,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Color(0xFF8B97B5)),
+                  style: const TextStyle(color: Color(0xFF939BAD)),
                 ),
               ],
             ),
@@ -14800,9 +14839,9 @@ class _PendingAttachmentTray extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFF15203B),
+        color: const Color(0xFF1F2126),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFF2B395D)),
+        border: Border.all(color: const Color(0xFF353840)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -14812,8 +14851,8 @@ class _PendingAttachmentTray extends StatelessWidget {
               final useStackedHeader = constraints.maxWidth < 320;
               final statusPill = _StatusPill(
                 label: '${attachments.length} selected',
-                backgroundColor: const Color(0xFF1E2944),
-                foregroundColor: const Color(0xFFB8C8EA),
+                backgroundColor: const Color(0xFF26282E),
+                foregroundColor: const Color(0xFFCBCED7),
               );
 
               if (useStackedHeader) {
@@ -14895,7 +14934,7 @@ class _PendingAttachmentTray extends StatelessWidget {
                 videoCount: videoCount,
                 fileCount: fileCount,
               ),
-              style: const TextStyle(color: Color(0xFF8B97B5), height: 1.4),
+              style: const TextStyle(color: Color(0xFF939BAD), height: 1.4),
             ),
           ),
           if (expanded) ...<Widget>[
@@ -14965,20 +15004,20 @@ class _PendingAttachmentRow extends StatelessWidget {
                             ? const Color(0xFF3B1521)
                             : attachment.isVideo
                                 ? const Color(0xFF2E245F)
-                                : const Color(0xFF1E2944),
+                                : const Color(0xFF26282E),
                     foregroundColor: attachment.isImage
                         ? const Color(0xFF9FF0DC)
                         : attachment.isAudio
                             ? const Color(0xFFFFB3B3)
                             : attachment.isVideo
                                 ? const Color(0xFFC9C0FF)
-                                : const Color(0xFFB8C8EA),
+                                : const Color(0xFFCBCED7),
                   ),
                   if (attachment.sizeBytes != null) ...<Widget>[
                     Text(
                       _formatAttachmentSize(attachment.sizeBytes!),
                       style: const TextStyle(
-                        color: Color(0xFF8B97B5),
+                        color: Color(0xFF939BAD),
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
                       ),
@@ -15162,7 +15201,7 @@ class _CodexOptionTray extends StatelessWidget {
       if (options.profile?.trim().isNotEmpty ?? false)
         _StatusPill(
           label: 'profile:${options.profile!.trim()}',
-          backgroundColor: const Color(0xFF233151),
+          backgroundColor: const Color(0xFF2D3037),
           foregroundColor: const Color(0xFFB7C8F8),
         ),
       if (options.searchEnabled)
@@ -15188,8 +15227,8 @@ class _CodexOptionTray extends StatelessWidget {
       if (options.configOverrides.isNotEmpty)
         const _StatusPill(
           label: 'config',
-          backgroundColor: Color(0xFF2B364D),
-          foregroundColor: Color(0xFFB8C3DA),
+          backgroundColor: Color(0xFF2E3239),
+          foregroundColor: Color(0xFFC1C6D1),
         ),
     ];
 
@@ -15465,9 +15504,9 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
                     margin: const EdgeInsets.only(bottom: 12),
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF15203B),
+                      color: const Color(0xFF1F2126),
                       borderRadius: BorderRadius.circular(18),
-                      border: Border.all(color: const Color(0xFF24355F)),
+                      border: Border.all(color: const Color(0xFF33363E)),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -15497,13 +15536,13 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
                         Text(
                           'Command: ${status.command}'
                           '${status.version == null ? '' : ' · ${status.version}'}',
-                          style: const TextStyle(color: Color(0xFF8B97B5)),
+                          style: const TextStyle(color: Color(0xFF939BAD)),
                         ),
                         if (status.usageSummary != null) ...<Widget>[
                           const SizedBox(height: 8),
                           Text(
                             status.usageSummary!,
-                            style: const TextStyle(color: Color(0xFF8B97B5)),
+                            style: const TextStyle(color: Color(0xFF939BAD)),
                           ),
                         ],
                       ],
@@ -15542,14 +15581,14 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
                   const SizedBox(height: 4),
                   Text(
                     'Recommended for this agent: ${recommendedSkillIds.join(', ')}',
-                    style: const TextStyle(color: Color(0xFF8B97B5)),
+                    style: const TextStyle(color: Color(0xFF939BAD)),
                   ),
                 ],
                 const SizedBox(height: 8),
                 if (tooling == null || tooling.skills.isEmpty)
                   const Text(
                     'No Codex skills were discovered for this backend user.',
-                    style: TextStyle(color: Color(0xFF8B97B5)),
+                    style: TextStyle(color: Color(0xFF939BAD)),
                   )
                 else
                   Wrap(
@@ -15585,7 +15624,7 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
                 if (tooling == null || tooling.mcpApps.isEmpty)
                   const Text(
                     'No repo MCP apps were discovered for this backend.',
-                    style: TextStyle(color: Color(0xFF8B97B5)),
+                    style: TextStyle(color: Color(0xFF939BAD)),
                   )
                 else
                   Column(
@@ -15622,7 +15661,7 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
                     tooling?.mcpRawOutput?.trim().isNotEmpty == true
                         ? tooling!.mcpRawOutput!
                         : 'No MCP servers were reported by `codex mcp list`.',
-                    style: const TextStyle(color: Color(0xFF8B97B5)),
+                    style: const TextStyle(color: Color(0xFF939BAD)),
                   )
                 else
                   Wrap(
@@ -15769,7 +15808,7 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFF111C34),
+        color: const Color(0xFF1B1C21),
         borderRadius: BorderRadius.circular(18),
         border: Border.all(color: installStateStyle.$2),
       ),
@@ -15792,7 +15831,7 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
                     const SizedBox(height: 4),
                     Text(
                       app.description,
-                      style: const TextStyle(color: Color(0xFFB9C5E3)),
+                      style: const TextStyle(color: Color(0xFFC7CBD5)),
                     ),
                   ],
                 ),
@@ -15812,7 +15851,7 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
             children: <Widget>[
               _StatusPill(
                 label: 'server:${app.recommendedServerId}',
-                backgroundColor: const Color(0xFF24355F),
+                backgroundColor: const Color(0xFF33363E),
                 foregroundColor: const Color(0xFFDCE5FF),
               ),
               _StatusPill(
@@ -15842,8 +15881,8 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
               ...app.tags.map(
                 (tag) => _StatusPill(
                   label: tag,
-                  backgroundColor: const Color(0xFF2B364D),
-                  foregroundColor: const Color(0xFFB8C3DA),
+                  backgroundColor: const Color(0xFF2E3239),
+                  foregroundColor: const Color(0xFFC1C6D1),
                 ),
               ),
             ],
@@ -15851,7 +15890,7 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
           const SizedBox(height: 10),
           Text(
             'Launch: $launchSummary',
-            style: const TextStyle(color: Color(0xFF8B97B5)),
+            style: const TextStyle(color: Color(0xFF939BAD)),
           ),
           if (validationError != null &&
               validationError.isNotEmpty) ...<Widget>[
@@ -15913,7 +15952,7 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
             const SizedBox(height: 12),
             Text(
               'Tools: ${app.tools.map((tool) => tool.name).join(', ')}',
-              style: const TextStyle(color: Color(0xFF8B97B5)),
+              style: const TextStyle(color: Color(0xFF939BAD)),
             ),
           ],
           const SizedBox(height: 12),
@@ -15963,7 +16002,7 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
                 width: 360,
                 child: Text(
                   installHelpText,
-                  style: const TextStyle(color: Color(0xFF8B97B5)),
+                  style: const TextStyle(color: Color(0xFF939BAD)),
                 ),
               ),
             ],
@@ -16010,7 +16049,7 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
           const Color(0xFF5A1F28),
           const Color(0xFFFFC4CB),
         ),
-      _ => ('missing', const Color(0xFF2B364D), const Color(0xFFB8C3DA)),
+      _ => ('missing', const Color(0xFF2E3239), const Color(0xFFC1C6D1)),
     };
   }
 
@@ -16048,9 +16087,9 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
         width: double.infinity,
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: const Color(0xFF0C152B),
+          color: const Color(0xFF15171A),
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: const Color(0xFF203154)),
+          border: Border.all(color: const Color(0xFF2D3037)),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -16079,12 +16118,12 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
                   if (languages.isNotEmpty)
                     Text(
                       languages,
-                      style: const TextStyle(color: Color(0xFF8B97B5)),
+                      style: const TextStyle(color: Color(0xFF939BAD)),
                     ),
                   if (signatures.isNotEmpty)
                     Text(
                       signatures,
-                      style: const TextStyle(color: Color(0xFF8B97B5)),
+                      style: const TextStyle(color: Color(0xFF939BAD)),
                     ),
                 ],
               ),
@@ -16099,9 +16138,9 @@ class _CodexToolsSheetState extends State<_CodexToolsSheet> {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFF0C152B),
+        color: const Color(0xFF15171A),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFF203154)),
+        border: Border.all(color: const Color(0xFF2D3037)),
       ),
       child: SelectableText(
         pretty,
@@ -16249,9 +16288,9 @@ class _McpAppHostScreenState extends State<_McpAppHostScreen> {
     );
 
     return Scaffold(
-      backgroundColor: const Color(0xFF08111F),
+      backgroundColor: const Color(0xFF0F1012),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF0E1730),
+        backgroundColor: const Color(0xFF181A1D),
         foregroundColor: Colors.white,
         title: Text(app.name),
         leading: IconButton(
@@ -16300,7 +16339,7 @@ class _McpAppHostScreenState extends State<_McpAppHostScreen> {
             const SizedBox(height: 8),
             const Text(
               'This MCP app is open full-screen. Close it to return to chat.',
-              style: TextStyle(color: Color(0xFF8B97B5)),
+              style: TextStyle(color: Color(0xFF939BAD)),
             ),
             const SizedBox(height: 16),
             Wrap(
@@ -16309,7 +16348,7 @@ class _McpAppHostScreenState extends State<_McpAppHostScreen> {
               children: <Widget>[
                 _StatusPill(
                   label: installState,
-                  backgroundColor: const Color(0xFF24355F),
+                  backgroundColor: const Color(0xFF33363E),
                   foregroundColor: const Color(0xFFDCE5FF),
                 ),
                 _StatusPill(
@@ -16320,8 +16359,8 @@ class _McpAppHostScreenState extends State<_McpAppHostScreen> {
                 ...app.tags.map(
                   (tag) => _StatusPill(
                     label: tag,
-                    backgroundColor: const Color(0xFF2B364D),
-                    foregroundColor: const Color(0xFFB8C3DA),
+                    backgroundColor: const Color(0xFF2E3239),
+                    foregroundColor: const Color(0xFFC1C6D1),
                   ),
                 ),
               ],
@@ -16386,9 +16425,9 @@ class _McpAppHostScreenState extends State<_McpAppHostScreen> {
                 width: double.infinity,
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF0C152B),
+                  color: const Color(0xFF15171A),
                   borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: const Color(0xFF203154)),
+                  border: Border.all(color: const Color(0xFF2D3037)),
                 ),
                 child: SelectableText(
                   _prettyMcpPreviewJson(preview?.result),
@@ -16411,26 +16450,26 @@ class _McpAppHostScreenState extends State<_McpAppHostScreen> {
               width: double.infinity,
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: const Color(0xFF111C34),
+                color: const Color(0xFF1B1C21),
                 borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: const Color(0xFF203154)),
+                border: Border.all(color: const Color(0xFF2D3037)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
                   Text(
                     'Tools: ${app.tools.isEmpty ? "none" : app.tools.map((tool) => tool.name).join(", ")}',
-                    style: const TextStyle(color: Color(0xFFB9C5E3)),
+                    style: const TextStyle(color: Color(0xFFC7CBD5)),
                   ),
                   const SizedBox(height: 8),
                   Text(
                     'Resources: ${app.resources.isEmpty ? "none" : app.resources.map((resource) => resource.name).join(", ")}',
-                    style: const TextStyle(color: Color(0xFFB9C5E3)),
+                    style: const TextStyle(color: Color(0xFFC7CBD5)),
                   ),
                   const SizedBox(height: 8),
                   Text(
                     'Prompts: ${app.prompts.isEmpty ? "none" : app.prompts.map((prompt) => prompt.name).join(", ")}',
-                    style: const TextStyle(color: Color(0xFFB9C5E3)),
+                    style: const TextStyle(color: Color(0xFFC7CBD5)),
                   ),
                 ],
               ),
@@ -16528,11 +16567,11 @@ class _McpProjectPreviewCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFF111C34),
+        color: const Color(0xFF1B1C21),
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
           color:
-              highlighted ? const Color(0xFF55D6BE) : const Color(0xFF203154),
+              highlighted ? const Color(0xFF55D6BE) : const Color(0xFF2D3037),
           width: highlighted ? 2 : 1,
         ),
       ),
@@ -16553,7 +16592,7 @@ class _McpProjectPreviewCard extends StatelessWidget {
           ),
           if (path.isNotEmpty) ...<Widget>[
             const SizedBox(height: 6),
-            Text(path, style: const TextStyle(color: Color(0xFF8B97B5))),
+            Text(path, style: const TextStyle(color: Color(0xFF939BAD))),
           ],
           if (languages.isNotEmpty) ...<Widget>[
             const SizedBox(height: 10),
@@ -16561,11 +16600,11 @@ class _McpProjectPreviewCard extends StatelessWidget {
           ],
           if (signatures.isNotEmpty) ...<Widget>[
             const SizedBox(height: 8),
-            Text(signatures, style: const TextStyle(color: Color(0xFF8B97B5))),
+            Text(signatures, style: const TextStyle(color: Color(0xFF939BAD))),
           ],
           if (readme != null && readme.isNotEmpty) ...<Widget>[
             const SizedBox(height: 12),
-            Text(readme, style: const TextStyle(color: Color(0xFFB9C5E3))),
+            Text(readme, style: const TextStyle(color: Color(0xFFC7CBD5))),
           ],
         ],
       ),
@@ -16634,9 +16673,9 @@ class _ChatDaySeparator extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           decoration: BoxDecoration(
-            color: const Color(0xFF16213C),
+            color: const Color(0xFF202227),
             borderRadius: BorderRadius.circular(999),
-            border: Border.all(color: const Color(0xFF23304F)),
+            border: Border.all(color: const Color(0xFF2C2F36)),
           ),
           child: Text(
             label,
@@ -16644,6 +16683,61 @@ class _ChatDaySeparator extends StatelessWidget {
               color: Color(0xFFDCE5FF),
               fontSize: 12,
               fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+
+/// Draggable border of the persistent sidebar (double click resets it).
+class _SidebarResizeHandle extends StatefulWidget {
+  const _SidebarResizeHandle({
+    required this.active,
+    required this.onDrag,
+    required this.onDragEnd,
+    required this.onReset,
+  });
+
+  final bool active;
+  final ValueChanged<double> onDrag;
+  final VoidCallback onDragEnd;
+  final VoidCallback onReset;
+
+  @override
+  State<_SidebarResizeHandle> createState() => _SidebarResizeHandleState();
+}
+
+class _SidebarResizeHandleState extends State<_SidebarResizeHandle> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final highlight = _hover || widget.active;
+    return Semantics(
+      label: 'Cambiar el ancho de la barra lateral',
+      child: MouseRegion(
+        cursor: SystemMouseCursors.resizeColumn,
+        onEnter: (_) => setState(() => _hover = true),
+        onExit: (_) => setState(() => _hover = false),
+        child: GestureDetector(
+          key: const ValueKey('sidebar-resize-handle'),
+          behavior: HitTestBehavior.opaque,
+          onHorizontalDragUpdate: (details) => widget.onDrag(details.delta.dx),
+          onHorizontalDragEnd: (_) => widget.onDragEnd(),
+          onDoubleTap: widget.onReset,
+          child: SizedBox(
+            width: 8,
+            child: Center(
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 120),
+                width: highlight ? 3 : 1,
+                color: highlight
+                    ? Theme.of(context).colorScheme.primary.withValues(alpha: .7)
+                    : AppPalette.border,
+              ),
             ),
           ),
         ),

@@ -82,7 +82,7 @@ class _AgentActivityTimelineState extends State<AgentActivityTimeline> {
             expanded: expanded,
             child: TextButton(
               style: TextButton.styleFrom(
-                foregroundColor: const Color(0xFFD9E4F5),
+                foregroundColor: const Color(0xFFE4E6EA),
                 alignment: Alignment.centerLeft,
                 padding:
                     const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
@@ -105,7 +105,7 @@ class _AgentActivityTimelineState extends State<AgentActivityTimeline> {
                           style: TextStyle(fontWeight: FontWeight.w600)),
                       Text(subtitle,
                           style: const TextStyle(
-                              fontSize: 12, color: Color(0xFFB8C8E0))),
+                              fontSize: 12, color: Color(0xFFC5C9D3))),
                     ])),
                 Icon(expanded ? Icons.expand_less : Icons.expand_more,
                     size: 20),
@@ -183,12 +183,12 @@ class _ActivityRowState extends State<_ActivityRow> {
       'observed' => (
           'Registrado',
           Icons.notes_rounded,
-          const Color(0xFFB8C8E0)
+          const Color(0xFFC5C9D3)
         ),
       'pending' => (
           'Pendiente',
           Icons.schedule_outlined,
-          const Color(0xFFB8C8E0)
+          const Color(0xFFC5C9D3)
         ),
       'running' => (
           'En curso',
@@ -269,7 +269,7 @@ class _ActivityRowState extends State<_ActivityRow> {
                   padding: const EdgeInsets.symmetric(vertical: 6),
                   child: RichMessageContent(
                     text: item.title,
-                    textColor: const Color(0xFFD9E4F5),
+                    textColor: const Color(0xFFE4E6EA),
                     onLinkTap: widget.onLinkTap,
                   ))
               : Column(
@@ -286,8 +286,8 @@ class _ActivityRowState extends State<_ActivityRow> {
                               : null,
                           style: TextButton.styleFrom(
                             alignment: Alignment.centerLeft,
-                            foregroundColor: const Color(0xFFD9E4F5),
-                            disabledForegroundColor: const Color(0xFFD9E4F5),
+                            foregroundColor: const Color(0xFFE4E6EA),
+                            disabledForegroundColor: const Color(0xFFE4E6EA),
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 4, vertical: 8),
                             minimumSize: const Size(48, 48),
@@ -344,7 +344,7 @@ class _ActivityRowState extends State<_ActivityRow> {
                                             maxLines: 2,
                                             overflow: TextOverflow.ellipsis,
                                             style: const TextStyle(
-                                                color: Color(0xFFB8C8E0),
+                                                color: Color(0xFFC5C9D3),
                                                 fontFamily: 'monospace',
                                                 fontSize: 12)),
                                       ],
@@ -367,12 +367,12 @@ class _ActivityRowState extends State<_ActivityRow> {
                           constraints: const BoxConstraints(maxHeight: 280),
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
-                              color: const Color(0xFF10192B),
+                              color: const Color(0xFF17181C),
                               borderRadius: BorderRadius.circular(8)),
                           child: SingleChildScrollView(
                               child: SelectableText(item.detail,
                                   style: const TextStyle(
-                                      color: Color(0xFFD9E4F5),
+                                      color: Color(0xFFE4E6EA),
                                       fontFamily: 'monospace',
                                       fontSize: 13,
                                       height: 1.45))),
@@ -649,7 +649,7 @@ class _SubagentNodeState extends State<_SubagentNode> {
                   constraints: const BoxConstraints(maxHeight: 240),
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF10192B),
+                    color: const Color(0xFF17181C),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: SingleChildScrollView(
@@ -662,7 +662,7 @@ class _SubagentNodeState extends State<_SubagentNode> {
                 const Padding(
                   padding: EdgeInsets.fromLTRB(14, 0, 14, 10),
                   child: Text('Todavía sin pasos visibles.',
-                      style: TextStyle(color: Color(0xFFB8C8E0), fontSize: 12)),
+                      style: TextStyle(color: Color(0xFFC5C9D3), fontSize: 12)),
                 ),
               for (final child in widget.children)
                 _ActivityRow(
@@ -817,7 +817,7 @@ class _DiffView extends StatelessWidget {
     return Container(
       constraints: const BoxConstraints(maxHeight: 360),
       decoration: BoxDecoration(
-        color: const Color(0xFF0D1524),
+        color: const Color(0xFF131417),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Scrollbar(
@@ -835,7 +835,7 @@ class _DiffView extends StatelessWidget {
                       padding: const EdgeInsets.all(8),
                       child: Text(
                         '… ${lines.length - shown.length} líneas más',
-                        style: const TextStyle(color: Color(0xFFB8C8E0), fontSize: 12),
+                        style: const TextStyle(color: Color(0xFFC5C9D3), fontSize: 12),
                       ),
                     ),
                 ],
@@ -856,14 +856,14 @@ class _DiffLine extends StatelessWidget {
   Widget build(BuildContext context) {
     final header = line.startsWith('--- ') || line.startsWith('+++');
     final (Color? background, Color foreground) = header
-        ? (const Color(0xFF1B2A44), const Color(0xFFE6EEFF))
+        ? (const Color(0xFF25272D), const Color(0xFFE6EEFF))
         : line.startsWith('@@')
             ? (null, const Color(0xFF8FEAFF))
             : line.startsWith('+')
                 ? (const Color(0x3326A269), const Color(0xFFB9F6CA))
                 : line.startsWith('-')
                     ? (const Color(0x33E5534B), const Color(0xFFFFC2BD))
-                    : (null, const Color(0xFFD9E4F5));
+                    : (null, const Color(0xFFE4E6EA));
     return Container(
       color: background,
       padding: EdgeInsets.fromLTRB(12, header ? 4 : 0, 16, header ? 4 : 0),

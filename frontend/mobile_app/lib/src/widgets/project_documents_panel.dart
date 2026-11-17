@@ -457,7 +457,7 @@ class _HeaderSection extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text(
                       workspaceName,
-                      style: const TextStyle(color: Color(0xFF9CA8C7)),
+                      style: const TextStyle(color: Color(0xFFA7ADBC)),
                     ),
                   ],
                 ),
@@ -532,7 +532,7 @@ class _PreviewSection extends StatelessWidget {
             render.exists
                 ? 'HTML render fallback · ${render.path}'
                 : 'No rendered preview yet',
-            style: const TextStyle(color: Color(0xFF9CA8C7)),
+            style: const TextStyle(color: Color(0xFFA7ADBC)),
           ),
           const SizedBox(height: 10),
           Container(
@@ -542,13 +542,13 @@ class _PreviewSection extends StatelessWidget {
             decoration: BoxDecoration(
               color: const Color(0xFFF8FAFC),
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFFE1E7F0)),
+              border: Border.all(color: const Color(0xFFE5E7EC)),
             ),
             child: SingleChildScrollView(
               child: SelectableText(
                 previewText,
                 style: const TextStyle(
-                  color: Color(0xFF172033),
+                  color: Color(0xFF1D1F23),
                   fontSize: 13,
                   height: 1.45,
                 ),
@@ -612,7 +612,7 @@ class _ModuleContextSection extends StatelessWidget {
           if (modules.isEmpty)
             const Text(
               'No project-management modules found.',
-              style: TextStyle(color: Color(0xFF9CA8C7)),
+              style: TextStyle(color: Color(0xFFA7ADBC)),
             )
           else
             ...modules.map((module) => _ModuleTile(module: module)),
@@ -700,7 +700,7 @@ class _ActionsSection extends StatelessWidget {
                 ? 'PDF listo · ${_formatBytes(pdfSizeBytes)}'
                 : 'Genera un PDF validado antes de crear la version entregable.',
             style: TextStyle(
-              color: hasPdf ? const Color(0xFF55D6BE) : const Color(0xFF9CA8C7),
+              color: hasPdf ? const Color(0xFF55D6BE) : const Color(0xFFA7ADBC),
             ),
           ),
           const SizedBox(height: 10),
@@ -846,7 +846,7 @@ class _ReleasesSection extends StatelessWidget {
           if (releases.isEmpty)
             const Text(
               'No delivered versions yet.',
-              style: TextStyle(color: Color(0xFF9CA8C7)),
+              style: TextStyle(color: Color(0xFFA7ADBC)),
             )
           else
             ...releases.map(
@@ -857,7 +857,7 @@ class _ReleasesSection extends StatelessWidget {
               ),
             ),
           if (selectedRelease != null) ...<Widget>[
-            const Divider(height: 24, color: Color(0xFF23304F)),
+            const Divider(height: 24, color: Color(0xFF2C2F36)),
             Text(
               'Open release ${selectedRelease!.version}',
               style: const TextStyle(
@@ -868,7 +868,7 @@ class _ReleasesSection extends StatelessWidget {
             const SizedBox(height: 6),
             Text(
               selectedRelease!.path,
-              style: const TextStyle(color: Color(0xFF9CA8C7)),
+              style: const TextStyle(color: Color(0xFFA7ADBC)),
             ),
             const SizedBox(height: 8),
             Text(
@@ -897,9 +897,9 @@ class _Surface extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFF121A30),
+        color: const Color(0xFF1A1B1F),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFF23304F)),
+        border: Border.all(color: const Color(0xFF2C2F36)),
       ),
       child: child,
     );
@@ -955,7 +955,7 @@ class _Pill extends StatelessWidget {
       constraints: const BoxConstraints(minHeight: 34),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
       decoration: BoxDecoration(
-        color: const Color(0xFF16213C),
+        color: const Color(0xFF202227),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: accent.withValues(alpha: 0.55)),
       ),
@@ -964,7 +964,7 @@ class _Pill extends StatelessWidget {
           children: <InlineSpan>[
             TextSpan(
               text: '$label: ',
-              style: const TextStyle(color: Color(0xFF9CA8C7)),
+              style: const TextStyle(color: Color(0xFFA7ADBC)),
             ),
             TextSpan(
               text: value,
@@ -992,7 +992,7 @@ class _KeyValue extends StatelessWidget {
           children: <InlineSpan>[
             TextSpan(
               text: '$label: ',
-              style: const TextStyle(color: Color(0xFF9CA8C7)),
+              style: const TextStyle(color: Color(0xFFA7ADBC)),
             ),
             TextSpan(
               text: value,
@@ -1018,12 +1018,12 @@ class _ValidationIssueTile extends StatelessWidget {
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color:
-            issue.blocking ? const Color(0xFF362411) : const Color(0xFF16213C),
+            issue.blocking ? const Color(0xFF362411) : const Color(0xFF202227),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
           color: issue.blocking
               ? const Color(0xFFFFC857)
-              : const Color(0xFF23304F),
+              : const Color(0xFF2C2F36),
         ),
       ),
       child: Column(
@@ -1069,9 +1069,9 @@ class _ModuleTile extends StatelessWidget {
       margin: const EdgeInsets.only(top: 8),
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFF16213C),
+        color: const Color(0xFF202227),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFF23304F)),
+        border: Border.all(color: const Color(0xFF2C2F36)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1082,7 +1082,7 @@ class _ModuleTile extends StatelessWidget {
                 : Icons.visibility_off_outlined,
             color: module.loadByDefault
                 ? const Color(0xFF55D6BE)
-                : const Color(0xFF9CA8C7),
+                : const Color(0xFFA7ADBC),
             size: 18,
           ),
           const SizedBox(width: 8),
@@ -1112,7 +1112,7 @@ class _ModuleTile extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   module.description,
-                  style: const TextStyle(color: Color(0xFF9CA8C7)),
+                  style: const TextStyle(color: Color(0xFFA7ADBC)),
                 ),
                 Text(
                   module.path,
@@ -1145,9 +1145,9 @@ class _ReleaseTile extends StatelessWidget {
       margin: const EdgeInsets.only(top: 8),
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFF16213C),
+        color: const Color(0xFF202227),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFF23304F)),
+        border: Border.all(color: const Color(0xFF2C2F36)),
       ),
       child: Row(
         children: <Widget>[
@@ -1165,7 +1165,7 @@ class _ReleaseTile extends StatelessWidget {
                 const SizedBox(height: 2),
                 Text(
                   release.releasedAt ?? release.path,
-                  style: const TextStyle(color: Color(0xFF9CA8C7)),
+                  style: const TextStyle(color: Color(0xFFA7ADBC)),
                 ),
               ],
             ),
@@ -1191,9 +1191,9 @@ class _SmallTag extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: const Color(0xFF0B1224),
+        color: const Color(0xFF121316),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFF23304F)),
+        border: Border.all(color: const Color(0xFF2C2F36)),
       ),
       child: Text(
         text,
