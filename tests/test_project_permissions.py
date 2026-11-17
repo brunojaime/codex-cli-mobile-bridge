@@ -30,7 +30,7 @@ def test_project_mode_overrides_server_default(tmp_path):
     assert info["claude"]["mode"] == "default"
     assert info["claude"]["source"] == "project"
     assert info["claude"]["server_default"] == "acceptEdits"
-    assert [o["mode"] for o in info["claude"]["options"]][0] == "acceptEdits"
+    assert [o["mode"] for o in info["claude"]["options"]][:2] == ["bypassPermissions", "acceptEdits"]
     assert pp.effective_mode(tmp_path, "acceptEdits") == "default"
     # Clearing keeps the other rules and goes back to the server default.
     pp.remove_rule(str(tmp_path), "allow", "x")
@@ -44,9 +44,9 @@ def test_invalid_mode_is_rejected(tmp_path):
     import pytest
 
     with pytest.raises(ValueError):
-        pp.set_mode(str(tmp_path), "bypassPermissions")
+        pp.set_mode(str(tmp_path), "yolo")
     settings = tmp_path / ".claude" / "settings.local.json"
     settings.parent.mkdir(exist_ok=True)
-    settings.write_text(json.dumps({"permissions": {"defaultMode": "bypassPermissions"}}))
+    settings.write_text(json.dumps({"permissions": {"defaultMode": "yolo"}}))
     # Unknown modes written by hand are ignored, never passed to Claude.
     assert pp.effective_mode(tmp_path, "acceptEdits") == "acceptEdits"

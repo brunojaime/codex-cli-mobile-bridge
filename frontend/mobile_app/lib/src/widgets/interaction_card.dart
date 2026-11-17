@@ -356,14 +356,25 @@ class _InteractionCardState extends State<InteractionCard> {
         const SizedBox(height: 10),
         Wrap(spacing: 8, runSpacing: 8, children: <Widget>[
           Tooltip(
-            message: 'Aprueba el plan y deja que edite archivos sin preguntar',
+            message: 'Aprueba el plan y deja que edite y ejecute comandos sin preguntar',
             child: FilledButton.icon(
+              onPressed: _busy
+                  ? null
+                  : () => _decide(const InteractionDecision.approvePlan(
+                      'bypassPermissions')),
+              icon: const Icon(Icons.bolt_rounded, size: 18),
+              label: const Text('Aprobar sin preguntar'),
+            ),
+          ),
+          Tooltip(
+            message: 'Aprueba el plan y deja que edite archivos sin preguntar',
+            child: FilledButton.tonalIcon(
               onPressed: _busy
                   ? null
                   : () => _decide(
                       const InteractionDecision.approvePlan('acceptEdits')),
               icon: const Icon(Icons.check_rounded, size: 18),
-              label: const Text('Aprobar'),
+              label: const Text('Aprobar con edición automática'),
             ),
           ),
           FilledButton.tonal(

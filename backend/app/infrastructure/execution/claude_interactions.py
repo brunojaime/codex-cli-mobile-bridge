@@ -21,7 +21,7 @@ from typing import Any
 from backend.app.infrastructure.execution.activity import entry
 
 WAITING = "waiting"
-_PLAN_MODES = {"acceptEdits", "default", "auto"}
+_PLAN_MODES = {"bypassPermissions", "acceptEdits", "default", "auto"}
 
 
 def interaction_kind(tool_name: str) -> str:
@@ -123,6 +123,7 @@ def build_response(
             {"type": "setMode", "mode": mode, "destination": "session"}
         ]
         label = {
+            "bypassPermissions": "Plan aprobado · sin preguntar",
             "acceptEdits": "Plan aprobado · ediciones automáticas",
             "default": "Plan aprobado · aprobar cada edición",
             "auto": "Plan aprobado · modo automático",
