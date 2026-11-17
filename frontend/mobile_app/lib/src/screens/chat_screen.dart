@@ -14,6 +14,7 @@ import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
@@ -519,7 +520,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   bool _sidebarCollapsed = false;
   double? _sidebarWidth;
   bool _resizingSidebar = false;
-  static const double _minSidebarWidth = 220;
+  static const double _minSidebarWidth = 260;
   static const double _maxSidebarWidth = 640;
 
   double _effectiveSidebarWidth(double screenWidth) {
@@ -528,11 +529,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     return preferred.clamp(_minSidebarWidth, math.max(_minSidebarWidth, max));
   }
 
-  void _resizeSidebar(double delta, double screenWidth) {
+  double _sidebarDragStartWidth = 0;
+
+  void _startSidebarResize(double screenWidth) {
+    _sidebarDragStartWidth = _effectiveSidebarWidth(screenWidth);
+  }
+
+  /// [offset] is the total pointer travel since the drag started, so the
+  /// border follows the pointer exactly (no lost slop or skipped events).
+  void _resizeSidebar(double offset, double screenWidth) {
     setState(() {
       _resizingSidebar = true;
-      final current = _sidebarWidth ?? _effectiveSidebarWidth(screenWidth);
-      _sidebarWidth = (current + delta)
+      _sidebarWidth = (_sidebarDragStartWidth + offset)
           .clamp(160.0, math.min(_maxSidebarWidth, screenWidth * 0.5));
     });
   }
@@ -1025,51 +1033,78 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         final Widget sidebarContent = SafeArea(
               child: Column(
                 children: <Widget>[
-                  ListTile(
-                    title: const Text('Proyectos'),
-                    subtitle: InkWell(
-                      onTap: () async {
-                        _closeSidebarIfDrawer(context);
-                        await _openObjectiveTeam();
-                      },
-                      child: const Padding(padding: EdgeInsets.symmetric(vertical: 8),
-                        child: Text('Ver ejecuciones del equipo', style: TextStyle(color: Color(0xFF55D6BE)))),
-                    ),
-                    trailing: Wrap(
-                      spacing: 4,
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 10, 6, 0),
+                    child: Row(
                       children: <Widget>[
+                        const Expanded(
+                          child: Text(
+                            'Proyectos',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                                fontSize: 15, fontWeight: FontWeight.w700),
+                          ),
+                        ),
                         IconButton(
+                          visualDensity: VisualDensity.compact,
                           tooltip: 'Equipo por objetivos',
-                          icon: const Icon(Icons.hub_outlined),
+                          icon: const Icon(Icons.hub_outlined, size: 20),
                           onPressed: () async {
                             _closeSidebarIfDrawer(context);
                             await _openObjectiveTeam();
                           },
                         ),
-                        IconButton(
-                          onPressed: () async {
-                            await _toggleSidebarExpanded();
-                          },
-                          icon: Icon(
-                            _sidebarExpanded
-                                ? Icons.close_fullscreen_rounded
-                                : Icons.open_in_full_rounded,
+                        if (!_persistentSidebarActive)
+                          IconButton(
+                            visualDensity: VisualDensity.compact,
+                            onPressed: () async {
+                              await _toggleSidebarExpanded();
+                            },
+                            icon: Icon(
+                              _sidebarExpanded
+                                  ? Icons.close_fullscreen_rounded
+                                  : Icons.open_in_full_rounded,
+                              size: 20,
+                            ),
+                            tooltip: _sidebarExpanded
+                                ? 'Use compact sidebar'
+                                : 'Expand sidebar',
                           ),
-                          tooltip: _sidebarExpanded
-                              ? 'Use compact sidebar'
-                              : 'Expand sidebar',
-                        ),
                         IconButton(
+                          visualDensity: VisualDensity.compact,
                           onPressed: () async {
                             await _openWorkspacePicker();
                             if (context.mounted) {
                               _closeSidebarIfDrawer(context);
                             }
                           },
-                          icon: const Icon(Icons.add),
+                          icon: const Icon(Icons.add, size: 20),
                           tooltip: 'Choose project for new chat',
                         ),
                       ],
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: InkWell(
+                      borderRadius: BorderRadius.circular(6),
+                      onTap: () async {
+                        _closeSidebarIfDrawer(context);
+                        await _openObjectiveTeam();
+                      },
+                      child: Text(
+                        'Ver ejecuciones del equipo',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                      ),
+                    ),
                     ),
                   ),
                   const Divider(height: 1),
@@ -1081,9 +1116,15 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                         showSelectedIcon: false,
                         segments: const <ButtonSegment<bool>>[
                           ButtonSegment<bool>(
-                              value: false, label: Text('Activos')),
+                              value: false,
+                              label: Text('Activos',
+                                  maxLines: 1, softWrap: false)),
                           ButtonSegment<bool>(
-                              value: true, label: Text('Archivados')),
+                              value: true,
+                              label: Text('Archivados',
+                                  maxLines: 1,
+                                  softWrap: false,
+                                  overflow: TextOverflow.fade)),
                         ],
                         selected: <bool>{_showArchivedChatsInSidebar},
                         style: SegmentedButton.styleFrom(
@@ -1959,7 +2000,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     if (!_sidebarCollapsed)
                       _SidebarResizeHandle(
                         active: _resizingSidebar,
-                        onDrag: (delta) => _resizeSidebar(delta, screenWidth),
+                        onDragStart: () => _startSidebarResize(screenWidth),
+                        onDrag: (offset) => _resizeSidebar(offset, screenWidth),
                         onDragEnd: _finishSidebarResize,
                         onReset: _resetSidebarWidth,
                       ),
@@ -5880,29 +5922,27 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                     'workspace-${workspace.path}${_sessionSearch.trim().isEmpty ? '' : '-search'}'),
                 initiallyExpanded:
                     hasSelected || _sessionSearch.trim().isNotEmpty,
-                tilePadding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 6,
-                ),
+                tilePadding: const EdgeInsets.only(left: 12, right: 6),
                 childrenPadding: const EdgeInsets.only(bottom: 10),
                 iconColor: const Color(0xFFA6ADBC),
                 collapsedIconColor: const Color(0xFFA6ADBC),
                 title: Row(
                   children: <Widget>[
                     Container(
-                      width: 38,
-                      height: 38,
+                      width: 30,
+                      height: 30,
                       decoration: BoxDecoration(
                         color: activeJobCount > 0
                             ? const Color(0x33FFC857)
                             : outgoingUploadCount > 0
                                 ? const Color(0x223F5EF7)
                                 : const Color(0xFF25282D),
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(9),
                       ),
                       alignment: Alignment.center,
                       child: Icon(
                         Icons.folder_rounded,
+                        size: 18,
                         color: activeJobCount > 0
                             ? const Color(0xFFFFC857)
                             : outgoingUploadCount > 0
@@ -5912,7 +5952,7 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                                     : const Color(0xFFA6ADBC),
                       ),
                     ),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 10),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -5933,27 +5973,34 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                             ),
                           ),
                           const SizedBox(height: 2),
-                          Text(
-                            archivedOnly
-                                ? '${workspace.path} • ${visibleSessions.length} archived chat${visibleSessions.length == 1 ? '' : 's'}'
-                                : '${workspace.path} • ${visibleSessions.length} chat${visibleSessions.length == 1 ? '' : 's'}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Color(0xFF939BAD),
-                              fontSize: 12,
+                          // The full path is long and rarely useful at a
+                          // glance: keep it in a tooltip, show the count.
+                          Tooltip(
+                            message: workspace.path,
+                            child: Text(
+                              archivedOnly
+                                  ? '${visibleSessions.length} archivado${visibleSessions.length == 1 ? '' : 's'}'
+                                  : '${visibleSessions.length} chat${visibleSessions.length == 1 ? '' : 's'}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Color(0xFF939BAD),
+                                fontSize: 12,
+                              ),
                             ),
                           ),
-                          const SizedBox(height: 6),
-                          _ProjectStatusPill(
-                            active: hasBackgroundActivity,
-                            label: _formatProjectActivityLabel(
-                              activeJobCount: activeJobCount,
-                              activeChatCount: activeChatCount,
-                              outgoingUploadCount: outgoingUploadCount,
-                              outgoingChatCount: outgoingChatCount,
+                          if (hasBackgroundActivity) ...[
+                            const SizedBox(height: 6),
+                            _ProjectStatusPill(
+                              active: hasBackgroundActivity,
+                              label: _formatProjectActivityLabel(
+                                activeJobCount: activeJobCount,
+                                activeChatCount: activeChatCount,
+                                outgoingUploadCount: outgoingUploadCount,
+                                outgoingChatCount: outgoingChatCount,
+                              ),
                             ),
-                          ),
+                          ],
                         ],
                       ),
                     ),
@@ -5972,10 +6019,10 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
                       ),
                     if (unreadChatsCount > 0)
                       Container(
-                        margin: const EdgeInsets.only(right: 8),
+                        margin: const EdgeInsets.only(right: 4),
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
+                          horizontal: 6,
+                          vertical: 1,
                         ),
                         decoration: BoxDecoration(
                           color: const Color(0xFF55D6BE),
@@ -16696,12 +16743,16 @@ class _ChatDaySeparator extends StatelessWidget {
 class _SidebarResizeHandle extends StatefulWidget {
   const _SidebarResizeHandle({
     required this.active,
+    required this.onDragStart,
     required this.onDrag,
     required this.onDragEnd,
     required this.onReset,
   });
 
   final bool active;
+  final VoidCallback onDragStart;
+
+  /// Total horizontal travel since the drag started.
   final ValueChanged<double> onDrag;
   final VoidCallback onDragEnd;
   final VoidCallback onReset;
@@ -16712,6 +16763,7 @@ class _SidebarResizeHandle extends StatefulWidget {
 
 class _SidebarResizeHandleState extends State<_SidebarResizeHandle> {
   bool _hover = false;
+  double _startX = 0;
 
   @override
   Widget build(BuildContext context) {
@@ -16725,7 +16777,13 @@ class _SidebarResizeHandleState extends State<_SidebarResizeHandle> {
         child: GestureDetector(
           key: const ValueKey('sidebar-resize-handle'),
           behavior: HitTestBehavior.opaque,
-          onHorizontalDragUpdate: (details) => widget.onDrag(details.delta.dx),
+          dragStartBehavior: DragStartBehavior.down,
+          onHorizontalDragDown: (details) {
+            _startX = details.globalPosition.dx;
+            widget.onDragStart();
+          },
+          onHorizontalDragUpdate: (details) =>
+              widget.onDrag(details.globalPosition.dx - _startX),
           onHorizontalDragEnd: (_) => widget.onDragEnd(),
           onDoubleTap: widget.onReset,
           child: SizedBox(

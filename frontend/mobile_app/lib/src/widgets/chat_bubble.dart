@@ -121,7 +121,7 @@ class ChatBubble extends StatelessWidget {
                   (isCollapsed ||
                       message.text.length > 600 ||
                       '\n'.allMatches(message.text).length > 10 ||
-                      message.activities.length > 4))
+                      (!isUser && message.activities.length > 4)))
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
