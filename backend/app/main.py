@@ -12,6 +12,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.app.api.routes import ensure_dev_stage_chat_run, get_container, router
 from backend.app.api.quality_routes import router as quality_router
 from backend.app.api.agent_launch_routes import router as agent_launch_router
+from backend.app.api.agent_proposal_routes import router as agent_proposal_router
+from backend.app.api.work_routes import router as work_router, get_work
+from backend.app.api.work_hub import install_work_hub
+from backend.app.application.services.work_coordinator import WorkspaceBusy
 from backend.app.application.services.message_service import MaintenanceModeError
 from backend.app.container import AppContainer, build_container
 from backend.app.infrastructure.config.settings import Settings
@@ -23,6 +27,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     container = build_container(settings)
     app = FastAPI(title=container.settings.app_name)
     _configure_dependencies(app, container)
+    install_work_hub(app, container.settings)
     _configure_middleware(app, container)
     _configure_exception_handlers(app)
     _configure_background_workers(app, container)
@@ -32,6 +37,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(quality_router, prefix="/api/v1")
     app.include_router(agent_launch_router)
     app.include_router(agent_launch_router, prefix="/api/v1")
+    app.include_router(agent_proposal_router)
+    app.include_router(agent_proposal_router, prefix="/api/v1")
+    app.include_router(work_router)
+    app.include_router(work_router, prefix="/api/v1")
     return app
 
 
@@ -61,6 +70,9 @@ def _configure_middleware(app: FastAPI, container: AppContainer) -> None:
 
 
 def _configure_exception_handlers(app: FastAPI) -> None:
+    @app.exception_handler(WorkspaceBusy)
+    async def workspace_busy(_request, exc):
+        return JSONResponse(status_code=409,content={"detail":str(exc)})
     @app.exception_handler(MaintenanceModeError)
     async def handle_maintenance_mode_error(  # type: ignore[unused-ignore]
         _request,
@@ -134,6 +146,28 @@ def _configure_exception_handlers(app: FastAPI) -> None:
 
 def _configure_background_workers(app: FastAPI, container: AppContainer) -> None:
     runner_task: asyncio.Task[None] | None = None
+    work_task: asyncio.Task[None] | None = None
+
+    @app.on_event('startup')
+    async def start_work_coordinator():
+        nonlocal work_task
+        service = get_work(container)
+        async def loop():
+            while True:
+                try:
+                    await asyncio.to_thread(service.tick)
+                except Exception:
+                    import logging
+                    logging.getLogger(__name__).exception('Work coordinator pass failed')
+                await asyncio.sleep(15)
+        work_task = asyncio.create_task(loop(),name='work-coordinator')
+
+    @app.on_event('shutdown')
+    async def stop_work_coordinator():
+        if work_task:
+            work_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await work_task
 
     @app.on_event("startup")
     async def resume_message_outbox() -> None:

@@ -41,7 +41,16 @@ def create_app(*, backend_url: str, ledger_path: Path, consumers: dict, handoff_
 
     @router.get('/feedback-contract')
     async def contract():
-        return {'kind': 'codex.feedbackContract', 'version': 1, 'supportedBatchVersions': [1, 3], 'canonicalBatchVersion': 3, 'submissionPath': '/feedback-batches/start-session', 'idempotentSubmissions': True, 'submissionStatusPath': '/feedback-submissions/{batchId}', 'releaseRequestExpandsAuthority': False, 'executorEnvironment': 'prod'}
+        value = {'kind': 'codex.feedbackContract', 'version': 1, 'supportedBatchVersions': [1, 3], 'canonicalBatchVersion': 3, 'submissionPath': '/feedback-batches/start-session', 'idempotentSubmissions': True, 'submissionStatusPath': '/feedback-submissions/{batchId}', 'releaseRequestExpandsAuthority': False, 'executorEnvironment': 'prod', 'supportedExecutionModes': ['execute']}
+        upstream = await backend('/feedback-contract')
+        if upstream.status_code == 200:
+            capabilities = upstream.json()
+            if ('backlog' in capabilities.get('supportedExecutionModes', [])
+                and 3 in capabilities.get('supportedBatchVersions', [])
+                and capabilities.get('idempotentSubmissions') is True
+                and capabilities.get('backlogReceiptField') == 'backlogId'):
+                value.update(supportedExecutionModes=['execute', 'backlog'], backlogReceiptField='backlogId')
+        return value
 
     @router.get('/feedback-workflow-presets')
     async def presets():
@@ -67,6 +76,10 @@ def create_app(*, backend_url: str, ledger_path: Path, consumers: dict, handoff_
         if request.headers.get('origin') not in (None, consumer['origin']):
             raise HTTPException(403, 'Exact consumer origin required')
         await prod_health()
+        if payload.execution_mode == 'backlog':
+            capabilities = await contract()
+            if 'backlog' not in capabilities['supportedExecutionModes']:
+                raise HTTPException(409, 'PROD backlog capability not advertised; queue retained')
         canonical = payload.model_dump(mode='json', exclude_none=True)
         try:
             reservation = await run_in_threadpool(ledger.reserve, canonical)
@@ -88,8 +101,9 @@ def create_app(*, backend_url: str, ledger_path: Path, consumers: dict, handoff_
             if response.status_code != 202:
                 raise HTTPException(502, {'code': 'prod_feedback_not_accepted', 'upstreamStatus': response.status_code, 'batchId': reservation['id']})
             receipt = response.json()
-            if not receipt.get('job_id') or not receipt.get('session_id'):
-                raise HTTPException(502, 'PROD receipt missing job/session; reconcile before retry')
+            valid_receipt = (isinstance(receipt.get('backlogId'), str) and bool(receipt['backlogId'].strip())) if payload.execution_mode == 'backlog' else bool(receipt.get('job_id') and receipt.get('session_id'))
+            if not valid_receipt:
+                raise HTTPException(502, 'PROD receipt missing required identity; reconcile before retry')
             await run_in_threadpool(ledger.finish, reservation['id'], reservation['owner'], receipt)
             return receipt
         except BaseException:

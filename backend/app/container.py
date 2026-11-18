@@ -122,6 +122,7 @@ class AppContainer:
     persistence_startup_issue: PersistenceDiagnosticIssue | None = None
     pipeline_quality_service: PipelineQualityService | None = None
     message_outbox_service: MessageOutboxService | None = None
+    work_coordinator_service: object | None = None
 
 
 def build_container(settings: Settings | None = None) -> AppContainer:

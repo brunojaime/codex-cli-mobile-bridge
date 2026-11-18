@@ -1089,6 +1089,7 @@ class InstallableAppRegistrationRequest(BaseModel):
 
 
 class FeedbackBatchStartRequest(BaseModel):
+    execution_mode: Literal["execute", "backlog"] = Field(default="execute", validation_alias=AliasChoices("execution_mode", "executionMode"))
     model_config = ConfigDict(extra="forbid")
     kind: Literal["codex.developerFeedbackBatch"] = "codex.developerFeedbackBatch"
     # Both are deployed contracts. Unknown versions must fail, not disappear.
