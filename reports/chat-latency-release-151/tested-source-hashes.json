@@ -1,0 +1,8 @@
+{
+  "frontend/mobile_app/lib/src/state/chat_controller.dart": "fa55dd691e4959fb6c6855cb8b5035daf2b8c4dc35e6b4fea1fc0b7f8d979eef",
+  "frontend/mobile_app/lib/src/screens/chat_screen.dart": "400b9e02a07b028184b0440192b2d76c26314423214d5147d93a1226e9f0785b",
+  "frontend/mobile_app/lib/src/services/api_client.dart": "7c63fa04f646393f97b8d0b3d428c990c766e6313c4b50108655b3d0d558f4ce",
+  "frontend/mobile_app/lib/src/widgets/chat_bubble.dart": "4bb73f8f1c43d2b354dba0647dbc51f2d556e17d173361d4adca8e86331fdf4d",
+  "frontend/mobile_app/test/chat_controller_latency_test.dart": "54ad7ae32732b33b161ad0ca31f89769dc6a1351ebe63eabf31a657f374118e6",
+  "scripts/check_chat_latency.py": "0f2d05f73b19eb085c9450234d1bcd8c863c0cee03661010d01f7a0cb17477fc"
+}

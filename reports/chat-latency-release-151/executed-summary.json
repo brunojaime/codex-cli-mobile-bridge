@@ -1,0 +1,13 @@
+{
+  "target": "Local Flutter tests with controlled delayed API; not installed APK",
+  "tests": 78,
+  "passed": 78,
+  "exit_code": 0,
+  "observations": {
+    "switch-responsive": true,
+    "send-responsive": true,
+    "latency-evidence": true
+  },
+  "production_after": "Publication tracked separately; installed-device verification pending",
+  "failed_tests": []
+}
