@@ -17,6 +17,9 @@ from uuid import uuid4
 import xml.etree.ElementTree as ET
 import zipfile
 
+from backend.app.infrastructure.media.video_preview import prepare_video_preview
+from backend.app.infrastructure.media.video_transcript import transcript_note
+
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 
@@ -383,17 +386,21 @@ class MessageService:
         default_workspace_path: str,
         audio_transcriber: AudioTranscriber,
         bridge_environment: str = "dev",
+        bridge_api_port: int | None = None,
         document_text_char_limit: int = 20_000,
         title_generation_model: str | None = None,
         follow_up_reconcile_interval_seconds: float | None = None,
+        quality_service: Any | None = None,
     ) -> None:
         self._repository = repository
         self._execution_provider = execution_provider
         self._default_workspace_path = str(Path(default_workspace_path).resolve())
         self._bridge_environment = bridge_environment
+        self._bridge_api_port = bridge_api_port
         self._audio_transcriber = audio_transcriber
         self._document_text_char_limit = document_text_char_limit
         self._title_generation_model = (title_generation_model or "").strip() or None
+        self._quality_service = quality_service
         self._retry_asset_root = (
             Path(tempfile.gettempdir()) / "codex-remote-retry-assets"
         )
@@ -434,13 +441,16 @@ class MessageService:
         agent_profile_id: str | None = None,
         turn_summaries_enabled: bool = False,
         title_is_placeholder: bool | None = None,
+        session_id: str | None = None,
     ) -> ChatSession:
+        if session_id is not None and self.get_session(session_id) is not None:
+            raise ValueError("Session identifier already exists")
         workspace = self._resolve_workspace(workspace_path)
         profile = self.get_agent_profile(agent_profile_id or "default")
         configuration = self._profile_configuration_for_session(profile)
         resolved_title = title or "New chat"
         session = ChatSession(
-            id=str(uuid4()),
+            id=session_id or str(uuid4()),
             title=resolved_title,
             workspace_path=workspace.path,
             workspace_name=workspace.name,
@@ -459,11 +469,20 @@ class MessageService:
         self._repository.save_session(session)
         return session
 
+    def list_session_cards(self, **kwargs):
+        return self._repository.list_session_cards(**kwargs)
+
+    def list_session_summary_inputs(self):
+        return self._repository.list_session_summary_inputs()
+
     def list_sessions(self) -> list[ChatSession]:
         return self._repository.list_sessions()
 
     def list_stored_jobs(self) -> list[Job]:
         return self._repository.list_jobs()
+
+    def list_summary_jobs(self) -> list[Job]:
+        return self._repository.list_summary_jobs()
 
     def list_stored_jobs_for_session(self, session_id: str) -> list[Job]:
         return self._repository.list_jobs_for_session(session_id)
@@ -1078,6 +1097,7 @@ class MessageService:
         codex_options: CodexRunOptions | None = None,
         *,
         author_type: ChatMessageAuthorType = ChatMessageAuthorType.HUMAN,
+        video_paths: list[str] | None = None,
         agent_id: AgentId = AgentId.USER,
         agent_type: AgentType = AgentType.HUMAN,
         agent_label: str | None = None,
@@ -1135,6 +1155,23 @@ class MessageService:
             execution_message or message,
             normalized_codex_options,
         )
+        if (
+            self._quality_service is not None
+            and conversation_kind == JobConversationKind.PRIMARY
+            and author_type == ChatMessageAuthorType.HUMAN
+        ):
+            intake = self._quality_service.chat_intake_context(
+                workspace=session.workspace_path,
+                source_ref=f"chat:{session.id}:run:{resolved_run_id}",
+                text=execution_message or message,
+            )
+            if intake:
+                resolved_user_prompt += "\n\n" + intake
+            acceptance = self._quality_service.feedback_validation_context(
+                session.workspace_path
+            )
+            if acceptance:
+                resolved_user_prompt += "\n\n" + acceptance
         if self._prod_bridge_repo_governance_applies(session):
             resolved_user_prompt = self._apply_prod_bridge_governance_notice(
                 resolved_user_prompt
@@ -1175,6 +1212,16 @@ class MessageService:
             content=message,
             status=ChatMessageStatus.COMPLETED,
         )
+        if (self._bridge_api_port is not None
+                and author_type == ChatMessageAuthorType.HUMAN
+                and conversation_kind == JobConversationKind.PRIMARY):
+            execution_message += (
+                "\n\nBridge handoff context (metadata, not a launch request): "
+                f"bridge_url=http://127.0.0.1:{self._bridge_api_port}; "
+                f"source_session_id={session.id}; source_message_id={user_message.id}. "
+                "Use only for an explicit request to start a separate Generator/Reviewer chat. "
+                "Never delegate this task again merely because this metadata is present."
+            )
         assistant_message = ChatMessage(
             id=str(uuid4()),
             session_id=session.id,
@@ -1197,6 +1244,7 @@ class MessageService:
                 display_message=message,
                 execution_message=execution_message or message,
                 image_paths=image_paths,
+                video_paths=video_paths,
                 cleanup_paths=cleanup_paths,
                 user_message_id=user_message.id,
                 assistant_message_id=assistant_message.id,
@@ -1477,10 +1525,11 @@ class MessageService:
                 resolved_path,
                 fallback_suffix=".mp4",
             )
+            preview_paths, preview_note = prepare_video_preview(video_path)
             video_reference = self._build_video_file_reference(
                 video_path=video_path,
                 content_type=content_type,
-            )
+            ) + "\n" + preview_note + "\n" + self._video_transcript_note(video_path, language)
             prompt = self._build_document_execution_message(
                 message=message,
                 document_kind=document_kind,
@@ -1492,6 +1541,8 @@ class MessageService:
                 display_message,
                 session_id=session_id,
                 workspace_path=workspace_path,
+                video_paths=[video_path],
+                image_paths=preview_paths,
                 cleanup_paths=cleanup_paths,
                 execution_message=prompt,
                 codex_options=codex_options,
@@ -1639,6 +1690,16 @@ class MessageService:
             attached_image_name=attached_image_name,
         )
 
+    def _video_transcript_note(self, path: str, language: str | None) -> str:
+        transcribe = getattr(self._audio_transcriber, "transcribe_video", None)
+        try:
+            result = transcribe(Path(path), language=language) if transcribe else {
+                "status": "unavailable", "reason": "Local video transcription is not configured. Original retained."}
+            return transcript_note(result)
+        except Exception:
+            # A transcription failure must not discard frames or the original video.
+            return transcript_note({"status": "unavailable"})
+
     def submit_attachment_message(
         self,
         attachments: list[AttachmentInput],
@@ -1654,6 +1715,8 @@ class MessageService:
 
         cleanup_paths: list[str] = []
         image_paths: list[str] = []
+        video_paths: list[str] = []
+        video_preview_budget = 24
         attachment_summaries: list[str] = []
         attachment_details: list[str] = []
 
@@ -1698,6 +1761,10 @@ class MessageService:
                     resolved_path,
                     fallback_suffix=".mp4",
                 )
+                video_paths.append(video_path)
+                preview_paths, preview_note = prepare_video_preview(video_path, max_frames=video_preview_budget)
+                video_preview_budget -= len(preview_paths)
+                image_paths.extend(preview_paths)
                 attachment_details.append(
                     self._build_attachment_detail_section(
                         index=index,
@@ -1707,7 +1774,7 @@ class MessageService:
                         content=self._build_video_file_reference(
                             video_path=video_path,
                             content_type=attachment.content_type,
-                        ),
+                        ) + "\n" + preview_note + "\n" + self._video_transcript_note(video_path, language),
                     )
                 )
                 continue
@@ -1785,6 +1852,7 @@ class MessageService:
             session_id=session_id,
             workspace_path=workspace_path,
             image_paths=image_paths or None,
+            video_paths=video_paths,
             cleanup_paths=cleanup_paths,
             execution_message=execution_message,
             codex_options=codex_options,
@@ -1836,6 +1904,7 @@ class MessageService:
                 execution_message=original_job.execution_message
                 or original_job.message,
                 image_paths=original_job.image_paths,
+                video_paths=original_job.video_paths,
                 cleanup_paths=None,
                 user_message_id=original_job.user_message_id,
                 assistant_message_id=assistant_message.id,
@@ -2019,10 +2088,11 @@ class MessageService:
         job = self._repository.get_job(job_id)
         if job is None:
             return None
-        if attachment_index < 0 or attachment_index >= len(job.image_paths):
+        paths = [*job.image_paths, *job.video_paths]
+        if attachment_index < 0 or attachment_index >= len(paths):
             return None
 
-        image_path = Path(job.image_paths[attachment_index])
+        image_path = Path(paths[attachment_index])
         if not image_path.exists() or not image_path.is_file():
             return None
 
@@ -2077,6 +2147,7 @@ class MessageService:
         trigger_source: AgentTriggerSource,
         run_id: str | None,
         submission_token: str | None = None,
+        video_paths: list[str] | None = None,
     ) -> Job:
         retryable_image_paths = self._persist_retryable_image_paths(image_paths)
         job_id = self._execution_provider.execute(
@@ -2105,6 +2176,7 @@ class MessageService:
             submission_token=submission_token,
             execution_message=execution_message,
             image_paths=retryable_image_paths,
+            video_paths=list(video_paths or []),
         )
 
     def _persist_retryable_image_paths(
@@ -2153,8 +2225,8 @@ class MessageService:
         parts = [
             f"Video local path: {video_path}",
             f"Content type: {content_type or 'unknown'}",
-            "Use local tools such as ffmpeg/ffprobe to inspect frames, duration, "
-            "metadata, or audio when needed.",
+            "The original video is retained. Prepared preview images, when available, "
+            "are supplied below; no video player or shell tool is required to inspect them.",
         ]
         return "\n".join(parts)
 
@@ -2438,6 +2510,14 @@ class MessageService:
             reviewer_decision = self._parse_reviewer_decision(reviewer_prompt)
             if reviewer_decision is not None:
                 reviewer_prompt = reviewer_decision.prompt
+            if self._quality_service is not None:
+                repair_context = self._quality_service.repair_context(
+                    session.workspace_path
+                )
+                if repair_context:
+                    reviewer_prompt = (reviewer_prompt or "") + "\n\n" + repair_context
+                    # A reviewer's completion claim cannot override missing runner evidence.
+                    reviewer_decision = None
             reviewer_message = self._latest_completed_agent_message(
                 session.id,
                 run_id=job.run_id,
@@ -2805,6 +2885,7 @@ class MessageService:
             execution_message=self._build_reviewer_execution_message(
                 reviewer_prompt=reviewer.prompt,
                 primary_response=primary_response,
+                workspace_path=session.workspace_path,
             ),
             user_message_id=None,
             conversation_kind=JobConversationKind.REVIEWER,
@@ -3032,6 +3113,9 @@ class MessageService:
         session: ChatSession,
         agent_id: AgentId,
     ) -> str | None:
+        if agent_id == AgentId.REVIEWER and self._quality_service is not None:
+            if self._quality_service.reviewer_context(session.workspace_path):
+                return None
         configuration = session.agent_configuration.normalized()
         definition = configuration.agents.get(agent_id)
         if definition is not None:
@@ -3650,6 +3734,7 @@ class MessageService:
                 execution_message=self._build_reviewer_execution_message(
                     reviewer_prompt=definition.prompt,
                     primary_response=primary_message.content.strip(),
+                    workspace_path=session.workspace_path,
                 ),
                 user_message_id=None,
                 conversation_kind=JobConversationKind.REVIEWER,
@@ -4128,7 +4213,20 @@ class MessageService:
         *,
         reviewer_prompt: str,
         primary_response: str,
+        workspace_path: str | None = None,
     ) -> str:
+        if workspace_path and self._quality_service is not None:
+            context = self._quality_service.reviewer_context(workspace_path)
+            if context:
+                return (
+                    f"{reviewer_prompt}\n\n{context}\n\n"
+                    "Inspect the specification, diff and actual executable evidence independently. "
+                    "Return only JSON: {\"status\":\"continue\",\"prompt\":\"specific missing work\"} "
+                    "or {\"status\":\"complete\",\"summary\":\"criteria and receipt references\"}. "
+                    "Use continue while any required criterion lacks current passing evidence. "
+                    "The generator narrative is deliberately absent. This process starts a fresh provider session; "
+                    "repository-wide ambient memory may still exist and must not be treated as proof."
+                )
         return (
             f"{reviewer_prompt}\n\n"
             "Generator Codex latest answer:\n"

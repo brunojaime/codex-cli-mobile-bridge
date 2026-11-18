@@ -1,0 +1,26 @@
+{
+  "source": "read-only connection to current prod SQLite; isolated API, no live restart",
+  "initial_page": [
+    {
+      "elapsed_ms": 56.9,
+      "bytes": 41177,
+      "items": 40
+    },
+    {
+      "elapsed_ms": 44.5,
+      "bytes": 41177,
+      "items": 40
+    },
+    {
+      "elapsed_ms": 41.6,
+      "bytes": 41177,
+      "items": 40
+    }
+  ],
+  "refresh": {
+    "elapsed_ms": 42.0,
+    "bytes": 47,
+    "changed_items": 0
+  },
+  "previous_measured_list_bytes": 2855445
+}

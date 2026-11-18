@@ -19,6 +19,10 @@ from backend.app.application.services.project_factory_manifest_service import (
 from backend.app.application.services.project_factory_reference_asset_service import (
     ProjectFactoryReferenceAsset,
 )
+from backend.app.application.services.pipeline_quality_service import (
+    PipelineQualityService,
+    QualityError,
+)
 
 
 ALLOWED_ENV_KEYS = frozenset(
@@ -180,11 +184,13 @@ class ProjectFactoryJobRunner:
         process_runner: ProjectFactoryProcessRunner | None = None,
         remote_preflight: ProjectFactoryRemotePreflight | None = None,
         visual_ux_skill_path: Path | None = None,
+        quality_service: PipelineQualityService | None = None,
     ) -> None:
         self._generator_service = generator_service
         self._process_runner = process_runner or SubprocessProjectFactoryProcessRunner()
         self._remote_preflight = remote_preflight
         self._visual_ux_skill_path = visual_ux_skill_path
+        self._quality_service = quality_service
 
     def run(
         self,
@@ -459,6 +465,67 @@ class ProjectFactoryJobRunner:
             event_sink=event_sink,
             timeout_seconds=context.timeout_seconds,
         )
+        if must_run_generated_validation and self._quality_service is not None:
+            # The publish-finalize agent may change source AFTER the earlier validation.
+            # Validate the final committed candidate and retain a runner-owned receipt.
+            try:
+                if (project_path / ".codex/quality.json").is_file():
+                    packet = self._quality_service.register_file(
+                        workspace=str(project_path),
+                        work_item_id=f"factory:{context.draft_id}",
+                        links={"factory_draft_id": context.draft_id},
+                    )
+                else:
+                    packet = self._quality_service.register(
+                        workspace=str(project_path),
+                        work_item_id=f"factory:{context.draft_id}",
+                        links={"factory_draft_id": context.draft_id},
+                        contract={
+                            "version": 1,
+                            "project_id": project_path.name,
+                            "environment": "dev",
+                            "criteria": [
+                                {
+                                    "id": "generated-validation",
+                                    "description": "Final committed candidate passes generated technical validation; functional acceptance is separate",
+                                    "check_ids": ["generated-validation"],
+                                }
+                            ],
+                            "checks": [
+                                {
+                                    "id": "generated-validation",
+                                    "argv": [
+                                        "bash",
+                                        "scripts/validate_generated_project.sh",
+                                    ],
+                                    "timeout_seconds": min(
+                                        max(context.timeout_seconds, 120), 1800
+                                    ),
+                                }
+                            ],
+                        },
+                    )
+                source = self._quality_service.snapshot(project_path)
+                result = self._quality_service.execute(
+                    packet["id"], attempt_key="factory-" + source["revision"]
+                )
+                quality = result.get("quality") or self._quality_service.status(
+                    packet["id"]
+                )
+                event_sink(
+                    _event(
+                        "quality_evidence",
+                        "completed" if quality["verified"] else "failed",
+                        f"Final candidate evidence: {packet['id']}",
+                        _progress(completed_steps, total_steps),
+                    )
+                )
+                if not quality["verified"]:
+                    raise QualityError("Final candidate has unverified criteria")
+            except (QualityError, ValueError) as exc:
+                raise ProjectFactoryJobRunnerBlockedError(
+                    "Final candidate quality evidence blocks publication"
+                ) from exc
         if remote_publication:
             completed_steps = self._run_command_step(
                 project_path=project_path,

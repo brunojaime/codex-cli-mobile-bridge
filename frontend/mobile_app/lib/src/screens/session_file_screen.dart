@@ -6,6 +6,7 @@ import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import '../widgets/session_file_preview.dart';
+import '../widgets/html_file_preview.dart';
 
 import '../models/session_file.dart';
 import '../services/api_client.dart';
@@ -165,6 +166,17 @@ class _SessionFileScreenState extends State<SessionFileScreen> {
       );
 
   Widget _content(SessionFile file) {
+    if (file.previewKind == 'html') {
+      return HtmlFilePreview(
+          key: ValueKey(file.path),
+          file: file,
+          apiClient: widget.apiClient,
+          sessionId: widget.sessionId,
+          onLink: (target) => target.startsWith('bridge-workspace:')
+              ? _open(target.substring('bridge-workspace:'.length),
+                  fromRoot: true)
+              : _open(target));
+    }
     if (const {'pdf', 'audio', 'video'}.contains(file.previewKind)) {
       return SessionFilePreview(
           key: ValueKey(file.path),

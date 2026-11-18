@@ -1,0 +1,12 @@
+{
+  "id": "rd-documentos-correo",
+  "title": "Documentos y avisos por correo",
+  "subtitle": "RD Consultora · recorrido desde el celular",
+  "demo_label": "DEMO · datos de ejemplo · correo simulado",
+  "scenes": [
+    {"id": "abrir", "title": "1. Agregar una novedad", "text": "Desde el cliente, abrí Agregar novedad y elegí la categoría del documento."},
+    {"id": "documento", "title": "2. Cargar el documento", "text": "Cargá el archivo y completá su vigencia."},
+    {"id": "correo", "title": "3. Revisar el correo", "text": "Elegí los destinatarios y revisá el correo. La plantilla completa los datos por vos."},
+    {"id": "guardar", "title": "4. Guardar y enviar", "text": "Cuando esté todo listo, tocá Guardar y enviar. La carga continúa en segundo plano."}
+  ]
+}

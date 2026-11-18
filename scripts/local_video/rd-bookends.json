@@ -1,0 +1,17 @@
+{
+  "body": "reports/rd-video-local-v3-20260929",
+  "client": "RD CONSULTORA",
+  "title": "Documentos y avisos por correo",
+  "subtitle": "Cargá el archivo. Revisá el aviso. Listo.",
+  "cta": "Probalo en tu próxima carga.",
+  "closing_label": "GESTIÓN MÁS SIMPLE, EN EQUIPO",
+  "intro_speech": "Documentos y avisos por correo.",
+  "outro_speech": "Probalo en tu próxima carga.",
+  "studio_logo": "scripts/local_video/assets/brand/nienfos.png",
+  "client_logo": "scripts/local_video/assets/brand/rd.png",
+  "minimum_card_seconds": 3.5,
+  "speech_lead_seconds": 0.35,
+  "speech_tail_seconds": 0.65,
+  "maximum_seconds": 60,
+  "instant_intro": true
+}

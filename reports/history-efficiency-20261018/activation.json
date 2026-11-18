@@ -1,0 +1,10 @@
+{
+  "status": "activated",
+  "at": 1792343978.624359,
+  "pids_after": {
+    "dev": 3548617,
+    "prod": 3549637
+  },
+  "rollback": "/home/batata/Projects/codex-bridge-history-20261018/reports/history-efficiency-20261018/rollback",
+  "web_published": true
+}

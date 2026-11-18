@@ -1,0 +1,1 @@
+"""Generator + Reviewer MCP app."""

@@ -31,6 +31,9 @@ class ChatSessionSummary {
     this.lastMessageAt,
     this.lastMessagePreview,
     this.hasPendingMessages = false,
+    this.hasFullAgentConfiguration = true,
+    this.agentLabels = const {},
+    this.isMultiAgent,
   });
 
   final String id;
@@ -60,12 +63,18 @@ class ChatSessionSummary {
   final DateTime? lastMessageAt;
   final String? lastMessagePreview;
   final bool hasPendingMessages;
+  final bool hasFullAgentConfiguration;
+  final Map<String, String> agentLabels;
+  final bool? isMultiAgent;
   bool get isArchived => archivedAt != null;
   DateTime get latestActivityAt => lastMessageAt ?? createdAt;
 
   factory ChatSessionSummary.fromJson(Map<String, dynamic> json) {
     final rawAgentConfiguration = json['agent_configuration'];
     return ChatSessionSummary(
+      agentLabels: (json['agent_labels'] as Map<String, dynamic>? ?? const {})
+          .map((key, value) => MapEntry(key, value as String)),
+      isMultiAgent: json['is_multi_agent'] as bool?,
       id: json['id'] as String,
       title: json['title'] as String,
       archivedAt: json['archived_at'] != null
@@ -106,6 +115,8 @@ class ChatSessionSummary {
           : null,
       lastMessagePreview: json['last_message_preview'] as String?,
       hasPendingMessages: json['has_pending_messages'] as bool? ?? false,
+      hasFullAgentConfiguration:
+          json['has_full_agent_configuration'] as bool? ?? true,
     );
   }
 }

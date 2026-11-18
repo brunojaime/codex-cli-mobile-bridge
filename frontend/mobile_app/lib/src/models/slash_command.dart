@@ -108,6 +108,20 @@ class GlobalSlashCommandProvider extends SlashCommandProvider {
             ? 'Choose a project chat with a workspace before starting UX Full.'
             : null;
     return <SlashCommand>[
+      SlashCommand(
+        id: 'ejecutar',
+        slash: '/ejecutar',
+        title: 'Generator + Reviewer',
+        description:
+            'Preparar un pedido editable para otro chat. 25 turnos por agente por defecto.',
+        scope: 'workspace',
+        actionKind: SlashCommandActionKind.insertText,
+        disabledReason: uxDisabledReason,
+        payload:
+            'Usá la skill generator-reviewer para arrancar esta tarea en un chat nuevo del mismo proyecto, '
+            'con prompts adaptados y 25 turnos máximos para cada agente salvo que indique otros límites. '
+            'Dejá un enlace para abrirlo cuando yo quiera. Tarea: ',
+      ),
       const SlashCommand(
         id: 'new-project',
         slash: '/new-project',

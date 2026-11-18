@@ -1,0 +1,24 @@
+{
+  "default": "voz-1",
+  "fast_requires_explicit_request": true,
+  "decision_source": "source-0121e56aa815b412f12b0390",
+  "profiles": {
+    "voz-1": {
+      "engine": "chatterbox",
+      "model": "ResembleAI/chatterbox",
+      "revision": "5bb1f6ee58e50c3b8d408bc82a6d3740c2db6e18",
+      "t3_model": "v3",
+      "reference": "assets/voz-1-buenos-aires.wav",
+      "exaggeration": 0.35,
+      "cfg_weight": 0.5,
+      "temperature": 0.7,
+      "seed": 42
+    },
+    "peter-fast": {
+      "engine": "pocket",
+      "language": "spanish_24l",
+      "voice": "peter_yearsley",
+      "seed": 42
+    }
+  }
+}

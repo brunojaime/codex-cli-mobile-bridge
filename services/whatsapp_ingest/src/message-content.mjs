@@ -31,6 +31,7 @@ export function parseInboundContent(message) {
     content.extendedTextMessage?.text,
     content.imageMessage?.caption,
     content.videoMessage?.caption,
+    content.ptvMessage?.caption,
     content.documentMessage?.caption,
   )
 
@@ -51,6 +52,21 @@ export function parseInboundContent(message) {
       media: content.imageMessage,
       mimeType: content.imageMessage.mimetype || 'image/jpeg',
       seconds: null,
+      text,
+      voiceNote: false,
+    }
+  }
+
+  const video = content.videoMessage || content.ptvMessage || (videoDocumentMime(content.documentMessage)
+    ? content.documentMessage : null)
+  if (video) {
+    return {
+      kind: 'video',
+      media: video,
+      mimeType: (content.videoMessage || content.ptvMessage)
+        ? (video.mimetype || 'video/mp4') : videoDocumentMime(video),
+      fileName: video.fileName || null,
+      seconds: integerValue(video.seconds),
       text,
       voiceNote: false,
     }
@@ -80,6 +96,29 @@ export function parseInboundContent(message) {
   }
 
   return null
+}
+
+function videoDocumentMime(document) {
+  if (!document) return null
+  const mime = String(document.mimetype || '').split(';', 1)[0].trim().toLowerCase()
+  if (mime.startsWith('video/')) return mime
+  const extension = String(document.fileName || '').toLowerCase().split('.').pop()
+  const types = {
+    mp4: 'video/mp4', m4v: 'video/x-m4v', mov: 'video/quicktime',
+    webm: 'video/webm', mkv: 'video/x-matroska', avi: 'video/x-msvideo',
+    '3gp': 'video/3gpp', '3g2': 'video/3gpp2',
+  }
+  return Object.hasOwn(types, extension) ? types[extension] : null
+}
+
+// Shared by private and group intake; a failed download must never create READY.
+export async function downloadInboundMedia(message, parsed, downloadMediaMessage) {
+  if (!parsed?.media) return null
+  const buffer = await downloadMediaMessage(message, 'buffer', {})
+  if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
+    throw new Error('WhatsApp media download returned no bytes')
+  }
+  return buffer
 }
 
 function isPdfDocument(document) {

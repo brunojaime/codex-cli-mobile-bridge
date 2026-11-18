@@ -34,6 +34,10 @@ class SessionFile {
     if (kind == 'directory') return kind;
     // Large files remain downloadable without allocating a full preview in RAM.
     if (sizeBytes > 50 * 1024 * 1024 && kind != 'text') return 'file';
+    if (const {'html', 'htm'}.contains(extension) ||
+        contentType.split(';').first.trim().toLowerCase() == 'text/html') {
+      return 'html';
+    }
     if (extension == 'pdf') return 'pdf';
     if (extension == 'svg') return 'svg';
     if (const {'mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac', 'opus'}

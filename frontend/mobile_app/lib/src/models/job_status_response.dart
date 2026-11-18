@@ -43,6 +43,25 @@ class JobStatusResponse {
   bool get isTerminal =>
       status == 'completed' || status == 'failed' || status == 'cancelled';
 
+  bool sameUpdateAs(JobStatusResponse other) =>
+      jobId == other.jobId &&
+      sessionId == other.sessionId &&
+      status == other.status &&
+      elapsedSeconds == other.elapsedSeconds &&
+      agentId == other.agentId &&
+      agentType == other.agentType &&
+      agentLabel == other.agentLabel &&
+      notificationChannel == other.notificationChannel &&
+      response == other.response &&
+      transcript == other.transcript &&
+      error == other.error &&
+      providerSessionId == other.providerSessionId &&
+      runId == other.runId &&
+      phase == other.phase &&
+      latestActivity == other.latestActivity &&
+      updatedAt == other.updatedAt &&
+      completedAt == other.completedAt;
+
   ChatNotificationChannel get resolvedNotificationChannel =>
       notificationChannel ?? _defaultNotificationChannelForAgent(agentId);
 

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:codex_mobile_frontend/src/services/api_client.dart';
@@ -9,6 +10,101 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
+  for (final editing in [false, true]) {
+    testWidgets(
+        'visibility: toggle, reset and save ${editing ? 'replacement' : 'new secret'}',
+        (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      var requests = 0;
+      final response = Completer<http.Response>();
+      const payload =
+          '{"workspace_path":"/projects/cms","workspace_name":"cms","env_file":".env","names":["TOKEN","OTHER"]}';
+      final client = ApiClient(
+          baseUrl: 'http://bridge.test',
+          client: MockClient((request) async {
+            requests++;
+            if (request.method == 'GET') return http.Response(payload, 200);
+            expect(request.method, editing ? 'PATCH' : 'POST');
+            final body = jsonDecode(request.body) as Map<String, dynamic>;
+            expect(body['value'], 'DEMO-only-input');
+            return response.future;
+          }));
+      await tester.pumpWidget(_harness(client));
+      await tester.pumpAndSettle();
+      final value = find.byKey(const ValueKey<String>('project-secret-value'));
+      final toggle = find
+          .byKey(const ValueKey<String>('toggle-project-secret-visibility'));
+      EditableText field() => tester.widget<EditableText>(
+          find.descendant(of: value, matching: find.byType(EditableText)));
+      Future<void> open() async {
+        final target = editing
+            ? find.text('TOKEN')
+            : find.byKey(const ValueKey<String>('add-project-secret'));
+        await tester.ensureVisible(target);
+        await tester.tap(target);
+        await tester.pumpAndSettle();
+      }
+
+      await open();
+      expect(field().obscureText, isTrue);
+      expect(field().controller.text, isEmpty);
+      await tester.enterText(value, 'DEMO-only-input');
+      field().controller.selection = const TextSelection.collapsed(offset: 4);
+      for (final revealed in [true, false, true]) {
+        await tester.ensureVisible(toggle);
+        await tester.tap(toggle);
+        await tester.pump();
+        expect(field().obscureText, !revealed);
+        expect(field().controller.text, 'DEMO-only-input');
+        expect(field().controller.selection.baseOffset, 4);
+        expect(
+            find.byTooltip(
+                revealed ? 'Hide secret value' : 'Show secret value'),
+            findsOneWidget);
+      }
+      expect(requests, 1);
+      if (editing) {
+        await tester.ensureVisible(find.text('OTHER'));
+        await tester.tap(find.text('OTHER'));
+        await tester.pump();
+        expect(field().obscureText, isTrue);
+        expect(field().controller.text, isEmpty);
+      }
+      await tester.ensureVisible(find.text('Cancel'));
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      await open();
+      expect(field().obscureText, isTrue);
+      expect(field().controller.text, isEmpty);
+      if (!editing) {
+        await tester.enterText(
+            find.byKey(const ValueKey<String>('project-secret-name')),
+            'NEW_TOKEN');
+      }
+      await tester.enterText(value, 'DEMO-only-input');
+      await tester.ensureVisible(toggle);
+      await tester.tap(toggle);
+      await tester.pump();
+      await tester.ensureVisible(
+          find.byKey(const ValueKey<String>('save-project-secret')));
+      await tester
+          .tap(find.byKey(const ValueKey<String>('save-project-secret')));
+      await tester.pump();
+      expect(field().obscureText, isTrue);
+      expect(tester.widget<IconButton>(toggle).onPressed, isNull);
+      response.complete(http.Response(payload, 200));
+      await tester.pumpAndSettle();
+      expect(requests, 2);
+      await open();
+      expect(field().obscureText, isTrue);
+      expect(field().controller.text, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   for (final size in <Size>[
     const Size(430, 932),
     const Size(768, 1024),
@@ -217,9 +313,17 @@ void main() {
     await tester.enterText(
         find.byKey(const ValueKey<String>('project-secret-value')),
         'private-input');
+    await tester.tap(find.byTooltip('Show secret value'));
+    await tester.pump();
     await tester.ensureVisible(find.text('Save changes'));
     await tester.tap(find.text('Save changes'));
     await tester.pumpAndSettle();
+    final input = tester.widget<EditableText>(find.descendant(
+      of: find.byKey(const ValueKey<String>('project-secret-value')),
+      matching: find.byType(EditableText),
+    ));
+    expect(input.obscureText, isTrue);
+    expect(input.controller.text, 'private-input');
     expect(find.textContaining('private-server-value'), findsNothing);
     expect(find.textContaining('Could not save the secret'), findsOneWidget);
     await tester.ensureVisible(find.text('Cancel'));

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -593,6 +594,31 @@ def test_project_factory_runner_timeout_reports_failed_phase(tmp_path: Path) -> 
     failed = [event for event in events if event["status"] == "failed"]
     assert failed[0]["phase"] == "ux_brief"
     assert "timed out" in failed[0]["message"]
+
+
+@pytest.mark.parametrize("verified", [True, False])
+def test_final_candidate_evidence_runs_after_commit_and_before_publication(tmp_path: Path, verified: bool) -> None:
+    process = _FakeProcessRunner()
+    runner = _runner(tmp_path, process)
+    class Quality:
+        def register(self, **kwargs):
+            assert process.calls[-1] == ("bash", "scripts/finalize_local_commit.sh")
+            assert kwargs["contract"]["checks"][0]["argv"] == ["bash", "scripts/validate_generated_project.sh"]
+            return {"id": "quality-test"}
+        def snapshot(self, path):
+            return {"revision": "candidate"}
+        def execute(self, packet, *, attempt_key):
+            return {"quality": {"verified": verified}}
+    runner._quality_service = Quality()
+    context = replace(_context(tmp_path, generator_runs=1, reviewer_runs=1), run_generated_validation=True)
+    events = []
+    if verified:
+        runner.run(context, event_sink=events.append)
+        assert any(e["phase"] == "quality_evidence" and e["status"] == "completed" for e in events)
+    else:
+        with pytest.raises(ProjectFactoryJobRunnerBlockedError, match="quality evidence"):
+            runner.run(context, event_sink=events.append)
+        assert not any(call == ("bash", "scripts/publish_project.sh") for call in process.calls)
 
 
 class _FakeProcessRunner:

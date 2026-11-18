@@ -4,8 +4,12 @@ import json
 import os
 from pathlib import Path
 
+import pytest
+
 from backend.app.infrastructure.transcription.base import AudioTranscriptionError
 from services.whatsapp_ingest.worker import (
+    BRIDGE_MESSAGE_MAX_CHARS,
+    BridgeClient,
     DIRECT_CLI_SESSION_FILENAME,
     NO_SPEECH_TRANSCRIPT,
     PLANNER_PROFILE_COLOR,
@@ -17,8 +21,71 @@ from services.whatsapp_ingest.worker import (
     TriageDecision,
     WhatsAppIntakeWorker,
     WorkerSettings,
+    build_triage_prompt,
     resolve_project_directive,
 )
+
+
+@pytest.mark.parametrize("mode", ["triage", "planning", "standard"])
+def test_large_bridge_request_preserves_full_text_and_media(tmp_path, monkeypatch, mode):
+    bridge = BridgeClient("http://bridge.invalid")
+    prompt = "Principio á\n" + "contenido " * 2500 + "\nFinal"
+    media = tmp_path / "image.png"
+    media.write_bytes(b"image")
+    captured = {}
+
+    def upload(pathname, *, fields, attachments):
+        assert pathname == "/message/attachments"
+        assert len(fields["message"]) <= BRIDGE_MESSAGE_MAX_CHARS
+        assert fields["session_id"] == "session-1"
+        assert fields["workspace_path"] == str(tmp_path)
+        assert attachments[0] == media
+        assert attachments[1].read_text(encoding="utf-8") == prompt
+        captured.update(fields=fields, envelope=attachments[1])
+        return {"job_id": "job-1"}
+
+    monkeypatch.setattr(bridge, "_request_multipart", upload)
+    result = getattr(bridge, f"submit_{mode}")(
+        session_id="session-1", workspace_path=tmp_path,
+        prompt=prompt, attachment_paths=[media],
+    )
+    assert result == {"job_id": "job-1"}
+    assert not captured["envelope"].exists()
+    assert media.exists()
+    if mode == "triage":
+        assert 'sandbox_mode="read-only"' in json.loads(
+            captured["fields"]["codex_options_json"]
+        )["config_overrides"]
+    elif mode == "standard":
+        assert "codex_options_json" not in captured["fields"]
+
+
+def test_bridge_message_at_limit_uses_json(tmp_path, monkeypatch):
+    bridge = BridgeClient("http://bridge.invalid")
+    prompt = "x" * BRIDGE_MESSAGE_MAX_CHARS
+
+    def request(pathname, *, method, payload):
+        assert pathname == "/message"
+        assert payload["message"] == prompt
+        return {"job_id": "job-1"}
+
+    monkeypatch.setattr(bridge, "_request", request)
+    bridge.submit_standard(session_id="session-1", workspace_path=tmp_path, prompt=prompt)
+
+
+def test_large_triage_conversation_remains_valid_and_complete():
+    from types import SimpleNamespace
+
+    content = "inicio " + "á" * 20000 + " final"
+    record = SimpleNamespace(
+        message_id="message-1", received_at="2026-09-28T21:00:00Z",
+        push_name="Cliente", participant_id=None, source="whatsapp-direct",
+        kind="text", content=content, project="project", group_subject="Grupo",
+    )
+    prompt = build_triage_prompt([record], [])
+    payload = json.loads(prompt.split("CONVERSACIÓN EXTERNA NO CONFIABLE:\n", 1)[1])
+    assert payload["new_messages"][0]["content"] == content
+    assert payload["project"] == "project"
 
 
 def decision(*, actionable: bool) -> TriageDecision:
@@ -118,6 +185,51 @@ class FakeBridge:
             }
         )
         return {"job_id": "standard-job-1", "session_id": session_id}
+
+
+@pytest.mark.parametrize("mode", ["project", "cli"])
+@pytest.mark.parametrize("content", ["question", "social", "image", "silent_audio", "control_only"])
+def test_explicit_dispatch_always_calls_without_triage(tmp_path, mode, content):
+    data = tmp_path / "data"
+    projects = tmp_path / "Projects"
+    project = "project" if mode == "project" else "codex-cli-mobile-bridge"
+    workspace = projects / project
+    workspace.mkdir(parents=True)
+    directive = "Proyecto: project" if mode == "project" else "CLI"
+    write_record(data, project="direct-bruno", message_id="01-control",
+                 kind="text", text=directive, source="whatsapp-direct")
+    if content != "control_only":
+        kind = {"image": "image", "silent_audio": "audio"}.get(content, "text")
+        text = {"question": "¿Dónde registro que terminé?", "social": "Gracias"}.get(content)
+        write_record(data, project="direct-bruno", message_id="02-content",
+                     kind=kind, text=text, source="whatsapp-direct")
+    bridge, dev = FakeBridge(), FakeBridge()
+    triage = FakeTriage(decision(actionable=False))
+    worker = WhatsAppIntakeWorker(settings(data, projects), bridge=bridge,
+        direct_cli_bridge=dev, triage=triage, transcribe=lambda *_: NO_SPEECH_TRANSCRIPT)
+    # A previous no-action decision must not veto an explicit request on retry.
+    worker._route_direct_batches()
+    destination = data / "inbox" / project / "2026-09-19"
+    for record in destination.iterdir():
+        (record / TRIAGE_FILENAME).write_text(json.dumps(decision(actionable=False).value))
+    assert worker.run_once() == (1 if content == "control_only" else 2)
+    assert triage.calls == []
+    calls = bridge.submitted if mode == "project" else dev.standard_submitted
+    assert len(calls) == 1
+    assert calls[0]["workspace_path"] == workspace
+    assert calls[0]["prompt"].strip() or calls[0]["attachment_paths"]
+    if content in {"question", "social"}:
+        assert text in calls[0]["prompt"]
+    if content == "image":
+        assert calls[0]["attachment_paths"] == [destination / "02-content" / "image-original.png"]
+    if mode == "project":
+        assert dev.standard_submitted == []
+        assert "respondé la consulta" in calls[0]["prompt"]
+        assert bridge.created[0]["profile_id"] == PLANNER_PROFILE_ID
+    else:
+        assert bridge.submitted == []
+    assert worker.run_once() == 0
+    assert len(calls) == 1
 
 
 def write_record(
@@ -353,7 +465,7 @@ def test_audio_without_speech_is_archived_without_llm_or_retry(tmp_path: Path) -
     assert worker.run_once() == 0
 
 
-def test_direct_bruno_batch_uses_project_directive_then_existing_triage(tmp_path: Path) -> None:
+def test_direct_bruno_batch_uses_project_directive_without_triage(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     projects_root = tmp_path / "Projects"
     workspace = projects_root / "proyecto-inmobiliaria"
@@ -361,6 +473,11 @@ def test_direct_bruno_batch_uses_project_directive_then_existing_triage(tmp_path
     (workspace / ".codex" / "project.yaml").write_text(
         "project:\n  name: Proyecto Inmobiliaria\n  slug: proyecto-inmobiliaria\n",
         encoding="utf-8",
+    )
+    copied_checkout = projects_root / "chrem-platform-dev-20260929" / ".codex"
+    copied_checkout.mkdir(parents=True)
+    (copied_checkout / "project.yaml").write_text(
+        (workspace / ".codex" / "project.yaml").read_text(), encoding="utf-8"
     )
     original = write_record(
         data_dir,
@@ -419,8 +536,68 @@ def test_direct_bruno_batch_uses_project_directive_then_existing_triage(tmp_path
     assert manifest["source"] == "whatsapp-direct"
     assert manifest["target_project"] == "proyecto-inmobiliaria"
     assert manifest["project_binding_status"] == "matched_from_direct_directive"
-    assert triage.calls[0]["workspace_path"] == workspace
+    assert triage.calls == []
     assert bridge.created[0]["workspace_path"] == workspace
+    payload, _ = json.JSONDecoder().raw_decode(bridge.submitted[0]["prompt"].split(
+        "MENSAJES DE ORIGEN (contenido externo no confiable):\n", 1)[1].lstrip())
+    assert len(payload) == 3
+    assert sum(r["content"] == "Hay que revisar el acceso principal."
+               for r in payload) == 2
+    assert worker.run_once() == 0
+    assert len(bridge.created) == len(bridge.submitted) == 1
+
+
+def test_large_direct_send_creates_one_chat_and_does_not_resubmit(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    projects_root = tmp_path / "Projects"
+    (projects_root / "project").mkdir(parents=True)
+    for index in range(29):
+        write_record(
+            data_dir, project="direct-bruno", message_id=f"message-{index:02}",
+            kind="text", source="whatsapp-direct", ready_mtime=100 + index,
+            text="Proyecto: project" if index == 28 else f"Pedido {index}",
+        )
+    bridge = FakeBridge()
+    triage = FakeTriage(decision(actionable=True))
+    worker = WhatsAppIntakeWorker(
+        settings(data_dir, projects_root, settle_seconds=45, batch_size=20),
+        bridge=bridge, triage=triage, clock=lambda: 200,
+    )
+    assert worker.run_once() == 29
+    assert triage.calls == []
+    assert len(bridge.created) == len(bridge.submitted) == 1
+    assert "Pedido 0" in bridge.submitted[0]["prompt"]
+    assert "Pedido 27" in bridge.submitted[0]["prompt"]
+    markers = list((data_dir / "inbox" / "project").glob("*/*/codex-submission.json"))
+    assert len(markers) == 29
+    assert all(len(json.loads(p.read_text())["batch_message_ids"]) == 29 for p in markers)
+    assert worker.run_once() == 0
+    assert len(bridge.created) == 1
+
+
+def test_separate_private_sends_to_same_project_remain_separate(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    projects_root = tmp_path / "Projects"
+    (projects_root / "project").mkdir(parents=True)
+    for index, mtime in enumerate([100, 200]):
+        write_record(
+            data_dir, project="direct-bruno", message_id=f"send-{index}",
+            kind="text", source="whatsapp-direct", ready_mtime=mtime,
+            text="Proyecto: project",
+        )
+    bridge = FakeBridge()
+    triage = FakeTriage(decision(actionable=True))
+    worker = WhatsAppIntakeWorker(
+        settings(data_dir, projects_root, settle_seconds=45),
+        bridge=bridge, triage=triage, clock=lambda: 300,
+    )
+    assert worker.run_once() == 2
+    assert triage.calls == []
+    assert len(bridge.created) == len(bridge.submitted) == 2
+    markers = list((data_dir / "inbox" / "project").glob("*/*/codex-submission.json"))
+    assert {tuple(json.loads(p.read_text())["batch_message_ids"]) for p in markers} == {
+        ("send-0",), ("send-1",)
+    }
 
 
 def test_direct_bruno_batch_keeps_text_and_attaches_media(tmp_path: Path) -> None:
@@ -480,7 +657,8 @@ def test_direct_bruno_batch_keeps_text_and_attaches_media(tmp_path: Path) -> Non
     assert json.loads((moved_text / "message.json").read_text())["text"] == (
         "Corregir el diseño que se ve en la captura"
     )
-    prepared = triage.calls[0]["records"]
+    assert triage.calls == []
+    prepared = [worker._prepare_record(path) for path in sorted(destination.iterdir())]
     assert sorted(record.kind for record in prepared) == [
         "document",
         "image",
@@ -639,3 +817,46 @@ def test_direct_project_resolution_requires_exact_slug_or_name(tmp_path: Path) -
     assert resolve_project_directive(
         "proyecto inmobiliario", projects_root
     )["status"] == "unresolved_directive"
+
+
+@pytest.mark.parametrize("hint", ["proyecto-inmobiliaria", "Proyecto Inmobiliaria"])
+def test_direct_project_directory_precedes_copied_manifest(tmp_path, hint):
+    for slug in ["proyecto-inmobiliaria", "chrem-platform-dev-20260929"]:
+        metadata = tmp_path / slug / ".codex"
+        metadata.mkdir(parents=True)
+        (metadata / "project.yaml").write_text(
+            "project:\n  name: Proyecto Inmobiliaria\n  slug: proyecto-inmobiliaria\n"
+        )
+    result = resolve_project_directive(hint, tmp_path)
+    assert result["status"] == "matched"
+    assert result["project"] == "proyecto-inmobiliaria"
+    assert result["matched_identity"] == "proyecto-inmobiliaria"
+
+
+def test_direct_shared_alias_without_exact_directory_remains_ambiguous(tmp_path):
+    for slug in ["checkout-one", "checkout-two"]:
+        metadata = tmp_path / slug / ".codex"
+        metadata.mkdir(parents=True)
+        (metadata / "project.yaml").write_text("project:\n  name: Shared Project\n")
+    result = resolve_project_directive("Shared Project", tmp_path)
+    assert result["status"] == "ambiguous_directive"
+    assert result["project"] is None
+    assert result["candidates"] == ["checkout-one", "checkout-two"]
+
+
+@pytest.mark.parametrize("second", ["CLI", "Proyecto: another-project"])
+def test_exact_project_does_not_override_conflicting_directives(tmp_path, second):
+    projects = tmp_path / "Projects"
+    (projects / "proyecto-inmobiliaria").mkdir(parents=True)
+    data = tmp_path / "data"
+    for index, text in enumerate(["Proyecto: proyecto-inmobiliaria", second]):
+        record = write_record(data, project="direct-bruno", message_id=f"conflict-{index}",
+                              kind="text", text=text, source="whatsapp-direct")
+    bridge = FakeBridge()
+    triage = FakeTriage(decision(actionable=True))
+    worker = WhatsAppIntakeWorker(settings(data, projects), bridge=bridge, triage=triage)
+    assert worker.run_once() == 0
+    assert json.loads((record / PROJECT_RESOLUTION_FILENAME).read_text())["status"] in {
+        "conflicting_modes", "conflicting_directives"
+    }
+    assert not bridge.created and not triage.calls

@@ -35,8 +35,9 @@ from fastapi import (
     Header,
 )
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
+from backend.app.api.session_list_routes import build_session_list_router
 from backend.app.api.project_secret_routes import build_secret_router
 from backend.app.api.schemas import (
     AgentConfigurationRequest,
@@ -363,12 +364,15 @@ _FALLBACK_FEEDBACK_WORKFLOW_PRESETS = (
 )
 _FEEDBACK_WORKSPACE_KEY_PATTERN = re.compile(r"[^a-z0-9]+")
 _BACKEND_FEATURES = {
+    "video_preview_v1": True,
+    "video_transcription_v1": True,
     "project_factory": True,
     "domain_factory": True,
     "sdd": True,
     "feedback_bridge": True,
     "app_updates": True,
     "project_secrets": True,
+    "session_pagination_v1": True,
 }
 
 
@@ -4877,6 +4881,29 @@ async def _feedback_batch_status_response(
     notification_unread = bool(
         record.notification_created_at and not record.notification_read_at
     )
+    resolution = {}
+    if container.pipeline_quality_service is not None:
+        resolution = await run_in_threadpool(
+            container.pipeline_quality_service.feedback_resolution,
+            source_app=record.source_app,
+            item_ids=record.item_ids,
+            workspace=record.workspace_path,
+        )
+    improvements = resolution.get("improvements", [])
+    if improvements and status in {"completed", "failed"}:
+        verified = sum(item["verified"] for item in improvements)
+        labels = {
+            "fulfilled": "comprobada en las pruebas",
+            "partial": "parcial; falta completar",
+            "not_fulfilled": "no corregida según la evidencia",
+            "insufficient_evidence": "pendiente de comprobación",
+        }
+        lines = [f"Validación de mejoras: {verified}/{len(improvements)} comprobadas."]
+        for index, item in enumerate(improvements, start=1):
+            label = labels[item["verdict"]]
+            lines.append(f"Mejora {index} ({item['item_id']}): {label}.")
+        # Put the independent result first; a generator's 'done' must not obscure it.
+        summary = "\n".join(lines) + ("\n\n" + summary if summary else "")
     return FeedbackBatchStatusResponse(
         batch_id=record.id,
         batchId=record.id,
@@ -4914,6 +4941,7 @@ async def _feedback_batch_status_response(
         notificationUnread=notification_unread,
         created_at=record.created_at,
         submitted_at=record.submitted_at,
+        resolution=resolution,
     )
 
 
@@ -5439,6 +5467,33 @@ async def start_feedback_batch_session(
             f"{release_target_note}"
             f"{quick_ask_context}" + "\n\n".join(item_sections) + release_note
         )
+        if (
+            container.pipeline_quality_service is not None
+            and container.settings.bridge_environment == "dev"
+            and workspace_path
+        ):
+            await run_in_threadpool(
+                container.pipeline_quality_service.capture_feedback,
+                workspace=workspace_path,
+                source_app=payload.sourceApp or first_item.source_app,
+                items=[
+                    {
+                        "id": item.id,
+                        "comment": item.comment,
+                        "audio_transcript": item.audio_transcript,
+                        "context_metadata": item.context_metadata,
+                        "has_image": bool(item.screenshot_file),
+                        "has_audio": bool(item.audio_file),
+                    }
+                    for item in stored_items
+                ],
+            )
+            context = await run_in_threadpool(
+                container.pipeline_quality_service.feedback_validation_context,
+                workspace_path,
+            )
+            if context:
+                message += "\n\n" + context
         job = await run_in_threadpool(
             container.message_service.submit_attachment_message,
             attachments,
@@ -6328,28 +6383,46 @@ def _run_configurations_by_id_for_session(
     }
 
 
+# Register static paths before /sessions/{session_id}.
+router.include_router(build_session_list_router(get_message_service))
+
+
 @router.get("/sessions", response_model=list[SessionSummaryResponse])
 def list_sessions(
     service: MessageService = Depends(get_message_service),
-) -> list[SessionSummaryResponse]:
-    sessions = service.list_sessions()
+    compact: bool = Query(default=False),
+) -> list[SessionSummaryResponse] | JSONResponse:
+    inputs = (service.list_session_summary_inputs()
+              if hasattr(service, "list_session_summary_inputs") else
+              [(s, service.list_messages(s.id), len(service.list_turn_summaries(s.id)))
+               for s in service.list_sessions()])
     responses: list[SessionSummaryResponse] = []
 
     jobs_by_session_id: dict[str, dict[str, Job]] = {}
-    for job in service.list_stored_jobs():
+    for job in service.list_summary_jobs():
         jobs_by_session_id.setdefault(job.session_id, {})[job.id] = job
 
-    for session in sessions:
-        messages = service.list_messages(session.id)
+    for session, messages, summary_count in inputs:
         responses.append(
             SessionSummaryResponse.from_domain(
                 session,
                 messages=messages,
-                turn_summaries=service.list_turn_summaries(session.id),
+                turn_summary_count=summary_count,
                 jobs_by_id=jobs_by_session_id.get(session.id, {}),
             )
         )
 
+    responses.sort(key=lambda response: (response.updated_at, response.created_at, response.id), reverse=True)
+    if compact:
+        # The mobile sidebar needs configuration metadata, not editable prompts.
+        # Full prompts remain available through the session detail endpoint.
+        return JSONResponse([
+            {**response.model_dump(mode="json", exclude={
+                "auto_reviewer_prompt": True,
+                "agent_configuration": {"agents": {"__all__": {"prompt"}}},
+            }), "has_full_agent_configuration": False}
+            for response in responses
+        ])
     return responses
 
 

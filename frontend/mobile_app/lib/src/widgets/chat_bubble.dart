@@ -143,6 +143,12 @@ class ChatBubble extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
               ],
+              if (isUser && message.status == ChatMessageStatus.sending) ...[
+                Text('Enviando…',
+                    style: TextStyle(color: textColor.withValues(alpha: 0.74),
+                        fontSize: 12)),
+                const SizedBox(height: 6),
+              ],
               if (activityPresentation != null) ...[
                 _ActivityStatusStrip(
                   presentation: activityPresentation,
@@ -207,6 +213,20 @@ class ChatBubble extends StatelessWidget {
                     const SizedBox(height: 8),
                   _SentViaAudioMarker(textColor: textColor),
                 ],
+                if (attachmentBaseUrl != null && onLinkTap != null)
+                  for (final attachment in message.attachments.where(
+                    (item) =>
+                        item.kind == 'video' && item.downloadUrl.isNotEmpty,
+                  ))
+                    TextButton.icon(
+                      onPressed: () => onLinkTap!(_resolveAttachmentUrl(
+                        attachmentBaseUrl!,
+                        attachment.downloadUrl,
+                      ).toString()),
+                      icon: const Icon(Icons.play_circle_outline),
+                      label: Text('Abrir video ${attachment.index + 1}'),
+                      style: TextButton.styleFrom(foregroundColor: textColor),
+                    ),
                 if ((displayContent.copyText.isNotEmpty ||
                         (!isUser &&
                             onCancelJob != null &&

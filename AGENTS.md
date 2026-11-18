@@ -17,3 +17,8 @@ configuration; feedback mode should not imply mock data.
 If the user does request a mock/demo release, make that visible in the version
 scope, release tag, and final report so it cannot be confused with a real-data
 release.
+
+<!-- codex-mobile-project-secrets -->
+## Project secrets
+
+Add or rotate credentials through the chat's **Secrets** panel. They are stored in the workspace `.env`; never ask the user to paste secret values into chat and never print or reveal them.

@@ -1,0 +1,5333 @@
+from __future__ import annotations
+
+import base64
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import datetime
+import json
+import mimetypes
+from pathlib import Path, PurePosixPath
+import re
+import shutil
+import tempfile
+import threading
+import time
+from typing import Any, Literal
+from uuid import uuid4
+import xml.etree.ElementTree as ET
+import zipfile
+
+from backend.app.infrastructure.media.video_preview import prepare_video_preview
+from backend.app.infrastructure.media.video_transcript import transcript_note
+
+from pypdf import PdfReader
+from pypdf.errors import PdfReadError
+
+from backend.app.domain.entities.chat_message import (
+    can_launch_reserved_follow_up,
+    ChatMessageAuthorType,
+    ChatMessage,
+    ChatMessageReasonCode,
+    is_agent_follow_up,
+    is_follow_up_terminal_failure,
+    is_follow_up_waiting_status,
+    orphaned_follow_up_resolution_status,
+    MessageRecoveryAction,
+    ChatMessageRole,
+    ChatMessageStatus,
+    validate_manual_recovery_candidate,
+)
+from backend.app.domain.entities.agent_configuration import (
+    AgentConfiguration,
+    AgentId,
+    AgentPreset,
+    AgentTriggerSource,
+    AgentType,
+    AgentVisibilityMode,
+    SummaryStrategyMode,
+    SUPERVISOR_MEMBER_AGENT_IDS,
+    TurnBudgetMode,
+    normalize_agent_enum_value,
+)
+from backend.app.domain.entities.agent_profile import (
+    AgentProfile,
+    builtin_agent_profiles,
+    builtin_agent_profiles_by_id,
+)
+from backend.app.domain.entities.agent_run import AgentRun
+from backend.app.domain.entities.chat_session import ChatSession
+from backend.app.domain.entities.chat_turn_summary import ChatTurnSummary
+from backend.app.domain.entities.chat_turn_summary import ChatTurnSummarySourceMessage
+from backend.app.domain.entities.codex_options import CodexRunOptions
+from backend.app.domain.entities.job import Job, JobConversationKind, JobStatus, utc_now
+from backend.app.domain.entities.text_sanitization import (
+    sanitize_image_attachment_error_text,
+)
+from backend.app.domain.entities.workspace import Workspace
+from backend.app.domain.repositories.chat_repository import (
+    ChatRepository,
+    MessageCursor,
+    PersistenceDiagnosticIssue,
+)
+from backend.app.infrastructure.execution.base import ExecutionProvider
+from backend.app.infrastructure.execution.base import ExecutionSnapshot
+from backend.app.infrastructure.transcription.base import (
+    AudioTranscriber,
+    AudioTranscriptionError,
+)
+
+
+DocumentKind = Literal[
+    "audio",
+    "cad",
+    "docx",
+    "image",
+    "pdf",
+    "pptx",
+    "text",
+    "video",
+    "xlsx",
+    "zip",
+]
+_TURN_SUMMARY_TRIGGER_MESSAGE_COUNT = 3
+_TURN_SUMMARY_COMPLETION_TIMEOUT_SECONDS = 15.0
+_TITLE_REFRESH_USER_TURN_INTERVAL = 2
+_GITHUB_REPOSITORY_REFERENCE_PATTERN = re.compile(
+    r"https?://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+"
+    r"|(?<![\w./-])[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?![\w./-])",
+    re.IGNORECASE,
+)
+_GITHUB_ACCESS_GUIDANCE = (
+    "Private GitHub repositories may return 404 through unauthenticated web or "
+    "API checks. When inspecting GitHub repositories, first try authenticated "
+    "host tools such as `gh repo view OWNER/REPO`, `gh repo clone OWNER/REPO`, "
+    "or `git ls-remote https://github.com/OWNER/REPO.git` before concluding "
+    "that a repository is missing or inaccessible."
+)
+_PROD_BRIDGE_CHAT_GOVERNANCE_NOTICE = """\
+Production Bridge governance:
+- This is the production Codex Mobile Bridge backend.
+- You may answer questions, inspect/read files, summarize sessions, help with chat, create project/factory requests, and work on repositories outside the bridge repo when requested.
+- Do not modify files, configuration, releases, services, or runtime state inside the Codex Mobile Bridge repo from production.
+- If the user requests a Codex Mobile Bridge code/config/runtime change, explain that the change must enter the DEV queue via /dev-handoff and provide the exact handoff request to create.
+- Do not run commands that write to the bridge repo or restart/deploy production bridge services from this chat.
+"""
+_PROD_BRIDGE_READ_ONLY_SANDBOX_OVERRIDE = 'sandbox_mode="read-only"'
+
+_AUDIO_SUFFIXES = {
+    ".aac",
+    ".flac",
+    ".m4a",
+    ".mp3",
+    ".mpeg",
+    ".mpga",
+    ".ogg",
+    ".opus",
+    ".wav",
+    ".webm",
+}
+_CAD_SUFFIXES = {".dwg", ".dxf"}
+_CAD_CONTENT_TYPES = {
+    "application/acad",
+    "application/autocad_dwg",
+    "application/dwg",
+    "application/dxf",
+    "application/x-acad",
+    "application/x-autocad",
+    "application/x-dwg",
+    "application/x-dxf",
+    "drawing/dwg",
+    "drawing/x-dwg",
+    "drawing/x-dxf",
+    "image/vnd.dwg",
+    "image/vnd.dxf",
+    "image/x-dwg",
+    "image/x-dxf",
+}
+_IMAGE_SUFFIXES = {
+    ".bmp",
+    ".gif",
+    ".jpeg",
+    ".jpg",
+    ".png",
+    ".tif",
+    ".tiff",
+    ".webp",
+}
+_VIDEO_SUFFIXES = {
+    ".avi",
+    ".m4v",
+    ".mkv",
+    ".mov",
+    ".mp4",
+    ".mpeg",
+    ".mpg",
+}
+_TEXT_SUFFIXES = {
+    ".c",
+    ".cc",
+    ".cfg",
+    ".conf",
+    ".cpp",
+    ".cs",
+    ".css",
+    ".csv",
+    ".env",
+    ".go",
+    ".graphql",
+    ".h",
+    ".hpp",
+    ".html",
+    ".ini",
+    ".java",
+    ".js",
+    ".json",
+    ".jsx",
+    ".kt",
+    ".log",
+    ".lua",
+    ".md",
+    ".py",
+    ".rb",
+    ".rs",
+    ".sh",
+    ".sql",
+    ".svg",
+    ".toml",
+    ".ts",
+    ".tsx",
+    ".txt",
+    ".xml",
+    ".yaml",
+    ".yml",
+}
+_ZIP_CONTENT_TYPES = {
+    "application/zip",
+    "application/x-zip",
+    "application/x-zip-compressed",
+    "multipart/x-zip",
+}
+_ZIP_MANIFEST_ENTRY_LIMIT = 200
+_ZIP_MANIFEST_TOTAL_UNCOMPRESSED_LIMIT = 500 * 1024 * 1024
+_ZIP_ARCHIVE_GUIDANCE = (
+    "The ZIP file is available at the local path above. If the user asks you to "
+    "extract it, create an explicit destination directory inside the current "
+    "workspace and validate archive entry paths before writing files."
+)
+
+_RESERVED_MESSAGE_SUPERSEDED_REASON = (
+    "Superseded by a newer user turn before the follow-up job was created."
+)
+_RESERVED_MESSAGE_STALE_REASON = (
+    "This reserved follow-up no longer belongs to the active run."
+)
+_SUBMISSION_UNKNOWN_REASON = (
+    "The backend lost the durable job record after provider submission was attempted. "
+    "Automatic recovery stopped to avoid duplicate provider execution."
+)
+_SUBMISSION_UNKNOWN_SUPERSEDED_REASON = (
+    "A newer user turn superseded this follow-up after provider submission was attempted, "
+    "so automatic recovery stopped to avoid duplicate execution."
+)
+_ACTIVE_JOB_STATUSES = {JobStatus.PENDING, JobStatus.RUNNING}
+_IN_FLIGHT_MESSAGE_STATUSES = {
+    ChatMessageStatus.RESERVED,
+    ChatMessageStatus.SUBMISSION_PENDING,
+    ChatMessageStatus.PENDING,
+}
+_DEFAULT_TRANSCRIPT_PAGE_SIZE = 40
+_MAX_TRANSCRIPT_PAGE_SIZE = 200
+
+
+class MaintenanceModeError(RuntimeError):
+    pass
+
+
+@dataclass(slots=True)
+class BackendDrainStatus:
+    requested: bool
+    active_jobs: list[Job]
+    active_session_ids: list[str]
+    in_flight_message_ids: list[str]
+    active_agent_run_ids: list[str] | None = None
+    pending_follow_up_message_ids: list[str] | None = None
+    sdd_codex_job_ids: list[str] | None = None
+    project_factory_job_ids: list[str] | None = None
+    domain_factory_job_ids: list[str] | None = None
+    unknown_blockers: list[str] | None = None
+    requested_at: datetime | None = None
+
+    @property
+    def active_job_count(self) -> int:
+        return len(self.active_jobs)
+
+    @property
+    def ready_to_restart(self) -> bool:
+        return (
+            self.requested
+            and self.active_job_count == 0
+            and not self.active_session_ids
+            and not self.in_flight_message_ids
+            and not (self.active_agent_run_ids or [])
+            and not (self.pending_follow_up_message_ids or [])
+            and not (self.unknown_blockers or [])
+        )
+
+    @property
+    def active_session_count(self) -> int:
+        return len(self.active_session_ids)
+
+    @property
+    def in_flight_message_count(self) -> int:
+        return len(self.in_flight_message_ids)
+
+
+class DocumentProcessingError(RuntimeError):
+    pass
+
+
+class UnsupportedDocumentError(DocumentProcessingError):
+    pass
+
+
+@dataclass(slots=True)
+class AudioSubmission:
+    job: Job
+    transcript: str
+
+
+@dataclass(slots=True)
+class ImageSubmission:
+    job: Job
+    attached_image_name: str
+
+
+@dataclass(slots=True)
+class DocumentSubmission:
+    job: Job
+    document_kind: DocumentKind
+    attached_document_name: str
+    transcript: str | None = None
+    extracted_text_preview: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class TranscriptWindow:
+    messages: list[ChatMessage]
+    oldest_cursor: str | None
+    newest_cursor: str | None
+    has_older: bool
+    has_newer: bool
+    window_anchor_message_id: str | None
+    is_partial: bool
+
+
+@dataclass(slots=True, frozen=True)
+class FollowUpContext:
+    display_message: str
+    execution_message: str
+    user_message_id: str | None
+    conversation_kind: JobConversationKind
+    agent_id: AgentId
+    agent_type: AgentType
+    trigger_source: AgentTriggerSource
+
+
+@dataclass(slots=True, frozen=True)
+class SupervisorDecision:
+    status: str
+    plan: tuple[str, ...]
+    next_agent_id: AgentId | None
+    instruction: str
+    user_response: str
+    request_summary: bool = False
+
+    @property
+    def is_complete(self) -> bool:
+        return self.status == "complete"
+
+
+@dataclass(slots=True, frozen=True)
+class ReviewerDecision:
+    status: str
+    prompt: str
+    summary: str = ""
+
+    @property
+    def is_complete(self) -> bool:
+        return self.status == "complete"
+
+
+@dataclass(slots=True)
+class AttachmentInput:
+    path: str
+    filename: str | None = None
+    content_type: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class JobAttachmentFile:
+    path: Path
+    media_type: str
+
+
+@dataclass(slots=True)
+class _TerminalJobLockEntry:
+    lock: threading.Lock
+    users: int = 0
+
+
+class MessageService:
+    def __init__(
+        self,
+        *,
+        repository: ChatRepository,
+        execution_provider: ExecutionProvider,
+        default_workspace_path: str,
+        audio_transcriber: AudioTranscriber,
+        bridge_environment: str = "dev",
+        bridge_api_port: int | None = None,
+        document_text_char_limit: int = 20_000,
+        title_generation_model: str | None = None,
+        follow_up_reconcile_interval_seconds: float | None = None,
+        quality_service: Any | None = None,
+    ) -> None:
+        self._repository = repository
+        self._execution_provider = execution_provider
+        self._default_workspace_path = str(Path(default_workspace_path).resolve())
+        self._bridge_environment = bridge_environment
+        self._bridge_api_port = bridge_api_port
+        self._audio_transcriber = audio_transcriber
+        self._document_text_char_limit = document_text_char_limit
+        self._title_generation_model = (title_generation_model or "").strip() or None
+        self._quality_service = quality_service
+        self._retry_asset_root = (
+            Path(tempfile.gettempdir()) / "codex-remote-retry-assets"
+        )
+        self._retry_asset_root.mkdir(parents=True, exist_ok=True)
+        self._job_monitor_lock = threading.RLock()
+        self._job_monitor_unsubscribes: dict[str, Callable[[], None] | None] = {}
+        self._terminal_job_lock_guard = threading.RLock()
+        self._terminal_job_locks: dict[str, _TerminalJobLockEntry] = {}
+        self._maintenance_lock = threading.RLock()
+        self._drain_requested = False
+        self._drain_requested_at: datetime | None = None
+        self._domain_factory_service: Any | None = None
+        self._follow_up_recovery_guard = threading.RLock()
+        self._follow_up_reconcile_interval_seconds = (
+            follow_up_reconcile_interval_seconds
+            if follow_up_reconcile_interval_seconds is not None
+            and follow_up_reconcile_interval_seconds > 0
+            else None
+        )
+        self._follow_up_reconciler_stop = threading.Event()
+        self._follow_up_reconciler_thread: threading.Thread | None = None
+        if self._follow_up_reconcile_interval_seconds is not None:
+            self._follow_up_reconciler_thread = threading.Thread(
+                target=self._run_follow_up_reconciler,
+                name="message-service-follow-up-reconciler",
+                daemon=True,
+            )
+            self._follow_up_reconciler_thread.start()
+
+    def set_domain_factory_service(self, service: Any) -> None:
+        self._domain_factory_service = service
+
+    def create_session(
+        self,
+        *,
+        title: str | None = None,
+        workspace_path: str | None = None,
+        agent_profile_id: str | None = None,
+        turn_summaries_enabled: bool = False,
+        title_is_placeholder: bool | None = None,
+        session_id: str | None = None,
+    ) -> ChatSession:
+        if session_id is not None and self.get_session(session_id) is not None:
+            raise ValueError("Session identifier already exists")
+        workspace = self._resolve_workspace(workspace_path)
+        profile = self.get_agent_profile(agent_profile_id or "default")
+        configuration = self._profile_configuration_for_session(profile)
+        resolved_title = title or "New chat"
+        session = ChatSession(
+            id=session_id or str(uuid4()),
+            title=resolved_title,
+            workspace_path=workspace.path,
+            workspace_name=workspace.name,
+            turn_summaries_enabled=turn_summaries_enabled,
+            turn_summary_checkpoint_initialized=turn_summaries_enabled,
+            title_is_placeholder=(
+                title_is_placeholder
+                if title_is_placeholder is not None
+                else title is None
+            ),
+            agent_profile_id=profile.id,
+            agent_profile_name=profile.name,
+            agent_profile_color=profile.color_hex,
+            agent_configuration=configuration.normalized(),
+        )
+        self._repository.save_session(session)
+        return session
+
+    def list_sessions(self) -> list[ChatSession]:
+        return self._repository.list_sessions()
+
+    def list_stored_jobs(self) -> list[Job]:
+        return self._repository.list_jobs()
+
+    def list_summary_jobs(self) -> list[Job]:
+        return self._repository.list_summary_jobs()
+
+    def list_stored_jobs_for_session(self, session_id: str) -> list[Job]:
+        return self._repository.list_jobs_for_session(session_id)
+
+    def list_turn_summaries(self, session_id: str) -> list[ChatTurnSummary]:
+        return self._repository.list_turn_summaries(session_id)
+
+    def list_agent_profiles(self) -> list[AgentProfile]:
+        builtins = builtin_agent_profiles_by_id()
+        profiles = {profile.id: profile for profile in builtin_agent_profiles()}
+        for profile in self._repository.list_agent_profiles():
+            normalized = profile.normalized()
+            if normalized.id in builtins:
+                continue
+            profiles[normalized.id] = normalized
+        return sorted(
+            profiles.values(),
+            key=lambda profile: (
+                0 if profile.is_builtin else 1,
+                profile.name.lower(),
+                profile.id,
+            ),
+        )
+
+    def get_agent_profile(self, profile_id: str) -> AgentProfile:
+        builtins = builtin_agent_profiles_by_id()
+        if profile_id in builtins:
+            return builtins[profile_id]
+        profile = self._repository.get_agent_profile(profile_id)
+        if profile is None:
+            raise ValueError(f"Agent profile {profile_id} was not found.")
+        return profile.normalized()
+
+    def create_agent_profile(
+        self,
+        *,
+        name: str,
+        description: str,
+        color_hex: str,
+        configuration: AgentConfiguration,
+    ) -> AgentProfile:
+        profile = AgentProfile(
+            id=str(uuid4()),
+            name=name,
+            description=description,
+            color_hex=color_hex,
+            prompt=configuration.normalized().agents[AgentId.GENERATOR].prompt,
+            configuration=self._profile_configuration_for_storage(configuration),
+        ).normalized()
+        self._repository.save_agent_profile(profile)
+        return profile
+
+    def export_agent_profiles(self) -> list[AgentProfile]:
+        builtin_ids = set(builtin_agent_profiles_by_id())
+        return [
+            profile.normalized()
+            for profile in self._repository.list_agent_profiles()
+            if profile.normalized().id not in builtin_ids
+        ]
+
+    def import_agent_profiles(
+        self,
+        *,
+        profiles: list[AgentProfile],
+    ) -> list[AgentProfile]:
+        imported_profiles: list[AgentProfile] = []
+        builtin_ids = builtin_agent_profiles_by_id().keys()
+        for profile in profiles:
+            normalized = profile.normalized()
+            if normalized.is_builtin or normalized.id in builtin_ids:
+                raise ValueError(
+                    "Built-in agent profiles are immutable and cannot be imported."
+                )
+            self._repository.save_agent_profile(normalized)
+            imported_profiles.append(normalized)
+        return imported_profiles
+
+    def apply_agent_profile_to_session(
+        self,
+        *,
+        session_id: str,
+        profile_id: str,
+    ) -> ChatSession:
+        session = self.get_session(session_id)
+        if session is None:
+            raise ValueError(f"Session {session_id} was not found.")
+        self._ensure_session_can_be_reconfigured(session)
+
+        profile = self.get_agent_profile(profile_id)
+        session.agent_configuration = self._profile_configuration_for_session(profile)
+        session.agent_profile_id = profile.id
+        session.agent_profile_name = profile.name
+        session.agent_profile_color = profile.color_hex
+        session.auto_turn_index = 0
+        session.active_agent_turn_index = 0
+        session.active_agent_run_id = None
+        session.touch()
+        self._repository.save_session(session)
+        return session
+
+    def list_workspaces(self) -> list[Workspace]:
+        return self._repository.list_workspaces()
+
+    def validate_persistence_integrity(self) -> list[PersistenceDiagnosticIssue]:
+        return self._repository.validate_integrity()
+
+    def is_persistence_available(self) -> bool:
+        return self._repository.is_available()
+
+    def persistence_startup_issue(self) -> PersistenceDiagnosticIssue | None:
+        return self._repository.startup_issue()
+
+    def set_backend_drain(self, requested: bool) -> BackendDrainStatus:
+        with self._maintenance_lock:
+            self._drain_requested = requested
+            self._drain_requested_at = utc_now() if requested else None
+        return self.backend_drain_status()
+
+    def backend_drain_status(self) -> BackendDrainStatus:
+        with self._maintenance_lock:
+            requested = self._drain_requested
+            requested_at = self._drain_requested_at
+            (
+                active_jobs,
+                active_session_ids,
+                in_flight_message_ids,
+                active_agent_run_ids,
+                pending_follow_up_message_ids,
+                sdd_codex_job_ids,
+                project_factory_job_ids,
+                domain_factory_job_ids,
+                unknown_blockers,
+            ) = self._drain_blocking_work()
+        return BackendDrainStatus(
+            requested=requested,
+            requested_at=requested_at,
+            active_jobs=active_jobs,
+            active_session_ids=active_session_ids,
+            in_flight_message_ids=in_flight_message_ids,
+            active_agent_run_ids=active_agent_run_ids,
+            pending_follow_up_message_ids=pending_follow_up_message_ids,
+            sdd_codex_job_ids=sdd_codex_job_ids,
+            project_factory_job_ids=project_factory_job_ids,
+            domain_factory_job_ids=domain_factory_job_ids,
+            unknown_blockers=unknown_blockers,
+        )
+
+    def _ensure_accepting_new_jobs(self) -> None:
+        with self._maintenance_lock:
+            self._ensure_accepting_new_jobs_locked()
+
+    def _ensure_accepting_new_jobs_locked(self) -> None:
+        if self._drain_requested:
+            raise MaintenanceModeError(
+                "Backend drain is active; new Codex jobs are temporarily disabled."
+            )
+
+    def _drain_blocking_work(
+        self,
+    ) -> tuple[
+        list[Job],
+        list[str],
+        list[str],
+        list[str],
+        list[str],
+        list[str],
+        list[str],
+        list[str],
+        list[str],
+    ]:
+        self._reconcile_jobs_for_drain()
+        sessions = self._repository.list_sessions()
+        for session in sessions:
+            self._reconcile_reserved_follow_ups(session)
+        self._reconcile_stale_active_agent_runs(sessions)
+
+        active_jobs: list[Job] = []
+        for stored_job in self._repository.list_jobs(statuses=_ACTIVE_JOB_STATUSES):
+            job = self.get_job(stored_job.id) or stored_job
+            if not job.status.is_terminal:
+                active_jobs.append(job)
+
+        refreshed_sessions = self._repository.list_sessions()
+        active_session_ids = [
+            session.id
+            for session in refreshed_sessions
+            if session.active_agent_run_id is not None
+        ]
+        active_agent_run_ids = [
+            session.active_agent_run_id
+            for session in refreshed_sessions
+            if session.active_agent_run_id is not None
+        ]
+        in_flight_message_ids: list[str] = []
+        pending_follow_up_message_ids: list[str] = []
+        for session in refreshed_sessions:
+            for message in self._repository.list_messages(session.id):
+                if message.status in _IN_FLIGHT_MESSAGE_STATUSES:
+                    in_flight_message_ids.append(message.id)
+                if is_agent_follow_up(message.agent_id) and is_follow_up_waiting_status(
+                    message.status
+                ):
+                    pending_follow_up_message_ids.append(message.id)
+
+        sdd_codex_job_ids: list[str] = []
+        project_factory_job_ids: list[str] = []
+        domain_factory_job_ids: list[str] = []
+        for job in active_jobs:
+            descriptor = " ".join(
+                [
+                    job.message,
+                    job.execution_message or "",
+                    str(job.conversation_kind),
+                    str(job.agent_id),
+                ]
+            ).lower()
+            sdd_codex_job_ids.append(job.id)
+            if "project factory" in descriptor:
+                project_factory_job_ids.append(job.id)
+            if "domain factory" in descriptor:
+                domain_factory_job_ids.append(job.id)
+
+        return (
+            active_jobs,
+            active_session_ids,
+            in_flight_message_ids,
+            active_agent_run_ids,
+            pending_follow_up_message_ids,
+            sdd_codex_job_ids,
+            project_factory_job_ids,
+            domain_factory_job_ids,
+            [],
+        )
+
+    def _reconcile_stale_active_agent_runs(self, sessions: list[ChatSession]) -> None:
+        active_jobs = self._repository.list_jobs(statuses=_ACTIVE_JOB_STATUSES)
+        active_job_keys = {
+            (job.session_id, job.run_id)
+            for job in active_jobs
+            if job.run_id is not None
+        }
+
+        for session in sessions:
+            active_run_id = session.active_agent_run_id
+            if active_run_id is None:
+                continue
+            if (session.id, active_run_id) in active_job_keys:
+                continue
+            has_in_flight_message = any(
+                message.run_id == active_run_id
+                and message.status in _IN_FLIGHT_MESSAGE_STATUSES
+                for message in self._repository.list_messages(session.id)
+            )
+            if has_in_flight_message:
+                continue
+            self._complete_agent_run(
+                session=session,
+                run_id=active_run_id,
+                completed_turn_index=session.active_agent_turn_index,
+            )
+
+    def _reconcile_jobs_for_drain(self) -> None:
+        for job in self._repository.list_jobs(statuses=_ACTIVE_JOB_STATUSES):
+            self.get_job(job.id)
+
+        for job in self._repository.list_jobs():
+            if job.status.is_terminal and not job.auto_chain_processed:
+                self._sync_terminal_job_side_effects(job.id)
+
+    def get_session(self, session_id: str) -> ChatSession | None:
+        return self._repository.get_session(session_id)
+
+    def refresh_session(self, session_id: str) -> ChatSession | None:
+        session = self._repository.get_session(session_id)
+        if session is None:
+            return None
+        self._reconcile_reserved_follow_ups(session)
+        return self._repository.get_session(session_id) or session
+
+    def set_session_archived(
+        self,
+        *,
+        session_id: str,
+        archived: bool,
+    ) -> ChatSession:
+        session = self.get_session(session_id)
+        if session is None:
+            raise ValueError(f"Session {session_id} was not found.")
+        session.archived_at = session.updated_at if archived else None
+        session.touch()
+        if archived:
+            session.archived_at = session.updated_at
+        self._repository.save_session(session)
+        return session
+
+    def rename_session(
+        self,
+        *,
+        session_id: str,
+        title: str,
+    ) -> ChatSession:
+        session = self.get_session(session_id)
+        if session is None:
+            raise ValueError(f"Session {session_id} was not found.")
+
+        normalized_title = self._normalize_manual_session_title(title)
+        session.title = normalized_title
+        session.title_is_placeholder = False
+        session.touch()
+        self._repository.save_session(session)
+        return session
+
+    def generate_session_title(
+        self,
+        *,
+        session_id: str,
+        instructions: str | None = None,
+    ) -> ChatSession:
+        session = self.get_session(session_id)
+        if session is None:
+            raise ValueError(f"Session {session_id} was not found.")
+
+        messages = self._repository.list_messages(session_id)
+        generated_title = (
+            self._generate_title_with_codex(
+                session,
+                messages,
+                instructions=instructions,
+            )
+            or self._derive_title_from_instructions(instructions)
+            or self._derive_conversation_title(messages)
+        )
+        normalized_title = self._normalize_generated_title(generated_title)
+        if normalized_title is None:
+            normalized_title = self._normalize_manual_session_title(generated_title)
+
+        session.title = normalized_title
+        session.title_is_placeholder = False
+        session.touch()
+        self._repository.save_session(session)
+        return session
+
+    def generate_session_title_from_audio(
+        self,
+        audio_path: str,
+        *,
+        session_id: str,
+        filename: str | None = None,
+        content_type: str | None = None,
+        instructions: str | None = None,
+        language: str | None = None,
+    ) -> tuple[ChatSession, str]:
+        transcript = self._audio_transcriber.transcribe(
+            Path(audio_path),
+            filename=filename,
+            content_type=content_type,
+            language=language,
+        ).strip()
+        if not transcript:
+            raise AudioTranscriptionError("Transcription returned an empty prompt.")
+
+        combined_instructions = "\n\n".join(
+            part for part in ((instructions or "").strip(), transcript) if part
+        )
+        return (
+            self.generate_session_title(
+                session_id=session_id,
+                instructions=combined_instructions,
+            ),
+            transcript,
+        )
+
+    def list_messages(self, session_id: str) -> list[ChatMessage]:
+        return self._repository.list_messages(session_id)
+
+    def get_transcript_window(
+        self,
+        session_id: str,
+        *,
+        before: str | None = None,
+        limit: int = _DEFAULT_TRANSCRIPT_PAGE_SIZE,
+        full: bool = False,
+    ) -> TranscriptWindow:
+        normalized_limit = min(max(1, limit), _MAX_TRANSCRIPT_PAGE_SIZE)
+        if full:
+            messages = self._repository.list_messages(session_id)
+            return self._build_transcript_window(
+                messages,
+                has_older=False,
+                has_newer=False,
+                anchor_message_id=None,
+            )
+
+        if before is not None:
+            cursor = self._decode_message_cursor(before)
+            messages = self._repository.list_messages_before(
+                session_id,
+                before=cursor,
+                limit=normalized_limit,
+            )
+            has_older = False
+            if messages:
+                has_older = bool(
+                    self._repository.list_messages_before(
+                        session_id,
+                        before=self._cursor_for_message(messages[0]),
+                        limit=1,
+                    )
+                )
+            return self._build_transcript_window(
+                messages,
+                has_older=has_older,
+                has_newer=True,
+                anchor_message_id=None,
+            )
+
+        messages = self._repository.list_recent_messages(
+            session_id,
+            limit=normalized_limit,
+        )
+
+        has_older = False
+        if messages:
+            has_older = bool(
+                self._repository.list_messages_before(
+                    session_id,
+                    before=self._cursor_for_message(messages[0]),
+                    limit=1,
+                )
+            )
+        return self._build_transcript_window(
+            messages,
+            has_older=has_older,
+            has_newer=False,
+            anchor_message_id=messages[-1].id if messages else None,
+        )
+
+    def _build_transcript_window(
+        self,
+        messages: list[ChatMessage],
+        *,
+        has_older: bool,
+        has_newer: bool,
+        anchor_message_id: str | None,
+    ) -> TranscriptWindow:
+        oldest_cursor = self._encode_message_cursor(messages[0]) if messages else None
+        newest_cursor = self._encode_message_cursor(messages[-1]) if messages else None
+        return TranscriptWindow(
+            messages=messages,
+            oldest_cursor=oldest_cursor,
+            newest_cursor=newest_cursor,
+            has_older=has_older,
+            has_newer=has_newer,
+            window_anchor_message_id=anchor_message_id,
+            is_partial=has_older or has_newer,
+        )
+
+    def _cursor_for_message(self, message: ChatMessage) -> MessageCursor:
+        return MessageCursor(created_at=message.created_at, message_id=message.id)
+
+    def _encode_message_cursor(self, message: ChatMessage) -> str:
+        payload = {
+            "created_at": message.created_at.isoformat(),
+            "id": message.id,
+        }
+        raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+    def _decode_message_cursor(self, cursor: str) -> MessageCursor:
+        try:
+            padded = cursor + ("=" * (-len(cursor) % 4))
+            payload = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+            created_at = datetime.fromisoformat(str(payload["created_at"]))
+            message_id = str(payload["id"])
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError("Invalid transcript cursor.") from exc
+        if not message_id:
+            raise ValueError("Invalid transcript cursor.")
+        return MessageCursor(created_at=created_at, message_id=message_id)
+
+    def update_agent_configuration(
+        self,
+        *,
+        session_id: str,
+        configuration: AgentConfiguration,
+    ) -> ChatSession:
+        session = self.get_session(session_id)
+        if session is None:
+            raise ValueError(f"Session {session_id} was not found.")
+        self._ensure_session_can_be_reconfigured(session)
+
+        session.agent_configuration = configuration.normalized()
+        session.auto_turn_index = 0
+        session.active_agent_turn_index = 0
+        session.active_agent_run_id = None
+        session.touch()
+        self._repository.save_session(session)
+        return session
+
+    def update_turn_summaries(
+        self,
+        *,
+        session_id: str,
+        enabled: bool,
+    ) -> ChatSession:
+        session = self.get_session(session_id)
+        if session is None:
+            raise ValueError(f"Session {session_id} was not found.")
+        self._ensure_session_can_be_reconfigured(session)
+
+        if enabled and not session.turn_summaries_enabled:
+            session.turn_summary_checkpoint_message_id = (
+                self._latest_eligible_turn_summary_message_id(session.id)
+            )
+            session.turn_summary_checkpoint_initialized = True
+        session.turn_summaries_enabled = enabled
+        session.touch()
+        self._repository.save_session(session)
+        return session
+
+    def _profile_configuration_for_storage(
+        self,
+        configuration: AgentConfiguration,
+    ) -> AgentConfiguration:
+        normalized = configuration.normalized()
+        sanitized_agents = {
+            agent_id: definition.normalized()
+            for agent_id, definition in normalized.agents.items()
+        }
+        for definition in sanitized_agents.values():
+            definition.provider_session_id = None
+        return AgentConfiguration(
+            preset=normalized.preset,
+            display_mode=normalized.display_mode,
+            turn_budget_mode=normalized.turn_budget_mode,
+            agents=sanitized_agents,
+            supervisor_member_ids=normalized.supervisor_member_ids,
+            summary_strategy=normalized.summary_strategy,
+        ).normalized()
+
+    def _run_configuration_snapshot(
+        self,
+        configuration: AgentConfiguration,
+    ) -> AgentConfiguration:
+        return self._profile_configuration_for_storage(configuration)
+
+    def _profile_configuration_for_session(
+        self,
+        profile: AgentProfile,
+    ) -> AgentConfiguration:
+        return self._profile_configuration_for_storage(
+            profile.resolved_configuration(),
+        )
+
+    def update_auto_mode(
+        self,
+        *,
+        session_id: str,
+        enabled: bool,
+        max_turns: int,
+        reviewer_prompt: str | None,
+    ) -> ChatSession:
+        session = self.get_session(session_id)
+        if session is None:
+            raise ValueError(f"Session {session_id} was not found.")
+        self._ensure_session_can_be_reconfigured(session)
+
+        configuration = session.agent_configuration.normalized()
+        configuration.preset = AgentPreset.REVIEW if enabled else AgentPreset.SOLO
+        configuration.agents[AgentId.REVIEWER].enabled = enabled
+        configuration.agents[AgentId.REVIEWER].max_turns = max(0, max_turns)
+        if reviewer_prompt is not None:
+            configuration.agents[AgentId.REVIEWER].prompt = reviewer_prompt.strip()
+        configuration.agents[AgentId.SUMMARY].enabled = False
+        configuration.agents[AgentId.SUMMARY].max_turns = 0
+        return self.update_agent_configuration(
+            session_id=session_id,
+            configuration=configuration,
+        )
+
+    def _ensure_session_can_be_reconfigured(
+        self,
+        session: ChatSession,
+    ) -> None:
+        if session.active_agent_run_id:
+            raise RuntimeError(
+                "Cannot change the session agent profile or configuration while work is in flight."
+            )
+
+        in_flight_statuses = {
+            ChatMessageStatus.RESERVED,
+            ChatMessageStatus.SUBMISSION_PENDING,
+            ChatMessageStatus.PENDING,
+        }
+        has_in_flight_messages = any(
+            message.status in in_flight_statuses
+            for message in self._repository.list_messages(session.id)
+        )
+        if has_in_flight_messages:
+            raise RuntimeError(
+                "Cannot change the session agent profile or configuration while work is in flight."
+            )
+
+    def submit_message(
+        self,
+        message: str,
+        session_id: str | None = None,
+        workspace_path: str | None = None,
+        image_paths: list[str] | None = None,
+        cleanup_paths: list[str] | None = None,
+        execution_message: str | None = None,
+        codex_options: CodexRunOptions | None = None,
+        *,
+        author_type: ChatMessageAuthorType = ChatMessageAuthorType.HUMAN,
+        video_paths: list[str] | None = None,
+        agent_id: AgentId = AgentId.USER,
+        agent_type: AgentType = AgentType.HUMAN,
+        agent_label: str | None = None,
+        visibility: AgentVisibilityMode = AgentVisibilityMode.VISIBLE,
+        trigger_source: AgentTriggerSource = AgentTriggerSource.USER,
+        run_id: str | None = None,
+        conversation_kind: JobConversationKind = JobConversationKind.PRIMARY,
+    ) -> Job:
+        self._ensure_accepting_new_jobs()
+        session = self._resolve_session(
+            message=message,
+            session_id=session_id,
+            workspace_path=workspace_path,
+        )
+        normalized_codex_options = codex_options.normalized() if codex_options else None
+        current_configuration = session.agent_configuration.normalized()
+        if (
+            conversation_kind == JobConversationKind.PRIMARY
+            and author_type == ChatMessageAuthorType.HUMAN
+        ):
+            consumed_job = self._maybe_consume_domain_factory_intake(
+                session=session,
+                message=message,
+                current_configuration=current_configuration,
+                trigger_source=trigger_source,
+            )
+            if consumed_job is not None:
+                return consumed_job
+        agent_run: AgentRun | None = None
+        self._cancel_reserved_follow_ups_for_inactive_runs(session)
+        if (
+            conversation_kind == JobConversationKind.PRIMARY
+            and author_type == ChatMessageAuthorType.HUMAN
+        ):
+            if session.active_agent_run_id:
+                self._cancel_reserved_follow_ups_for_run(
+                    session,
+                    run_id=session.active_agent_run_id,
+                    reason=_RESERVED_MESSAGE_SUPERSEDED_REASON,
+                )
+            run_id = str(uuid4())
+            session.active_agent_run_id = run_id
+            session.active_agent_turn_index = 0
+            session.auto_turn_index = 0
+            agent_run = AgentRun(
+                run_id=run_id,
+                session_id=session.id,
+                configuration=self._run_configuration_snapshot(current_configuration),
+            )
+
+        resolved_run_id = run_id or session.active_agent_run_id or str(uuid4())
+        entry_agent_id = self._entry_agent_for_configuration(current_configuration)
+        entry_agent_definition = current_configuration.agents[entry_agent_id]
+        resolved_user_prompt = self._apply_codex_prompt_preferences(
+            execution_message or message,
+            normalized_codex_options,
+        )
+        if (
+            self._quality_service is not None
+            and conversation_kind == JobConversationKind.PRIMARY
+            and author_type == ChatMessageAuthorType.HUMAN
+        ):
+            intake = self._quality_service.chat_intake_context(
+                workspace=session.workspace_path,
+                source_ref=f"chat:{session.id}:run:{resolved_run_id}",
+                text=execution_message or message,
+            )
+            if intake:
+                resolved_user_prompt += "\n\n" + intake
+            acceptance = self._quality_service.feedback_validation_context(
+                session.workspace_path
+            )
+            if acceptance:
+                resolved_user_prompt += "\n\n" + acceptance
+        if self._prod_bridge_repo_governance_applies(session):
+            resolved_user_prompt = self._apply_prod_bridge_governance_notice(
+                resolved_user_prompt
+            )
+            normalized_codex_options = self._prod_bridge_read_only_codex_options(
+                normalized_codex_options
+            )
+        if conversation_kind == JobConversationKind.PRIMARY:
+            if entry_agent_id == AgentId.SUPERVISOR:
+                execution_message = self._build_supervisor_execution_message(
+                    session=session,
+                    run_id=resolved_run_id,
+                    supervisor_prompt=entry_agent_definition.prompt,
+                    user_prompt=resolved_user_prompt,
+                    supervisor_member_ids=current_configuration.supervisor_member_ids,
+                    trigger_source=trigger_source,
+                )
+            else:
+                execution_message = self._build_generator_execution_message(
+                    generator_prompt=entry_agent_definition.prompt,
+                    user_prompt=resolved_user_prompt,
+                    trigger_source=trigger_source,
+                )
+        else:
+            execution_message = resolved_user_prompt
+
+        user_message = ChatMessage(
+            id=str(uuid4()),
+            session_id=session.id,
+            role=ChatMessageRole.USER,
+            author_type=author_type,
+            agent_id=agent_id,
+            agent_type=agent_type,
+            agent_label=agent_label,
+            visibility=visibility,
+            trigger_source=trigger_source,
+            run_id=resolved_run_id,
+            content=message,
+            status=ChatMessageStatus.COMPLETED,
+        )
+        if (self._bridge_api_port is not None
+                and author_type == ChatMessageAuthorType.HUMAN
+                and conversation_kind == JobConversationKind.PRIMARY):
+            execution_message += (
+                "\n\nBridge handoff context (metadata, not a launch request): "
+                f"bridge_url=http://127.0.0.1:{self._bridge_api_port}; "
+                f"source_session_id={session.id}; source_message_id={user_message.id}. "
+                "Use only for an explicit request to start a separate Generator/Reviewer chat. "
+                "Never delegate this task again merely because this metadata is present."
+            )
+        assistant_message = ChatMessage(
+            id=str(uuid4()),
+            session_id=session.id,
+            role=ChatMessageRole.ASSISTANT,
+            author_type=ChatMessageAuthorType.ASSISTANT,
+            agent_id=entry_agent_id,
+            agent_type=entry_agent_definition.agent_type,
+            agent_label=entry_agent_definition.label,
+            visibility=entry_agent_definition.visibility,
+            trigger_source=trigger_source,
+            run_id=resolved_run_id,
+            content="",
+            status=ChatMessageStatus.PENDING,
+        )
+
+        with self._maintenance_lock:
+            self._ensure_accepting_new_jobs_locked()
+            job = self._start_job(
+                session=session,
+                display_message=message,
+                execution_message=execution_message or message,
+                image_paths=image_paths,
+                video_paths=video_paths,
+                cleanup_paths=cleanup_paths,
+                user_message_id=user_message.id,
+                assistant_message_id=assistant_message.id,
+                provider_session_id=self._provider_session_id_for_agent(
+                    session,
+                    entry_agent_id,
+                ),
+                model=self._model_for_agent(session, entry_agent_id),
+                codex_options=normalized_codex_options,
+                serial_key=self._serial_key_for_agent(session.id, entry_agent_id),
+                conversation_kind=conversation_kind,
+                agent_id=entry_agent_id,
+                agent_type=entry_agent_definition.agent_type,
+                trigger_source=trigger_source,
+                run_id=resolved_run_id,
+            )
+            assistant_message.sync(job_id=job.id)
+            session.touch()
+
+            self._repository.save_turn(
+                session,
+                messages=[user_message, assistant_message],
+                job=job,
+                agent_run=agent_run,
+            )
+            self._register_background_job_watch(job.id)
+        self._queue_session_title_refresh(session.id)
+        return job
+
+    def _maybe_consume_domain_factory_intake(
+        self,
+        *,
+        session: ChatSession,
+        message: str,
+        current_configuration: AgentConfiguration,
+        trigger_source: AgentTriggerSource,
+    ) -> Job | None:
+        domain_factory = self._domain_factory_service
+        if domain_factory is None:
+            return None
+        should_consume = getattr(domain_factory, "should_consume_chat_intake", None)
+        submit_intake = getattr(domain_factory, "submit_intake", None)
+        if should_consume is None or submit_intake is None:
+            return None
+        if not should_consume(session_id=session.id):
+            return None
+
+        result = submit_intake(
+            session_id=session.id,
+            brief=message,
+            emit_chat_message=False,
+        )
+        run_id = str(uuid4())
+        entry_agent_id = self._entry_agent_for_configuration(current_configuration)
+        entry_agent_definition = current_configuration.agents[entry_agent_id]
+        user_message = ChatMessage(
+            id=str(uuid4()),
+            session_id=session.id,
+            role=ChatMessageRole.USER,
+            author_type=ChatMessageAuthorType.HUMAN,
+            agent_id=AgentId.USER,
+            agent_type=AgentType.HUMAN,
+            visibility=AgentVisibilityMode.VISIBLE,
+            trigger_source=trigger_source,
+            run_id=run_id,
+            content=message,
+            status=ChatMessageStatus.COMPLETED,
+        )
+        assistant_message = ChatMessage(
+            id=result.message_id,
+            session_id=session.id,
+            role=ChatMessageRole.ASSISTANT,
+            author_type=ChatMessageAuthorType.ASSISTANT,
+            agent_id=entry_agent_id,
+            agent_type=entry_agent_definition.agent_type,
+            agent_label=entry_agent_definition.label,
+            visibility=entry_agent_definition.visibility,
+            trigger_source=trigger_source,
+            run_id=run_id,
+            content=result.assistant_message,
+            status=ChatMessageStatus.COMPLETED,
+            dedupe_key=f"domain-factory:contract-preview:{session.id}",
+        )
+        job = Job(
+            id=str(uuid4()),
+            session_id=session.id,
+            message=message,
+            user_message_id=user_message.id,
+            assistant_message_id=assistant_message.id,
+            conversation_kind=JobConversationKind.PRIMARY,
+            agent_id=entry_agent_id,
+            agent_type=entry_agent_definition.agent_type,
+            trigger_source=trigger_source,
+            run_id=run_id,
+            execution_message=message,
+        )
+        job.sync(
+            status=JobStatus.COMPLETED,
+            response=result.assistant_message,
+            phase="Completed",
+            latest_activity="Domain Factory intake captured.",
+        )
+        updated_session = self.get_session(session.id) or session
+        updated_session.active_agent_run_id = None
+        updated_session.active_agent_turn_index = 0
+        updated_session.auto_turn_index = 0
+        updated_session.touch()
+        self._repository.save_turn(
+            updated_session,
+            messages=[user_message, assistant_message],
+            job=job,
+            agent_run=None,
+        )
+        self._queue_session_title_refresh(session.id)
+        return job
+
+    def _prod_bridge_repo_governance_applies(self, session: ChatSession) -> bool:
+        if self._bridge_environment != "prod":
+            return False
+        bridge_root = Path(self._default_workspace_path).expanduser().resolve()
+        workspace = Path(session.workspace_path).expanduser().resolve()
+        return workspace == bridge_root or bridge_root in workspace.parents
+
+    def _apply_prod_bridge_governance_notice(self, prompt: str) -> str:
+        normalized_prompt = prompt.strip()
+        if _PROD_BRIDGE_CHAT_GOVERNANCE_NOTICE in normalized_prompt:
+            return normalized_prompt
+        if not normalized_prompt:
+            return _PROD_BRIDGE_CHAT_GOVERNANCE_NOTICE.strip()
+        return f"{_PROD_BRIDGE_CHAT_GOVERNANCE_NOTICE}\n\nUser message:\n{normalized_prompt}"
+
+    def _prod_bridge_read_only_codex_options(
+        self,
+        codex_options: CodexRunOptions | None,
+    ) -> CodexRunOptions:
+        normalized = codex_options.normalized() if codex_options else CodexRunOptions()
+        overrides = list(normalized.config_overrides)
+        if not any(
+            override.strip().startswith("sandbox_mode") for override in overrides
+        ):
+            overrides.append(_PROD_BRIDGE_READ_ONLY_SANDBOX_OVERRIDE)
+        return CodexRunOptions(
+            profile=normalized.profile,
+            search_enabled=normalized.search_enabled,
+            skill_ids=normalized.skill_ids,
+            mcp_server_ids=normalized.mcp_server_ids,
+            config_overrides=tuple(overrides),
+        ).normalized()
+
+    def list_agent_runs(self, session_id: str) -> list[AgentRun]:
+        return self._repository.list_agent_runs(session_id)
+
+    def submit_audio_message(
+        self,
+        audio_path: str,
+        *,
+        filename: str | None = None,
+        content_type: str | None = None,
+        message: str | None = None,
+        session_id: str | None = None,
+        workspace_path: str | None = None,
+        language: str | None = None,
+        codex_options: CodexRunOptions | None = None,
+    ) -> AudioSubmission:
+        transcript = self._audio_transcriber.transcribe(
+            Path(audio_path),
+            filename=filename,
+            content_type=content_type,
+            language=language,
+        ).strip()
+        if not transcript:
+            raise AudioTranscriptionError("Transcription returned an empty prompt.")
+
+        display_message = self._build_audio_display_message(
+            message=message,
+            transcript=transcript,
+        )
+        execution_message = self._build_audio_execution_message(
+            message=message,
+            transcript=transcript,
+        )
+        job = self.submit_message(
+            display_message,
+            session_id=session_id,
+            workspace_path=workspace_path,
+            execution_message=execution_message,
+            codex_options=codex_options,
+        )
+        return AudioSubmission(job=job, transcript=transcript)
+
+    def _build_audio_display_message(
+        self,
+        *,
+        message: str | None,
+        transcript: str,
+    ) -> str:
+        parts = [
+            part
+            for part in ((message or "").strip(), "[Sent via audio]", transcript)
+            if part
+        ]
+        return "\n\n".join(parts)
+
+    def _build_audio_execution_message(
+        self,
+        *,
+        message: str | None,
+        transcript: str,
+    ) -> str:
+        parts = [part for part in ((message or "").strip(), transcript) if part]
+        return "\n\n".join(parts)
+
+    def submit_document_message(
+        self,
+        document_path: str,
+        *,
+        filename: str | None = None,
+        content_type: str | None = None,
+        message: str | None = None,
+        session_id: str | None = None,
+        workspace_path: str | None = None,
+        language: str | None = None,
+        codex_options: CodexRunOptions | None = None,
+    ) -> DocumentSubmission:
+        resolved_path = Path(document_path)
+        attached_document_name = filename or resolved_path.name
+        document_kind = self._classify_document(
+            filename=attached_document_name,
+            content_type=content_type,
+        )
+        if document_kind == "image":
+            raise UnsupportedDocumentError(
+                "Image uploads must use the image or attachment upload endpoints."
+            )
+        display_message = self._build_document_display_message(
+            message=message,
+            document_kind=document_kind,
+            document_name=attached_document_name,
+        )
+        cleanup_paths = [str(resolved_path)]
+        document_image_paths: list[str] = []
+
+        if document_kind == "audio":
+            transcript = self._audio_transcriber.transcribe(
+                resolved_path,
+                filename=attached_document_name,
+                content_type=content_type,
+                language=language,
+            ).strip()
+            if not transcript:
+                raise AudioTranscriptionError("Transcription returned an empty prompt.")
+
+            prompt = self._build_document_execution_message(
+                message=message,
+                document_kind=document_kind,
+                document_name=attached_document_name,
+                content_label="Transcript",
+                content=transcript,
+            )
+            job = self.submit_message(
+                display_message,
+                session_id=session_id,
+                workspace_path=workspace_path,
+                cleanup_paths=cleanup_paths,
+                execution_message=prompt,
+                codex_options=codex_options,
+            )
+            return DocumentSubmission(
+                job=job,
+                document_kind=document_kind,
+                attached_document_name=attached_document_name,
+                transcript=transcript,
+                extracted_text_preview=self._build_text_preview(transcript),
+            )
+
+        if document_kind == "video":
+            video_path = self._persist_retryable_attachment_path(
+                resolved_path,
+                fallback_suffix=".mp4",
+            )
+            preview_paths, preview_note = prepare_video_preview(video_path)
+            video_reference = self._build_video_file_reference(
+                video_path=video_path,
+                content_type=content_type,
+            ) + "\n" + preview_note + "\n" + self._video_transcript_note(video_path, language)
+            prompt = self._build_document_execution_message(
+                message=message,
+                document_kind=document_kind,
+                document_name=attached_document_name,
+                content_label="Video file reference",
+                content=video_reference,
+            )
+            job = self.submit_message(
+                display_message,
+                session_id=session_id,
+                workspace_path=workspace_path,
+                video_paths=[video_path],
+                image_paths=preview_paths,
+                cleanup_paths=cleanup_paths,
+                execution_message=prompt,
+                codex_options=codex_options,
+            )
+            return DocumentSubmission(
+                job=job,
+                document_kind=document_kind,
+                attached_document_name=attached_document_name,
+                extracted_text_preview=self._build_text_preview(video_reference),
+            )
+
+        if document_kind == "cad":
+            cad_path = self._persist_retryable_attachment_path(
+                resolved_path,
+                fallback_suffix=self._cad_fallback_suffix(
+                    filename=attached_document_name,
+                    content_type=content_type,
+                ),
+            )
+            cad_reference = self._build_cad_file_reference(
+                cad_path=cad_path,
+                content_type=content_type,
+            )
+            prompt = self._build_document_execution_message(
+                message=message,
+                document_kind=document_kind,
+                document_name=attached_document_name,
+                content_label="CAD file reference",
+                content=cad_reference,
+            )
+            job = self.submit_message(
+                display_message,
+                session_id=session_id,
+                workspace_path=workspace_path,
+                cleanup_paths=cleanup_paths,
+                execution_message=prompt,
+                codex_options=codex_options,
+            )
+            return DocumentSubmission(
+                job=job,
+                document_kind=document_kind,
+                attached_document_name=attached_document_name,
+                extracted_text_preview=self._build_text_preview(cad_reference),
+            )
+
+        extracted_text = self._extract_document_text(
+            document_path=resolved_path,
+            document_kind=document_kind,
+        ).strip()
+        if document_kind == "zip":
+            archive_path = self._persist_retryable_attachment_path(
+                resolved_path,
+                fallback_suffix=".zip",
+            )
+            extracted_text = self._append_zip_archive_guidance(
+                extracted_text,
+                archive_path=archive_path,
+            )
+        if not extracted_text:
+            extracted_text = self._build_empty_document_extraction_note(
+                document_kind=document_kind,
+                document_name=attached_document_name,
+            )
+        if document_kind == "pptx":
+            document_image_paths = self._extract_pptx_embedded_images(
+                document_path=resolved_path,
+                output_dir=resolved_path.parent,
+                document_name=attached_document_name,
+            )
+            cleanup_paths.extend(document_image_paths)
+
+        prompt = self._build_document_execution_message(
+            message=message,
+            document_kind=document_kind,
+            document_name=attached_document_name,
+            content_label="Extracted document text",
+            content=extracted_text,
+        )
+        if document_image_paths:
+            prompt = (
+                f"{prompt}\n\n"
+                "Embedded images extracted from the PPTX are provided separately "
+                "to this prompt."
+            )
+        job = self.submit_message(
+            display_message,
+            session_id=session_id,
+            workspace_path=workspace_path,
+            image_paths=document_image_paths or None,
+            cleanup_paths=cleanup_paths,
+            execution_message=prompt,
+            codex_options=codex_options,
+        )
+        return DocumentSubmission(
+            job=job,
+            document_kind=document_kind,
+            attached_document_name=attached_document_name,
+            extracted_text_preview=self._build_text_preview(extracted_text),
+        )
+
+    def submit_image_message(
+        self,
+        image_path: str,
+        *,
+        filename: str | None = None,
+        content_type: str | None = None,
+        message: str | None = None,
+        session_id: str | None = None,
+        workspace_path: str | None = None,
+        codex_options: CodexRunOptions | None = None,
+    ) -> ImageSubmission:
+        resolved_path = Path(image_path)
+        attached_image_name = filename or resolved_path.name
+        document_kind = self._classify_document(
+            filename=attached_image_name,
+            content_type=content_type,
+        )
+        if document_kind != "image":
+            raise UnsupportedDocumentError(
+                "The uploaded file is not a supported image."
+            )
+
+        attachment_summaries = [f"- image: {attached_image_name}"]
+        display_message = self._build_attachment_batch_display_message(
+            message=message,
+            attachment_summaries=attachment_summaries,
+        )
+        execution_message = self._build_attachment_batch_execution_message(
+            message=message,
+            attachment_summaries=attachment_summaries,
+            attachment_details=[],
+            image_count=1,
+        )
+        job = self.submit_message(
+            display_message,
+            session_id=session_id,
+            workspace_path=workspace_path,
+            image_paths=[str(resolved_path)],
+            cleanup_paths=[str(resolved_path)],
+            execution_message=execution_message,
+            codex_options=codex_options,
+        )
+        return ImageSubmission(
+            job=job,
+            attached_image_name=attached_image_name,
+        )
+
+    def _video_transcript_note(self, path: str, language: str | None) -> str:
+        transcribe = getattr(self._audio_transcriber, "transcribe_video", None)
+        try:
+            result = transcribe(Path(path), language=language) if transcribe else {
+                "status": "unavailable", "reason": "Local video transcription is not configured. Original retained."}
+            return transcript_note(result)
+        except Exception:
+            # A transcription failure must not discard frames or the original video.
+            return transcript_note({"status": "unavailable"})
+
+    def submit_attachment_message(
+        self,
+        attachments: list[AttachmentInput],
+        *,
+        message: str | None = None,
+        session_id: str | None = None,
+        workspace_path: str | None = None,
+        language: str | None = None,
+        codex_options: CodexRunOptions | None = None,
+    ) -> Job:
+        if not attachments:
+            raise ValueError("At least one attachment is required.")
+
+        cleanup_paths: list[str] = []
+        image_paths: list[str] = []
+        video_paths: list[str] = []
+        video_preview_budget = 24
+        attachment_summaries: list[str] = []
+        attachment_details: list[str] = []
+
+        for index, attachment in enumerate(attachments, start=1):
+            resolved_path = Path(attachment.path)
+            attached_name = attachment.filename or resolved_path.name
+            document_kind = self._classify_document(
+                filename=attached_name,
+                content_type=attachment.content_type,
+            )
+            cleanup_paths.append(str(resolved_path))
+            attachment_summaries.append(f"- {document_kind}: {attached_name}")
+
+            if document_kind == "image":
+                image_paths.append(str(resolved_path))
+                continue
+
+            if document_kind == "audio":
+                transcript = self._audio_transcriber.transcribe(
+                    resolved_path,
+                    filename=attached_name,
+                    content_type=attachment.content_type,
+                    language=language,
+                ).strip()
+                if not transcript:
+                    raise AudioTranscriptionError(
+                        "Transcription returned an empty prompt."
+                    )
+                attachment_details.append(
+                    self._build_attachment_detail_section(
+                        index=index,
+                        document_kind=document_kind,
+                        document_name=attached_name,
+                        content_label="Transcript",
+                        content=transcript,
+                    )
+                )
+                continue
+
+            if document_kind == "video":
+                video_path = self._persist_retryable_attachment_path(
+                    resolved_path,
+                    fallback_suffix=".mp4",
+                )
+                video_paths.append(video_path)
+                preview_paths, preview_note = prepare_video_preview(video_path, max_frames=video_preview_budget)
+                video_preview_budget -= len(preview_paths)
+                image_paths.extend(preview_paths)
+                attachment_details.append(
+                    self._build_attachment_detail_section(
+                        index=index,
+                        document_kind=document_kind,
+                        document_name=attached_name,
+                        content_label="Video file reference",
+                        content=self._build_video_file_reference(
+                            video_path=video_path,
+                            content_type=attachment.content_type,
+                        ) + "\n" + preview_note + "\n" + self._video_transcript_note(video_path, language),
+                    )
+                )
+                continue
+
+            if document_kind == "cad":
+                cad_path = self._persist_retryable_attachment_path(
+                    resolved_path,
+                    fallback_suffix=self._cad_fallback_suffix(
+                        filename=attached_name,
+                        content_type=attachment.content_type,
+                    ),
+                )
+                attachment_details.append(
+                    self._build_attachment_detail_section(
+                        index=index,
+                        document_kind=document_kind,
+                        document_name=attached_name,
+                        content_label="CAD file reference",
+                        content=self._build_cad_file_reference(
+                            cad_path=cad_path,
+                            content_type=attachment.content_type,
+                        ),
+                    )
+                )
+                continue
+
+            extracted_text = self._extract_document_text(
+                document_path=resolved_path,
+                document_kind=document_kind,
+            ).strip()
+            if document_kind == "zip":
+                archive_path = self._persist_retryable_attachment_path(
+                    resolved_path,
+                    fallback_suffix=".zip",
+                )
+                extracted_text = self._append_zip_archive_guidance(
+                    extracted_text,
+                    archive_path=archive_path,
+                )
+            if not extracted_text:
+                extracted_text = self._build_empty_document_extraction_note(
+                    document_kind=document_kind,
+                    document_name=attached_name,
+                )
+            if document_kind == "pptx":
+                pptx_image_paths = self._extract_pptx_embedded_images(
+                    document_path=resolved_path,
+                    output_dir=resolved_path.parent,
+                    document_name=attached_name,
+                )
+                image_paths.extend(pptx_image_paths)
+                cleanup_paths.extend(pptx_image_paths)
+            attachment_details.append(
+                self._build_attachment_detail_section(
+                    index=index,
+                    document_kind=document_kind,
+                    document_name=attached_name,
+                    content_label="Extracted document text",
+                    content=extracted_text,
+                )
+            )
+
+        display_message = self._build_attachment_batch_display_message(
+            message=message,
+            attachment_summaries=attachment_summaries,
+        )
+        execution_message = self._build_attachment_batch_execution_message(
+            message=message,
+            attachment_summaries=attachment_summaries,
+            attachment_details=attachment_details,
+            image_count=len(image_paths),
+        )
+        return self.submit_message(
+            display_message,
+            session_id=session_id,
+            workspace_path=workspace_path,
+            image_paths=image_paths or None,
+            video_paths=video_paths,
+            cleanup_paths=cleanup_paths,
+            execution_message=execution_message,
+            codex_options=codex_options,
+        )
+
+    def cancel_job(self, job_id: str) -> Job:
+        job = self.get_job(job_id)
+        if job is None:
+            raise ValueError(f"Job {job_id} was not found.")
+
+        if job.status.is_terminal:
+            return job
+
+        if not self._execution_provider.cancel_job(job_id):
+            raise RuntimeError("This backend cannot cancel the requested job.")
+
+        cancelled_job = self.get_job(job_id)
+        return cancelled_job or job
+
+    def retry_job(self, job_id: str) -> Job:
+        self._ensure_accepting_new_jobs()
+        original_job = self.get_job(job_id)
+        if original_job is None:
+            raise ValueError(f"Job {job_id} was not found.")
+        if not original_job.status.is_terminal:
+            raise RuntimeError("Only terminal jobs can be retried.")
+
+        session = self._repository.get_session(original_job.session_id)
+        if session is None:
+            raise ValueError(f"Session {original_job.session_id} was not found.")
+        if original_job.assistant_message_id is None:
+            raise RuntimeError(
+                "This job cannot be retried because its assistant turn is missing."
+            )
+
+        assistant_message = self._repository.get_message(
+            original_job.assistant_message_id
+        )
+        if assistant_message is None:
+            raise RuntimeError(
+                "This job cannot be retried because its assistant turn was not found."
+            )
+
+        with self._maintenance_lock:
+            self._ensure_accepting_new_jobs_locked()
+            retried_job = self._start_job(
+                session=session,
+                display_message=original_job.message,
+                execution_message=original_job.execution_message
+                or original_job.message,
+                image_paths=original_job.image_paths,
+                video_paths=original_job.video_paths,
+                cleanup_paths=None,
+                user_message_id=original_job.user_message_id,
+                assistant_message_id=assistant_message.id,
+                provider_session_id=self._provider_session_id_for_agent(
+                    session,
+                    original_job.agent_id,
+                ),
+                model=self._model_for_agent(session, original_job.agent_id),
+                codex_options=None,
+                serial_key=self._serial_key_for_agent(
+                    session.id,
+                    original_job.agent_id,
+                ),
+                conversation_kind=original_job.conversation_kind,
+                agent_id=original_job.agent_id,
+                agent_type=original_job.agent_type,
+                trigger_source=original_job.trigger_source,
+                run_id=original_job.run_id,
+            )
+
+            assistant_message.sync(
+                content="",
+                status=ChatMessageStatus.PENDING,
+                job_id=retried_job.id,
+                agent_label=assistant_message.agent_label,
+            )
+            session.touch()
+
+            self._repository.save_turn(
+                session,
+                messages=[assistant_message],
+                job=retried_job,
+            )
+            self._register_background_job_watch(retried_job.id)
+        return retried_job
+
+    def recover_submission_unknown_message(
+        self,
+        *,
+        session_id: str,
+        message_id: str,
+        action: MessageRecoveryAction,
+    ) -> ChatSession:
+        session = self._repository.get_session(session_id)
+        if session is None:
+            raise ValueError(f"Session {session_id} was not found.")
+
+        message = self._repository.get_message(message_id)
+        if message is None or message.session_id != session_id:
+            raise ValueError(f"Message {message_id} was not found.")
+        validate_manual_recovery_candidate(message)
+
+        if action == MessageRecoveryAction.CANCEL:
+            message.sync(
+                status=ChatMessageStatus.CANCELLED,
+                reason_code=ChatMessageReasonCode.MANUAL_CANCEL_REQUESTED,
+                recovery_action=MessageRecoveryAction.CANCEL,
+                content=self._append_recovery_note(
+                    message.content,
+                    "Operator cancelled this uncertain follow-up.",
+                ),
+            )
+            self._repository.save_message(message)
+            self._complete_follow_up_run_after_manual_resolution(
+                session=session,
+                message=message,
+            )
+            return self._repository.get_session(session_id) or session
+
+        self._ensure_accepting_new_jobs()
+
+        if session.active_agent_run_id not in {None, message.run_id}:
+            raise RuntimeError(
+                "Finish the current active run before retrying this uncertain follow-up."
+            )
+
+        context = self._build_follow_up_context(
+            session=session,
+            message=message,
+        )
+        if context is None:
+            raise RuntimeError(
+                "This uncertain follow-up cannot be retried because its source context is no longer available."
+            )
+
+        retry_message = ChatMessage(
+            id=str(uuid4()),
+            session_id=session.id,
+            role=message.role,
+            author_type=message.author_type,
+            content="",
+            status=ChatMessageStatus.RESERVED,
+            agent_id=message.agent_id,
+            agent_type=message.agent_type,
+            agent_label=message.agent_label,
+            visibility=message.visibility,
+            trigger_source=message.trigger_source,
+            run_id=message.run_id,
+            dedupe_key=self._next_manual_retry_dedupe_key(message),
+            reason_code=ChatMessageReasonCode.MANUAL_RETRY_REQUESTED,
+            recovered_from_message_id=message.id,
+            recovery_action=MessageRecoveryAction.RETRY,
+        )
+        with self._maintenance_lock:
+            self._ensure_accepting_new_jobs_locked()
+            retry_message = self._repository.reserve_message(retry_message)
+            if retry_message.job_id is not None:
+                raise RuntimeError("The manual retry was already created.")
+
+            message.sync(
+                status=ChatMessageStatus.CANCELLED,
+                reason_code=ChatMessageReasonCode.MANUAL_RETRY_REQUESTED,
+                recovery_action=MessageRecoveryAction.RETRY,
+                superseded_by_message_id=retry_message.id,
+                content=self._append_recovery_note(
+                    message.content,
+                    f"Operator retried this uncertain follow-up as message {retry_message.id}.",
+                ),
+            )
+            session.active_agent_run_id = message.run_id
+            session.touch()
+            self._repository.save_turn(
+                session,
+                messages=[message, retry_message],
+            )
+            self._launch_reserved_follow_up(
+                session=session,
+                message=retry_message,
+                display_message=context.display_message,
+                execution_message=context.execution_message,
+                user_message_id=context.user_message_id,
+                conversation_kind=context.conversation_kind,
+                agent_id=context.agent_id,
+                agent_type=context.agent_type,
+                trigger_source=context.trigger_source,
+                run_id=message.run_id or "",
+            )
+        return self._repository.get_session(session_id) or session
+
+    def get_job(self, job_id: str) -> Job | None:
+        job = self._repository.get_job(job_id)
+        if job is None:
+            return None
+
+        if job.status.is_terminal:
+            return self._sync_terminal_job_side_effects(job.id) or job
+
+        if not self._execution_provider.has_job(job_id):
+            job.sync(
+                status=JobStatus.FAILED,
+                error="The backend restarted before this in-flight job could be recovered.",
+                phase="Failed",
+                latest_activity="The backend process lost the live execution state for this job.",
+            )
+            self._repository.save_job(job)
+            return self._sync_terminal_job_side_effects(job.id) or job
+
+        snapshot = self._execution_provider.get_snapshot(job_id)
+        job.sync(
+            status=snapshot.status,
+            response=snapshot.response,
+            error=snapshot.error,
+            provider_session_id=snapshot.provider_session_id,
+            phase=snapshot.phase,
+            latest_activity=snapshot.latest_activity,
+        )
+        self._repository.save_job(job)
+        if job.status.is_terminal:
+            return self._sync_terminal_job_side_effects(job.id) or job
+        self._sync_job_side_effects(job)
+        return job
+
+    def get_stored_job(self, job_id: str) -> Job | None:
+        return self._repository.get_job(job_id)
+
+    def get_job_image_attachment_file(
+        self,
+        job_id: str,
+        attachment_index: int,
+    ) -> JobAttachmentFile | None:
+        job = self._repository.get_job(job_id)
+        if job is None:
+            return None
+        paths = [*job.image_paths, *job.video_paths]
+        if attachment_index < 0 or attachment_index >= len(paths):
+            return None
+
+        image_path = Path(paths[attachment_index])
+        if not image_path.exists() or not image_path.is_file():
+            return None
+
+        try:
+            retry_asset_root = self._retry_asset_root.resolve(strict=True)
+            resolved_image_path = image_path.resolve(strict=True)
+            resolved_image_path.relative_to(retry_asset_root)
+        except (OSError, ValueError):
+            return None
+
+        media_type, _encoding = mimetypes.guess_type(resolved_image_path.name)
+        return JobAttachmentFile(
+            path=resolved_image_path,
+            media_type=media_type or "application/octet-stream",
+        )
+
+    def watch_job(
+        self,
+        job_id: str,
+        on_change: Callable[[ExecutionSnapshot], None],
+    ) -> Callable[[], None] | None:
+        if self._repository.get_job(job_id) is None:
+            return None
+        return self._execution_provider.watch_job(job_id, on_change)
+
+    def supports_job_cancellation(self) -> bool:
+        return self._execution_provider.supports_job_cancellation()
+
+    def supports_job_retry(self) -> bool:
+        return True
+
+    def supports_image_input(self) -> bool:
+        return True
+
+    def _start_job(
+        self,
+        *,
+        session: ChatSession,
+        display_message: str,
+        execution_message: str,
+        image_paths: list[str] | None,
+        cleanup_paths: list[str] | None,
+        user_message_id: str | None,
+        assistant_message_id: str | None,
+        provider_session_id: str | None,
+        model: str | None,
+        codex_options: CodexRunOptions | None,
+        serial_key: str,
+        conversation_kind: JobConversationKind,
+        agent_id: AgentId,
+        agent_type: AgentType,
+        trigger_source: AgentTriggerSource,
+        run_id: str | None,
+        submission_token: str | None = None,
+        video_paths: list[str] | None = None,
+    ) -> Job:
+        retryable_image_paths = self._persist_retryable_image_paths(image_paths)
+        job_id = self._execution_provider.execute(
+            execution_message,
+            image_paths=retryable_image_paths or None,
+            cleanup_paths=cleanup_paths,
+            provider_session_id=provider_session_id,
+            model=model,
+            codex_options=codex_options,
+            serial_key=serial_key,
+            submission_token=submission_token,
+            workdir=session.workspace_path,
+        )
+        return Job(
+            id=job_id,
+            session_id=session.id,
+            message=display_message,
+            user_message_id=user_message_id,
+            assistant_message_id=assistant_message_id,
+            provider_session_id=provider_session_id,
+            conversation_kind=conversation_kind,
+            agent_id=agent_id,
+            agent_type=agent_type,
+            trigger_source=trigger_source,
+            run_id=run_id,
+            submission_token=submission_token,
+            execution_message=execution_message,
+            image_paths=retryable_image_paths,
+            video_paths=list(video_paths or []),
+        )
+
+    def _persist_retryable_image_paths(
+        self,
+        image_paths: list[str] | None,
+    ) -> list[str]:
+        if not image_paths:
+            return []
+
+        persisted_paths: list[str] = []
+        for image_path in image_paths:
+            persisted_paths.append(
+                self._persist_retryable_attachment_path(
+                    Path(image_path),
+                    fallback_suffix=".bin",
+                )
+            )
+        return persisted_paths
+
+    def _persist_retryable_attachment_path(
+        self,
+        source: Path,
+        *,
+        fallback_suffix: str,
+    ) -> str:
+        extension = source.suffix or fallback_suffix
+        destination = self._retry_asset_root / f"{uuid4()}{extension}"
+        shutil.copy2(source, destination)
+        return str(destination)
+
+    @staticmethod
+    def _append_zip_archive_guidance(text: str, *, archive_path: str) -> str:
+        parts = [
+            text.strip(),
+            f"Archive local path: {archive_path}",
+            _ZIP_ARCHIVE_GUIDANCE,
+        ]
+        return "\n\n".join(part for part in parts if part)
+
+    @staticmethod
+    def _build_video_file_reference(
+        *,
+        video_path: str,
+        content_type: str | None,
+    ) -> str:
+        parts = [
+            f"Video local path: {video_path}",
+            f"Content type: {content_type or 'unknown'}",
+            "The original video is retained. Prepared preview images, when available, "
+            "are supplied below; no video player or shell tool is required to inspect them.",
+        ]
+        return "\n".join(parts)
+
+    @staticmethod
+    def _build_cad_file_reference(
+        *,
+        cad_path: str,
+        content_type: str | None,
+    ) -> str:
+        parts = [
+            f"CAD local path: {cad_path}",
+            f"Content type: {content_type or 'unknown'}",
+            "The original DXF/DWG file is available at this path. Use suitable "
+            "local CAD tools (for example FreeCAD or ezdxf where compatible) "
+            "to inspect it, or copy it into the requested workspace unchanged.",
+        ]
+        return "\n".join(parts)
+
+    @staticmethod
+    def _cad_fallback_suffix(
+        *,
+        filename: str,
+        content_type: str | None,
+    ) -> str:
+        suffix = Path(filename).suffix.lower()
+        if suffix in _CAD_SUFFIXES:
+            return suffix
+        normalized_content_type = (
+            (content_type or "").split(";", maxsplit=1)[0].strip().lower()
+        )
+        if "dxf" in normalized_content_type:
+            return ".dxf"
+        if "dwg" in normalized_content_type or "acad" in normalized_content_type:
+            return ".dwg"
+        return ".cad"
+
+    def _resolve_session(
+        self,
+        *,
+        message: str,
+        session_id: str | None,
+        workspace_path: str | None,
+    ) -> ChatSession:
+        if session_id:
+            session = self._repository.get_session(session_id)
+            if session is None:
+                raise ValueError(f"Session {session_id} was not found.")
+            return session
+
+        session = self.create_session(
+            title=None,
+            workspace_path=workspace_path,
+            title_is_placeholder=True,
+        )
+        return session
+
+    def _sync_job_side_effects(self, job: Job) -> None:
+        session = self._repository.get_session(job.session_id)
+        if session and job.provider_session_id:
+            configuration = session.agent_configuration.normalized()
+            definition = configuration.agents.get(job.agent_id)
+            if (
+                definition is not None
+                and definition.provider_session_id != job.provider_session_id
+            ):
+                definition.provider_session_id = job.provider_session_id
+                session.agent_configuration = configuration
+            if job.agent_id == AgentId.GENERATOR:
+                session.provider_session_id = job.provider_session_id
+            elif job.agent_id == AgentId.REVIEWER:
+                session.reviewer_provider_session_id = job.provider_session_id
+            if definition is not None or job.agent_id in {
+                AgentId.GENERATOR,
+                AgentId.REVIEWER,
+            }:
+                session.touch()
+                self._repository.save_session(session)
+
+        if job.assistant_message_id is None:
+            return
+
+        assistant_message = self._repository.get_message(job.assistant_message_id)
+        if assistant_message is None:
+            return
+
+        if job.status == JobStatus.COMPLETED:
+            completed_content = job.response or ""
+            if job.agent_id == AgentId.SUPERVISOR:
+                decision = self._parse_supervisor_decision(completed_content)
+                if decision is not None:
+                    completed_content = self._format_supervisor_message_content(
+                        decision
+                    )
+            assistant_message.sync(
+                content=completed_content,
+                status=ChatMessageStatus.COMPLETED,
+                job_id=job.id,
+            )
+        elif job.status == JobStatus.CANCELLED:
+            assistant_message.sync(
+                content=job.error or "Execution cancelled.",
+                status=ChatMessageStatus.CANCELLED,
+                job_id=job.id,
+            )
+        elif job.status == JobStatus.FAILED:
+            assistant_message.sync(
+                content=job.error or "Execution failed.",
+                status=ChatMessageStatus.FAILED,
+                job_id=job.id,
+            )
+        else:
+            assistant_message.sync(
+                status=ChatMessageStatus.PENDING,
+                job_id=job.id,
+            )
+
+        self._repository.save_message(assistant_message)
+
+        if session and job.status.is_terminal:
+            session.touch()
+            self._repository.save_session(session)
+
+    def _sync_terminal_job_side_effects(self, job_id: str) -> Job | None:
+        entry = self._acquire_terminal_job_lock(job_id)
+        try:
+            with entry.lock:
+                job = self._repository.get_job(job_id)
+                if job is None:
+                    return None
+                self._sync_job_side_effects(job)
+                if not job.auto_chain_processed:
+                    session = self._repository.get_session(job.session_id)
+                    if session is not None:
+                        if job.status == JobStatus.COMPLETED:
+                            self._maybe_continue_agent_chain(session=session, job=job)
+                        elif job.run_id:
+                            self._complete_agent_run(
+                                session=session,
+                                run_id=job.run_id,
+                                completed_turn_index=self._completed_turn_index_for_run(
+                                    session,
+                                    run_id=job.run_id,
+                                ),
+                            )
+                        self._maybe_generate_turn_summary(session=session, job=job)
+                    job.auto_chain_processed = True
+                    self._repository.save_job(job)
+                return self._repository.get_job(job_id) or job
+        finally:
+            self._release_terminal_job_lock(job_id, entry)
+
+    def _acquire_terminal_job_lock(self, job_id: str) -> _TerminalJobLockEntry:
+        with self._terminal_job_lock_guard:
+            entry = self._terminal_job_locks.get(job_id)
+            if entry is None:
+                entry = _TerminalJobLockEntry(lock=threading.Lock())
+                self._terminal_job_locks[job_id] = entry
+            entry.users += 1
+            return entry
+
+    def _release_terminal_job_lock(
+        self,
+        job_id: str,
+        entry: _TerminalJobLockEntry,
+    ) -> None:
+        with self._terminal_job_lock_guard:
+            current = self._terminal_job_locks.get(job_id)
+            if current is not entry:
+                return
+            entry.users -= 1
+            if entry.users == 0:
+                self._terminal_job_locks.pop(job_id, None)
+
+    def _maybe_continue_agent_chain(
+        self,
+        *,
+        session: ChatSession,
+        job: Job,
+    ) -> None:
+        if job.status != JobStatus.COMPLETED or not job.run_id:
+            return
+        if session.active_agent_run_id != job.run_id:
+            return
+        if self._recover_waiting_follow_up_for_run(session, run_id=job.run_id):
+            return
+
+        configuration = session.agent_configuration.normalized()
+        if configuration.preset == AgentPreset.SUPERVISOR:
+            self._maybe_continue_supervisor_chain(
+                session=session,
+                job=job,
+                configuration=configuration,
+            )
+            return
+
+        generator = configuration.agents[AgentId.GENERATOR]
+        reviewer = configuration.agents[AgentId.REVIEWER]
+        continuation_agent_id = (
+            self._agent_id_from_trigger_source(job.trigger_source)
+            if job.agent_id == AgentId.SUMMARY
+            else job.agent_id
+        )
+        generator_turns = self._count_agent_messages(
+            session.id,
+            run_id=job.run_id,
+            agent_id=AgentId.GENERATOR,
+        )
+        reviewer_turns = self._count_agent_messages(
+            session.id,
+            run_id=job.run_id,
+            agent_id=AgentId.REVIEWER,
+        )
+        if continuation_agent_id == AgentId.GENERATOR:
+            if self._maybe_start_due_summary(
+                session=session,
+                run_id=job.run_id,
+                trigger_source=AgentTriggerSource.GENERATOR,
+                finalizing=False,
+            ):
+                return
+
+            next_reviewer_turn_number = reviewer_turns + 1
+            reviewer_message = self._find_agent_message(
+                session.id,
+                run_id=job.run_id,
+                agent_id=AgentId.REVIEWER,
+                trigger_source=AgentTriggerSource.GENERATOR,
+                role=ChatMessageRole.USER,
+                dedupe_key=f"run:{job.run_id}:reviewer:{next_reviewer_turn_number}",
+            )
+            if reviewer.enabled and reviewer.max_turns > reviewer_turns:
+                if reviewer_message is None:
+                    self._start_reviewer_turn(
+                        session=session,
+                        run_id=job.run_id,
+                        primary_response=self._latest_completed_agent_response(
+                            session.id,
+                            run_id=job.run_id,
+                            agent_id=AgentId.GENERATOR,
+                        ),
+                        reviewer_turn_number=next_reviewer_turn_number,
+                    )
+                    return
+                if is_follow_up_waiting_status(reviewer_message.status):
+                    return
+                if is_follow_up_terminal_failure(reviewer_message.status):
+                    self._complete_agent_run(
+                        session=session,
+                        run_id=job.run_id,
+                        completed_turn_index=reviewer_turns,
+                    )
+                    return
+            if self._maybe_start_due_summary(
+                session=session,
+                run_id=job.run_id,
+                trigger_source=AgentTriggerSource.GENERATOR,
+                finalizing=True,
+            ):
+                return
+            self._complete_agent_run(
+                session=session,
+                run_id=job.run_id,
+                completed_turn_index=reviewer_turns,
+            )
+            return
+
+        if continuation_agent_id == AgentId.REVIEWER:
+            if self._maybe_start_due_summary(
+                session=session,
+                run_id=job.run_id,
+                trigger_source=AgentTriggerSource.REVIEWER,
+                finalizing=False,
+            ):
+                return
+
+            reviewer_prompt = self._latest_completed_agent_response(
+                session.id,
+                run_id=job.run_id,
+                agent_id=AgentId.REVIEWER,
+            )
+            reviewer_decision = self._parse_reviewer_decision(reviewer_prompt)
+            if reviewer_decision is not None:
+                reviewer_prompt = reviewer_decision.prompt
+            if self._quality_service is not None:
+                repair_context = self._quality_service.repair_context(
+                    session.workspace_path
+                )
+                if repair_context:
+                    reviewer_prompt = (reviewer_prompt or "") + "\n\n" + repair_context
+                    # A reviewer's completion claim cannot override missing runner evidence.
+                    reviewer_decision = None
+            reviewer_message = self._latest_completed_agent_message(
+                session.id,
+                run_id=job.run_id,
+                agent_id=AgentId.REVIEWER,
+            )
+            next_generator_turn_number = generator_turns + 1
+            generator_follow_up = self._find_agent_message(
+                session.id,
+                run_id=job.run_id,
+                agent_id=AgentId.GENERATOR,
+                trigger_source=AgentTriggerSource.REVIEWER,
+                role=ChatMessageRole.ASSISTANT,
+                dedupe_key=f"run:{job.run_id}:generator:{next_generator_turn_number}",
+            )
+            if reviewer_decision is not None and reviewer_decision.is_complete:
+                if self._maybe_start_due_summary(
+                    session=session,
+                    run_id=job.run_id,
+                    trigger_source=AgentTriggerSource.REVIEWER,
+                    finalizing=True,
+                ):
+                    return
+                self._complete_agent_run(
+                    session=session,
+                    run_id=job.run_id,
+                    completed_turn_index=reviewer_turns,
+                )
+                return
+
+            if reviewer_prompt and generator_turns < generator.max_turns:
+                if generator_follow_up is None:
+                    self._continue_generator_from_reviewer(
+                        session=session,
+                        run_id=job.run_id,
+                        reviewer_prompt=reviewer_prompt,
+                        reviewer_message_id=reviewer_message.id
+                        if reviewer_message
+                        else None,
+                        generator_turn_number=next_generator_turn_number,
+                    )
+                    session.active_agent_turn_index = reviewer_turns
+                    session.auto_turn_index = reviewer_turns
+                    session.touch()
+                    self._repository.save_session(session)
+                    return
+                if is_follow_up_waiting_status(generator_follow_up.status):
+                    return
+                if is_follow_up_terminal_failure(generator_follow_up.status):
+                    self._complete_agent_run(
+                        session=session,
+                        run_id=job.run_id,
+                        completed_turn_index=reviewer_turns,
+                    )
+                    return
+            if self._maybe_start_due_summary(
+                session=session,
+                run_id=job.run_id,
+                trigger_source=AgentTriggerSource.REVIEWER,
+                finalizing=True,
+            ):
+                return
+            self._complete_agent_run(
+                session=session,
+                run_id=job.run_id,
+                completed_turn_index=reviewer_turns,
+            )
+            return
+
+        if job.agent_id == AgentId.SUMMARY:
+            self._complete_agent_run(
+                session=session,
+                run_id=job.run_id,
+                completed_turn_index=reviewer_turns,
+            )
+
+    def _parse_reviewer_decision(self, response: str) -> ReviewerDecision | None:
+        payload = self._parse_json_object_response(response)
+        if payload is None:
+            return None
+
+        raw_status = payload.get("status")
+        status = str(raw_status).strip().lower() if raw_status is not None else ""
+        if status not in {"continue", "complete"}:
+            return None
+
+        prompt = str(payload.get("prompt") or "").strip()
+        summary = str(payload.get("summary") or payload.get("reason") or "").strip()
+        if status == "continue" and not prompt:
+            return None
+        return ReviewerDecision(status=status, prompt=prompt, summary=summary)
+
+    def _parse_json_object_response(self, response: str) -> dict[str, object] | None:
+        normalized = response.strip()
+        if normalized.startswith("```"):
+            lines = normalized.splitlines()
+            if lines and lines[0].strip().startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            normalized = "\n".join(lines).strip()
+
+        try:
+            payload = json.loads(normalized)
+        except json.JSONDecodeError:
+            start = normalized.find("{")
+            end = normalized.rfind("}")
+            if start < 0 or end <= start:
+                return None
+            try:
+                payload = json.loads(normalized[start : end + 1])
+            except json.JSONDecodeError:
+                return None
+
+        return payload if isinstance(payload, dict) else None
+
+    def _maybe_continue_supervisor_chain(
+        self,
+        *,
+        session: ChatSession,
+        job: Job,
+        configuration: AgentConfiguration,
+    ) -> None:
+        run_id = job.run_id or ""
+        continuation_agent_id = (
+            self._agent_id_from_trigger_source(job.trigger_source)
+            if job.agent_id == AgentId.SUMMARY
+            else job.agent_id
+        )
+
+        if continuation_agent_id == AgentId.SUPERVISOR:
+            decision = self._parse_supervisor_decision(
+                self._latest_completed_agent_response(
+                    session.id,
+                    run_id=run_id,
+                    agent_id=AgentId.SUPERVISOR,
+                )
+            )
+            supervisor_message = self._latest_completed_agent_message(
+                session.id,
+                run_id=run_id,
+                agent_id=AgentId.SUPERVISOR,
+            )
+            supervisor_turns = self._count_agent_messages(
+                session.id,
+                run_id=run_id,
+                agent_id=AgentId.SUPERVISOR,
+            )
+            if decision is not None and self._maybe_start_due_summary(
+                session=session,
+                run_id=run_id,
+                trigger_source=AgentTriggerSource.SUPERVISOR,
+                finalizing=False,
+                requested_by_supervisor=decision.request_summary,
+            ):
+                return
+            if decision is None:
+                if self._maybe_start_due_summary(
+                    session=session,
+                    run_id=run_id,
+                    trigger_source=AgentTriggerSource.SUPERVISOR,
+                    finalizing=True,
+                ):
+                    return
+                self._complete_agent_run(
+                    session=session,
+                    run_id=run_id,
+                    completed_turn_index=supervisor_turns,
+                )
+                return
+
+            if decision.is_complete or decision.next_agent_id is None:
+                if self._maybe_start_due_summary(
+                    session=session,
+                    run_id=run_id,
+                    trigger_source=AgentTriggerSource.SUPERVISOR,
+                    finalizing=True,
+                ):
+                    return
+                self._complete_agent_run(
+                    session=session,
+                    run_id=run_id,
+                    completed_turn_index=supervisor_turns,
+                )
+                return
+
+            specialist_id = decision.next_agent_id
+            if specialist_id not in SUPERVISOR_MEMBER_AGENT_IDS:
+                if self._maybe_start_due_summary(
+                    session=session,
+                    run_id=run_id,
+                    trigger_source=AgentTriggerSource.SUPERVISOR,
+                    finalizing=True,
+                ):
+                    return
+                self._complete_agent_run(
+                    session=session,
+                    run_id=run_id,
+                    completed_turn_index=supervisor_turns,
+                )
+                return
+
+            specialist = configuration.agents[specialist_id]
+            specialist_turns = self._count_agent_messages(
+                session.id,
+                run_id=run_id,
+                agent_id=specialist_id,
+            )
+            specialist_budget_exhausted = (
+                configuration.turn_budget_mode == TurnBudgetMode.EACH_AGENT
+                and specialist.max_turns <= specialist_turns
+            )
+            if not specialist.enabled or specialist_budget_exhausted:
+                if self._maybe_start_due_summary(
+                    session=session,
+                    run_id=run_id,
+                    trigger_source=AgentTriggerSource.SUPERVISOR,
+                    finalizing=True,
+                ):
+                    return
+                self._complete_agent_run(
+                    session=session,
+                    run_id=run_id,
+                    completed_turn_index=supervisor_turns,
+                )
+                return
+
+            specialist_message = self._find_agent_message(
+                session.id,
+                run_id=run_id,
+                agent_id=specialist_id,
+                trigger_source=AgentTriggerSource.SUPERVISOR,
+                role=ChatMessageRole.ASSISTANT,
+                dedupe_key=f"run:{job.run_id}:{specialist_id.value}:{specialist_turns + 1}",
+            )
+            if specialist_message is None:
+                self._start_specialist_turn(
+                    session=session,
+                    run_id=run_id,
+                    specialist_id=specialist_id,
+                    supervisor_message_id=supervisor_message.id
+                    if supervisor_message
+                    else None,
+                    supervisor_instruction=decision.instruction,
+                    turn_number=specialist_turns + 1,
+                )
+                return
+            if is_follow_up_waiting_status(specialist_message.status):
+                return
+            if self._maybe_start_due_summary(
+                session=session,
+                run_id=run_id,
+                trigger_source=AgentTriggerSource.SUPERVISOR,
+                finalizing=True,
+            ):
+                return
+            self._complete_agent_run(
+                session=session,
+                run_id=run_id,
+                completed_turn_index=supervisor_turns,
+            )
+            return
+
+        if continuation_agent_id in SUPERVISOR_MEMBER_AGENT_IDS:
+            trigger_source = self._trigger_source_for_agent(continuation_agent_id)
+            if self._maybe_start_due_summary(
+                session=session,
+                run_id=run_id,
+                trigger_source=trigger_source,
+                finalizing=False,
+            ):
+                return
+
+            supervisor_turns = self._count_agent_messages(
+                session.id,
+                run_id=run_id,
+                agent_id=AgentId.SUPERVISOR,
+            )
+            supervisor = configuration.agents[AgentId.SUPERVISOR]
+            if supervisor.max_turns <= supervisor_turns:
+                if self._maybe_start_due_summary(
+                    session=session,
+                    run_id=run_id,
+                    trigger_source=trigger_source,
+                    finalizing=True,
+                ):
+                    return
+                self._complete_agent_run(
+                    session=session,
+                    run_id=run_id,
+                    completed_turn_index=supervisor_turns,
+                )
+                return
+
+            supervisor_message = self._find_agent_message(
+                session.id,
+                run_id=run_id,
+                agent_id=AgentId.SUPERVISOR,
+                trigger_source=trigger_source,
+                role=ChatMessageRole.ASSISTANT,
+                dedupe_key=f"run:{job.run_id}:supervisor:{supervisor_turns + 1}",
+            )
+            if supervisor_message is None:
+                self._continue_supervisor_from_specialist(
+                    session=session,
+                    run_id=run_id,
+                    specialist_id=continuation_agent_id,
+                    specialist_report=self._latest_completed_agent_response(
+                        session.id,
+                        run_id=run_id,
+                        agent_id=continuation_agent_id,
+                    ),
+                    supervisor_turn_number=supervisor_turns + 1,
+                )
+                return
+            if is_follow_up_waiting_status(supervisor_message.status):
+                return
+
+            if self._maybe_start_due_summary(
+                session=session,
+                run_id=run_id,
+                trigger_source=trigger_source,
+                finalizing=True,
+            ):
+                return
+            self._complete_agent_run(
+                session=session,
+                run_id=run_id,
+                completed_turn_index=supervisor_turns,
+            )
+
+    def _start_reviewer_turn(
+        self,
+        *,
+        session: ChatSession,
+        run_id: str,
+        primary_response: str,
+        reviewer_turn_number: int,
+    ) -> None:
+        if not primary_response:
+            return
+        reviewer = session.agent_configuration.normalized().agents[AgentId.REVIEWER]
+        reviewer_message = ChatMessage(
+            id=str(uuid4()),
+            session_id=session.id,
+            role=ChatMessageRole.USER,
+            author_type=ChatMessageAuthorType.REVIEWER_CODEX,
+            agent_id=AgentId.REVIEWER,
+            agent_type=AgentType.REVIEWER,
+            agent_label=reviewer.label,
+            visibility=reviewer.visibility,
+            trigger_source=AgentTriggerSource.GENERATOR,
+            run_id=run_id,
+            dedupe_key=f"run:{run_id}:reviewer:{reviewer_turn_number}",
+            content="",
+            status=ChatMessageStatus.RESERVED,
+        )
+        reviewer_message = self._repository.reserve_message(reviewer_message)
+        if not can_launch_reserved_follow_up(reviewer_message):
+            return
+
+        self._launch_reserved_follow_up(
+            session=session,
+            message=reviewer_message,
+            display_message=f"[{reviewer.label} agent follow-up]",
+            execution_message=self._build_reviewer_execution_message(
+                reviewer_prompt=reviewer.prompt,
+                primary_response=primary_response,
+                workspace_path=session.workspace_path,
+            ),
+            user_message_id=None,
+            conversation_kind=JobConversationKind.REVIEWER,
+            agent_id=AgentId.REVIEWER,
+            agent_type=AgentType.REVIEWER,
+            trigger_source=AgentTriggerSource.GENERATOR,
+            run_id=run_id,
+        )
+
+    def _continue_generator_from_reviewer(
+        self,
+        *,
+        session: ChatSession,
+        run_id: str,
+        reviewer_prompt: str,
+        reviewer_message_id: str | None,
+        generator_turn_number: int,
+    ) -> None:
+        if reviewer_message_id is None:
+            return
+
+        configuration = session.agent_configuration.normalized()
+        generator_definition = configuration.agents[AgentId.GENERATOR]
+        assistant_message = ChatMessage(
+            id=str(uuid4()),
+            session_id=session.id,
+            role=ChatMessageRole.ASSISTANT,
+            author_type=ChatMessageAuthorType.ASSISTANT,
+            agent_id=AgentId.GENERATOR,
+            agent_type=AgentType.GENERATOR,
+            agent_label=generator_definition.label,
+            visibility=generator_definition.visibility,
+            trigger_source=AgentTriggerSource.REVIEWER,
+            run_id=run_id,
+            dedupe_key=f"run:{run_id}:generator:{generator_turn_number}",
+            content="",
+            status=ChatMessageStatus.RESERVED,
+        )
+        assistant_message = self._repository.reserve_message(assistant_message)
+        if not can_launch_reserved_follow_up(assistant_message):
+            return
+
+        self._launch_reserved_follow_up(
+            session=session,
+            message=assistant_message,
+            display_message=reviewer_prompt,
+            execution_message=self._build_generator_execution_message(
+                generator_prompt=generator_definition.prompt,
+                user_prompt=reviewer_prompt,
+                trigger_source=AgentTriggerSource.REVIEWER,
+            ),
+            user_message_id=reviewer_message_id,
+            conversation_kind=JobConversationKind.PRIMARY,
+            agent_id=AgentId.GENERATOR,
+            agent_type=AgentType.GENERATOR,
+            trigger_source=AgentTriggerSource.REVIEWER,
+            run_id=run_id,
+        )
+
+    def _start_summary_turn(
+        self,
+        *,
+        session: ChatSession,
+        run_id: str,
+        trigger_source: AgentTriggerSource,
+        dedupe_key: str,
+        summary_turn_start: int,
+        summary_turn_end: int,
+    ) -> None:
+        summary = session.agent_configuration.normalized().agents[AgentId.SUMMARY]
+        summary_message = ChatMessage(
+            id=str(uuid4()),
+            session_id=session.id,
+            role=ChatMessageRole.ASSISTANT,
+            author_type=ChatMessageAuthorType.ASSISTANT,
+            agent_id=AgentId.SUMMARY,
+            agent_type=AgentType.SUMMARY,
+            agent_label=summary.label,
+            visibility=summary.visibility,
+            trigger_source=trigger_source,
+            run_id=run_id,
+            dedupe_key=dedupe_key,
+            content="",
+            status=ChatMessageStatus.RESERVED,
+        )
+        summary_message = self._repository.reserve_message(summary_message)
+        if not can_launch_reserved_follow_up(summary_message):
+            return
+
+        self._launch_reserved_follow_up(
+            session=session,
+            message=summary_message,
+            display_message=f"[{summary.label} summary turn]",
+            execution_message=self._build_summary_execution_message(
+                session_id=session.id,
+                run_id=run_id,
+                summary_prompt=summary.prompt,
+                summary_turn_start=summary_turn_start,
+                summary_turn_end=summary_turn_end,
+            ),
+            user_message_id=None,
+            conversation_kind=JobConversationKind.SUMMARY,
+            agent_id=AgentId.SUMMARY,
+            agent_type=AgentType.SUMMARY,
+            trigger_source=trigger_source,
+            run_id=run_id,
+        )
+
+    def _start_specialist_turn(
+        self,
+        *,
+        session: ChatSession,
+        run_id: str,
+        specialist_id: AgentId,
+        supervisor_message_id: str | None,
+        supervisor_instruction: str,
+        turn_number: int,
+    ) -> None:
+        if (
+            supervisor_message_id is None
+            or specialist_id not in SUPERVISOR_MEMBER_AGENT_IDS
+        ):
+            return
+
+        configuration = session.agent_configuration.normalized()
+        specialist = configuration.agents[specialist_id]
+        assistant_message = ChatMessage(
+            id=str(uuid4()),
+            session_id=session.id,
+            role=ChatMessageRole.ASSISTANT,
+            author_type=ChatMessageAuthorType.ASSISTANT,
+            agent_id=specialist_id,
+            agent_type=specialist.agent_type,
+            agent_label=specialist.label,
+            visibility=specialist.visibility,
+            trigger_source=AgentTriggerSource.SUPERVISOR,
+            run_id=run_id,
+            dedupe_key=f"run:{run_id}:{specialist_id.value}:{turn_number}",
+            content="",
+            status=ChatMessageStatus.RESERVED,
+        )
+        assistant_message = self._repository.reserve_message(assistant_message)
+        if not can_launch_reserved_follow_up(assistant_message):
+            return
+
+        self._launch_reserved_follow_up(
+            session=session,
+            message=assistant_message,
+            display_message=f"[{specialist.label} specialist turn]",
+            execution_message=self._build_specialist_execution_message(
+                specialist_prompt=specialist.prompt,
+                supervisor_instruction=supervisor_instruction,
+                specialist_id=specialist_id,
+            ),
+            user_message_id=supervisor_message_id,
+            conversation_kind=JobConversationKind.SPECIALIST,
+            agent_id=specialist_id,
+            agent_type=specialist.agent_type,
+            trigger_source=AgentTriggerSource.SUPERVISOR,
+            run_id=run_id,
+        )
+
+    def _continue_supervisor_from_specialist(
+        self,
+        *,
+        session: ChatSession,
+        run_id: str,
+        specialist_id: AgentId,
+        specialist_report: str,
+        supervisor_turn_number: int,
+    ) -> None:
+        configuration = session.agent_configuration.normalized()
+        supervisor = configuration.agents[AgentId.SUPERVISOR]
+        assistant_message = ChatMessage(
+            id=str(uuid4()),
+            session_id=session.id,
+            role=ChatMessageRole.ASSISTANT,
+            author_type=ChatMessageAuthorType.ASSISTANT,
+            agent_id=AgentId.SUPERVISOR,
+            agent_type=AgentType.SUPERVISOR,
+            agent_label=supervisor.label,
+            visibility=supervisor.visibility,
+            trigger_source=self._trigger_source_for_agent(specialist_id),
+            run_id=run_id,
+            dedupe_key=f"run:{run_id}:supervisor:{supervisor_turn_number}",
+            content="",
+            status=ChatMessageStatus.RESERVED,
+        )
+        assistant_message = self._repository.reserve_message(assistant_message)
+        if not can_launch_reserved_follow_up(assistant_message):
+            return
+
+        self._launch_reserved_follow_up(
+            session=session,
+            message=assistant_message,
+            display_message=f"[{supervisor.label} supervisor turn]",
+            execution_message=self._build_supervisor_follow_up_message(
+                session=session,
+                session_id=session.id,
+                run_id=run_id,
+                supervisor_prompt=supervisor.prompt,
+                supervisor_member_ids=configuration.supervisor_member_ids,
+                specialist_id=specialist_id,
+                specialist_report=specialist_report,
+            ),
+            user_message_id=None,
+            conversation_kind=JobConversationKind.SUPERVISOR,
+            agent_id=AgentId.SUPERVISOR,
+            agent_type=AgentType.SUPERVISOR,
+            trigger_source=self._trigger_source_for_agent(specialist_id),
+            run_id=run_id,
+        )
+
+    def _entry_agent_for_configuration(
+        self,
+        configuration: AgentConfiguration,
+    ) -> AgentId:
+        normalized = configuration.normalized()
+        if normalized.preset == AgentPreset.SUPERVISOR:
+            return AgentId.SUPERVISOR
+        return AgentId.GENERATOR
+
+    def _provider_session_id_for_agent(
+        self,
+        session: ChatSession,
+        agent_id: AgentId,
+    ) -> str | None:
+        if agent_id == AgentId.REVIEWER and self._quality_service is not None:
+            if self._quality_service.reviewer_context(session.workspace_path):
+                return None
+        configuration = session.agent_configuration.normalized()
+        definition = configuration.agents.get(agent_id)
+        if definition is not None:
+            return definition.provider_session_id
+        return None
+
+    def _model_for_agent(
+        self,
+        session: ChatSession,
+        agent_id: AgentId,
+    ) -> str | None:
+        configuration = session.agent_configuration.normalized()
+        definition = configuration.agents.get(agent_id)
+        if definition is not None:
+            return definition.model
+        return None
+
+    def _serial_key_for_agent(
+        self,
+        session_id: str,
+        agent_id: AgentId,
+    ) -> str:
+        if agent_id == AgentId.GENERATOR:
+            return session_id
+        return f"{session_id}:{agent_id.value}"
+
+    def _count_agent_messages(
+        self,
+        session_id: str,
+        *,
+        run_id: str,
+        agent_id: AgentId,
+    ) -> int:
+        return sum(
+            1
+            for message in self._repository.list_messages(session_id)
+            if message.run_id == run_id
+            and message.agent_id == agent_id
+            and message.status == ChatMessageStatus.COMPLETED
+        )
+
+    def _count_completed_non_summary_messages(
+        self,
+        session_id: str,
+        *,
+        run_id: str,
+    ) -> int:
+        return sum(
+            1
+            for message in self._repository.list_messages(session_id)
+            if message.run_id == run_id
+            and message.status == ChatMessageStatus.COMPLETED
+            and message.agent_id not in {AgentId.USER, AgentId.SUMMARY}
+        )
+
+    def _latest_completed_agent_response(
+        self,
+        session_id: str,
+        *,
+        run_id: str,
+        agent_id: AgentId,
+    ) -> str:
+        message = self._latest_completed_agent_message(
+            session_id,
+            run_id=run_id,
+            agent_id=agent_id,
+        )
+        if message is None:
+            return ""
+        return (
+            self._job_response_for_message(message) or message.content or ""
+        ).strip()
+
+    def _summary_turn_range_for_message(
+        self,
+        message: ChatMessage,
+    ) -> tuple[int, int] | None:
+        dedupe_key = (message.dedupe_key or "").strip()
+        if ":summary:" not in dedupe_key:
+            return None
+        raw_suffix = dedupe_key.rsplit(":summary:", maxsplit=1)[-1].strip()
+        parts = raw_suffix.split(":")
+        if len(parts) == 2 and all(part.isdigit() for part in parts):
+            start_turn = max(1, int(parts[0]))
+            end_turn = max(start_turn, int(parts[1]))
+            return start_turn, end_turn
+        if len(parts) == 1 and parts[0].isdigit():
+            end_turn = max(1, int(parts[0]))
+            return 1, end_turn
+        return None
+
+    def _latest_summary_coverage_count(
+        self,
+        session_id: str,
+        *,
+        run_id: str,
+    ) -> int:
+        return max(
+            (
+                self._summary_turn_range_for_message(message)[1]
+                for message in self._repository.list_messages(session_id)
+                if message.run_id == run_id
+                and message.agent_id == AgentId.SUMMARY
+                and message.status == ChatMessageStatus.COMPLETED
+                and self._summary_turn_range_for_message(message) is not None
+            ),
+            default=0,
+        )
+
+    def _summary_due_turn_range(
+        self,
+        session: ChatSession,
+        *,
+        run_id: str,
+        finalizing: bool,
+        requested_by_supervisor: bool = False,
+    ) -> tuple[int, int] | None:
+        configuration = session.agent_configuration.normalized()
+        summary = configuration.agents[AgentId.SUMMARY]
+        summary_strategy = configuration.summary_strategy
+        if not summary.enabled or summary.max_turns <= 0:
+            return None
+
+        completed_non_summary_turns = self._count_completed_non_summary_messages(
+            session.id,
+            run_id=run_id,
+        )
+        if completed_non_summary_turns <= 0:
+            return None
+
+        completed_summary_turns = self._count_agent_messages(
+            session.id,
+            run_id=run_id,
+            agent_id=AgentId.SUMMARY,
+        )
+        if completed_summary_turns >= summary.max_turns:
+            return None
+
+        latest_coverage = self._latest_summary_coverage_count(
+            session.id,
+            run_id=run_id,
+        )
+        pending_delta = completed_non_summary_turns - latest_coverage
+        if pending_delta <= 0:
+            return None
+
+        if summary_strategy.mode == SummaryStrategyMode.SUPERVISOR_WINDOW:
+            within_window = (
+                completed_non_summary_turns >= summary_strategy.supervisor_window_start
+                and completed_non_summary_turns
+                <= summary_strategy.supervisor_window_end
+            )
+            if not requested_by_supervisor or not within_window:
+                return None
+            return latest_coverage + 1, completed_non_summary_turns
+
+        if pending_delta < summary_strategy.deterministic_interval and not finalizing:
+            return None
+
+        return latest_coverage + 1, completed_non_summary_turns
+
+    def _maybe_start_due_summary(
+        self,
+        *,
+        session: ChatSession,
+        run_id: str,
+        trigger_source: AgentTriggerSource,
+        finalizing: bool,
+        requested_by_supervisor: bool = False,
+    ) -> bool:
+        turn_range = self._summary_due_turn_range(
+            session,
+            run_id=run_id,
+            finalizing=finalizing,
+            requested_by_supervisor=requested_by_supervisor,
+        )
+        if turn_range is None:
+            return False
+        summary_turn_start, summary_turn_end = turn_range
+
+        dedupe_key = f"run:{run_id}:summary:{summary_turn_start}:{summary_turn_end}"
+        summary_message = self._find_agent_message(
+            session.id,
+            run_id=run_id,
+            agent_id=AgentId.SUMMARY,
+            dedupe_key=dedupe_key,
+        )
+        if summary_message is None:
+            self._start_summary_turn(
+                session=session,
+                run_id=run_id,
+                trigger_source=trigger_source,
+                dedupe_key=dedupe_key,
+                summary_turn_start=summary_turn_start,
+                summary_turn_end=summary_turn_end,
+            )
+            return True
+        return is_follow_up_waiting_status(summary_message.status)
+
+    def _completed_turn_index_for_run(
+        self,
+        session: ChatSession,
+        *,
+        run_id: str,
+    ) -> int:
+        configuration = session.agent_configuration.normalized()
+        target_agent_id = (
+            AgentId.SUPERVISOR
+            if configuration.preset == AgentPreset.SUPERVISOR
+            else AgentId.REVIEWER
+        )
+        return self._count_agent_messages(
+            session.id,
+            run_id=run_id,
+            agent_id=target_agent_id,
+        )
+
+    def _find_agent_message(
+        self,
+        session_id: str,
+        *,
+        run_id: str,
+        agent_id: AgentId,
+        trigger_source: AgentTriggerSource | None = None,
+        role: ChatMessageRole | None = None,
+        dedupe_key: str | None = None,
+    ) -> ChatMessage | None:
+        matches = [
+            message
+            for message in self._repository.list_messages(session_id)
+            if message.run_id == run_id and message.agent_id == agent_id
+        ]
+        if trigger_source is not None:
+            matches = [
+                message
+                for message in matches
+                if message.trigger_source == trigger_source
+            ]
+        if role is not None:
+            matches = [message for message in matches if message.role == role]
+        if dedupe_key is not None:
+            matches = [
+                message for message in matches if message.dedupe_key == dedupe_key
+            ]
+        if not matches:
+            return None
+        matches.sort(key=lambda message: (message.created_at, message.id))
+        return matches[-1]
+
+    def _append_recovery_note(
+        self,
+        content: str,
+        note: str,
+    ) -> str:
+        normalized = content.strip()
+        if not normalized:
+            return note
+        return f"{normalized}\n\n{note}"
+
+    def _next_manual_retry_dedupe_key(self, message: ChatMessage) -> str:
+        base = message.dedupe_key or f"message:{message.id}"
+        prefix = f"{base}:manual-retry:"
+        retry_count = sum(
+            1
+            for candidate in self._repository.list_messages(message.session_id)
+            if candidate.recovered_from_message_id == message.id
+            and candidate.dedupe_key is not None
+            and candidate.dedupe_key.startswith(prefix)
+        )
+        return f"{prefix}{retry_count + 1}"
+
+    def _has_agent_message(
+        self,
+        session_id: str,
+        *,
+        run_id: str,
+        agent_id: AgentId,
+        trigger_source: AgentTriggerSource | None = None,
+        role: ChatMessageRole | None = None,
+    ) -> bool:
+        for message in self._repository.list_messages(session_id):
+            if message.run_id != run_id or message.agent_id != agent_id:
+                continue
+            if trigger_source is not None and message.trigger_source != trigger_source:
+                continue
+            if role is not None and message.role != role:
+                continue
+            return True
+        return False
+
+    def _complete_follow_up_run_after_manual_resolution(
+        self,
+        *,
+        session: ChatSession,
+        message: ChatMessage,
+    ) -> None:
+        if not message.run_id:
+            session.touch()
+            self._repository.save_session(session)
+            return
+        self._complete_agent_run(
+            session=session,
+            run_id=message.run_id,
+            completed_turn_index=self._completed_turn_index_for_run(
+                session,
+                run_id=message.run_id,
+            ),
+        )
+
+    def _complete_agent_run(
+        self,
+        *,
+        session: ChatSession,
+        run_id: str,
+        completed_turn_index: int,
+    ) -> None:
+        if session.active_agent_run_id != run_id:
+            return
+        session.active_agent_run_id = None
+        session.active_agent_turn_index = completed_turn_index
+        session.auto_turn_index = completed_turn_index
+        session.touch()
+        self._repository.save_session(session)
+
+    def _reconcile_reserved_follow_ups(
+        self,
+        session: ChatSession,
+    ) -> None:
+        self._cancel_reserved_follow_ups_for_inactive_runs(session)
+        active_run_id = session.active_agent_run_id
+        if active_run_id:
+            self._recover_waiting_follow_up_for_run(session, run_id=active_run_id)
+
+    def _recover_waiting_follow_up_for_run(
+        self,
+        session: ChatSession,
+        *,
+        run_id: str,
+    ) -> bool:
+        with self._follow_up_recovery_guard:
+            if self._recover_submission_pending_follow_up_for_run(
+                session, run_id=run_id
+            ):
+                return True
+            return self._recover_reserved_follow_up_for_run(session, run_id=run_id)
+
+    def _run_follow_up_reconciler(self) -> None:
+        interval_seconds = self._follow_up_reconcile_interval_seconds
+        if interval_seconds is None:
+            return
+        while not self._follow_up_reconciler_stop.is_set():
+            try:
+                self._reconcile_all_sessions()
+            except Exception:
+                pass
+            self._follow_up_reconciler_stop.wait(interval_seconds)
+
+    def _reconcile_all_sessions(self) -> None:
+        for listed_session in self._repository.list_sessions():
+            session = self._repository.get_session(listed_session.id) or listed_session
+            self._reconcile_reserved_follow_ups(session)
+
+    def _cancel_reserved_follow_ups_for_inactive_runs(
+        self,
+        session: ChatSession,
+    ) -> None:
+        active_run_id = session.active_agent_run_id
+        changed = False
+        for message in self._repository.list_messages(session.id):
+            if message.job_id is not None:
+                continue
+            if message.run_id == active_run_id:
+                continue
+            resolved_status = orphaned_follow_up_resolution_status(message.status)
+            if resolved_status is None:
+                continue
+            reason = (
+                _RESERVED_MESSAGE_STALE_REASON
+                if resolved_status == ChatMessageStatus.CANCELLED
+                else _SUBMISSION_UNKNOWN_REASON
+            )
+            message.sync(
+                content=reason,
+                reason_code=(
+                    ChatMessageReasonCode.ORPHANED_FOLLOW_UP_CANCELLED
+                    if resolved_status == ChatMessageStatus.CANCELLED
+                    else ChatMessageReasonCode.SUBMISSION_OUTCOME_UNKNOWN
+                ),
+                status=resolved_status,
+            )
+            self._repository.save_message(message)
+            changed = True
+        if changed:
+            session.touch()
+            self._repository.save_session(session)
+
+    def _cancel_reserved_follow_ups_for_run(
+        self,
+        session: ChatSession,
+        *,
+        run_id: str,
+        reason: str,
+    ) -> None:
+        changed = False
+        for message in self._repository.list_messages(session.id):
+            if message.run_id != run_id or message.job_id is not None:
+                continue
+            resolved_status = orphaned_follow_up_resolution_status(message.status)
+            if resolved_status is None:
+                continue
+            resolved_reason = (
+                reason
+                if resolved_status == ChatMessageStatus.CANCELLED
+                else _SUBMISSION_UNKNOWN_SUPERSEDED_REASON
+            )
+            message.sync(
+                content=resolved_reason,
+                reason_code=ChatMessageReasonCode.SUPERSEDED_BY_NEWER_RUN,
+                status=resolved_status,
+            )
+            self._repository.save_message(message)
+            changed = True
+        if changed:
+            session.touch()
+            self._repository.save_session(session)
+
+    def _recover_submission_pending_follow_up_for_run(
+        self,
+        session: ChatSession,
+        *,
+        run_id: str,
+    ) -> bool:
+        pending_messages = [
+            message
+            for message in self._repository.list_messages(session.id)
+            if message.run_id == run_id
+            and message.status == ChatMessageStatus.SUBMISSION_PENDING
+            and message.job_id is None
+        ]
+        if not pending_messages:
+            return False
+
+        pending_messages.sort(key=lambda message: (message.created_at, message.id))
+        message = pending_messages[0]
+        if not message.submission_token:
+            self._finalize_reserved_follow_up(
+                session=session,
+                message=message,
+                status=ChatMessageStatus.SUBMISSION_UNKNOWN,
+                reason=_SUBMISSION_UNKNOWN_REASON,
+                reason_code=ChatMessageReasonCode.SUBMISSION_OUTCOME_UNKNOWN,
+            )
+            return True
+
+        provider = self._execution_provider
+        if not provider.supports_submission_lookup():
+            self._finalize_reserved_follow_up(
+                session=session,
+                message=message,
+                status=ChatMessageStatus.SUBMISSION_UNKNOWN,
+                reason=_SUBMISSION_UNKNOWN_REASON,
+                reason_code=ChatMessageReasonCode.SUBMISSION_OUTCOME_UNKNOWN,
+            )
+            return True
+
+        job_id = provider.get_job_id_by_submission_token(message.submission_token)
+        if not job_id or not provider.has_job(job_id):
+            self._finalize_reserved_follow_up(
+                session=session,
+                message=message,
+                status=ChatMessageStatus.SUBMISSION_UNKNOWN,
+                reason=_SUBMISSION_UNKNOWN_REASON,
+                reason_code=ChatMessageReasonCode.SUBMISSION_OUTCOME_UNKNOWN,
+            )
+            return True
+
+        self._attach_submitted_follow_up_job(
+            session=session,
+            message=message,
+            job_id=job_id,
+        )
+        return True
+
+    def _recover_reserved_follow_up_for_run(
+        self,
+        session: ChatSession,
+        *,
+        run_id: str,
+    ) -> bool:
+        reserved_messages = [
+            message
+            for message in self._repository.list_messages(session.id)
+            if message.run_id == run_id
+            and message.status == ChatMessageStatus.RESERVED
+            and message.job_id is None
+        ]
+        if not reserved_messages:
+            return False
+
+        reserved_messages.sort(key=lambda message: (message.created_at, message.id))
+        message = reserved_messages[0]
+        configuration = session.agent_configuration.normalized()
+        definition = configuration.agents.get(message.agent_id)
+        if definition is None or not definition.enabled:
+            self._finalize_reserved_follow_up(
+                session=session,
+                message=message,
+                status=ChatMessageStatus.CANCELLED,
+                reason="This reserved follow-up was disabled before it could be recovered.",
+            )
+            return True
+
+        context = self._build_follow_up_context(
+            session=session,
+            message=message,
+        )
+        if context is None:
+            self._finalize_reserved_follow_up(
+                session=session,
+                message=message,
+                status=ChatMessageStatus.FAILED,
+                reason="The reserved follow-up could not be recovered because its prerequisite context is missing.",
+            )
+            return True
+
+        self._launch_reserved_follow_up(
+            session=session,
+            message=message,
+            display_message=context.display_message,
+            execution_message=context.execution_message,
+            user_message_id=context.user_message_id,
+            conversation_kind=context.conversation_kind,
+            agent_id=context.agent_id,
+            agent_type=context.agent_type,
+            trigger_source=context.trigger_source,
+            run_id=run_id,
+        )
+        return True
+
+    def _attach_submitted_follow_up_job(
+        self,
+        *,
+        session: ChatSession,
+        message: ChatMessage,
+        job_id: str,
+    ) -> None:
+        context = self._build_follow_up_context(
+            session=session,
+            message=message,
+        )
+        if context is None:
+            self._finalize_reserved_follow_up(
+                session=session,
+                message=message,
+                status=ChatMessageStatus.SUBMISSION_UNKNOWN,
+                reason=_SUBMISSION_UNKNOWN_REASON,
+                reason_code=ChatMessageReasonCode.SUBMISSION_OUTCOME_UNKNOWN,
+            )
+            return
+
+        snapshot = self._execution_provider.get_snapshot(job_id)
+        job = Job(
+            id=job_id,
+            session_id=session.id,
+            message=context.display_message,
+            user_message_id=context.user_message_id,
+            assistant_message_id=message.id,
+            provider_session_id=snapshot.provider_session_id,
+            conversation_kind=context.conversation_kind,
+            agent_id=context.agent_id,
+            agent_type=context.agent_type,
+            trigger_source=context.trigger_source,
+            run_id=message.run_id,
+            submission_token=message.submission_token,
+            execution_message=context.execution_message,
+            status=snapshot.status,
+            response=snapshot.response,
+            error=snapshot.error,
+            phase=snapshot.phase,
+            latest_activity=snapshot.latest_activity,
+        )
+        message.sync(
+            status=ChatMessageStatus.PENDING,
+            job_id=job.id,
+        )
+        session.touch()
+        self._repository.save_turn(
+            session,
+            messages=[message],
+            job=job,
+        )
+        self._register_background_job_watch(job.id)
+        self._sync_job_side_effects(job)
+
+    def _build_follow_up_context(
+        self,
+        *,
+        session: ChatSession,
+        message: ChatMessage,
+    ) -> FollowUpContext | None:
+        configuration = session.agent_configuration.normalized()
+        definition = configuration.agents.get(message.agent_id)
+        if definition is None:
+            return None
+
+        if message.agent_id == AgentId.REVIEWER:
+            primary_message = self._latest_completed_agent_message(
+                session.id,
+                run_id=message.run_id or "",
+                agent_id=AgentId.GENERATOR,
+            )
+            if primary_message is None or not primary_message.content.strip():
+                return None
+            return FollowUpContext(
+                display_message=f"[{definition.label} agent follow-up]",
+                execution_message=self._build_reviewer_execution_message(
+                    reviewer_prompt=definition.prompt,
+                    primary_response=primary_message.content.strip(),
+                    workspace_path=session.workspace_path,
+                ),
+                user_message_id=None,
+                conversation_kind=JobConversationKind.REVIEWER,
+                agent_id=AgentId.REVIEWER,
+                agent_type=AgentType.REVIEWER,
+                trigger_source=AgentTriggerSource.GENERATOR,
+            )
+
+        if message.agent_id == AgentId.GENERATOR:
+            reviewer_message = self._latest_completed_agent_message(
+                session.id,
+                run_id=message.run_id or "",
+                agent_id=AgentId.REVIEWER,
+            )
+            if reviewer_message is None or not reviewer_message.content.strip():
+                return None
+            reviewer_prompt = reviewer_message.content.strip()
+            reviewer_decision = self._parse_reviewer_decision(reviewer_prompt)
+            if reviewer_decision is not None:
+                if reviewer_decision.is_complete:
+                    return None
+                reviewer_prompt = reviewer_decision.prompt
+            return FollowUpContext(
+                display_message=reviewer_prompt,
+                execution_message=self._build_generator_execution_message(
+                    generator_prompt=definition.prompt,
+                    user_prompt=reviewer_prompt,
+                    trigger_source=AgentTriggerSource.REVIEWER,
+                ),
+                user_message_id=reviewer_message.id,
+                conversation_kind=JobConversationKind.PRIMARY,
+                agent_id=AgentId.GENERATOR,
+                agent_type=AgentType.GENERATOR,
+                trigger_source=AgentTriggerSource.REVIEWER,
+            )
+
+        if message.agent_id == AgentId.SUMMARY:
+            summary_turn_range = self._summary_turn_range_for_message(message) or (1, 1)
+            return FollowUpContext(
+                display_message=f"[{definition.label} summary turn]",
+                execution_message=self._build_summary_execution_message(
+                    session_id=session.id,
+                    run_id=message.run_id or "",
+                    summary_prompt=definition.prompt,
+                    summary_turn_start=summary_turn_range[0],
+                    summary_turn_end=summary_turn_range[1],
+                ),
+                user_message_id=None,
+                conversation_kind=JobConversationKind.SUMMARY,
+                agent_id=AgentId.SUMMARY,
+                agent_type=AgentType.SUMMARY,
+                trigger_source=message.trigger_source,
+            )
+
+        if message.agent_id in SUPERVISOR_MEMBER_AGENT_IDS:
+            supervisor_message = self._latest_completed_agent_message(
+                session.id,
+                run_id=message.run_id or "",
+                agent_id=AgentId.SUPERVISOR,
+            )
+            if supervisor_message is None:
+                return None
+            decision = self._parse_supervisor_decision(
+                self._job_response_for_message(supervisor_message)
+                or supervisor_message.content
+            )
+            if decision is None or not decision.instruction.strip():
+                return None
+            return FollowUpContext(
+                display_message=f"[{definition.label} specialist turn]",
+                execution_message=self._build_specialist_execution_message(
+                    specialist_prompt=definition.prompt,
+                    supervisor_instruction=decision.instruction,
+                    specialist_id=message.agent_id,
+                ),
+                user_message_id=supervisor_message.id,
+                conversation_kind=JobConversationKind.SPECIALIST,
+                agent_id=message.agent_id,
+                agent_type=definition.agent_type,
+                trigger_source=AgentTriggerSource.SUPERVISOR,
+            )
+
+        if message.agent_id == AgentId.SUPERVISOR:
+            if message.trigger_source == AgentTriggerSource.USER:
+                user_message = self._latest_user_message_for_run(
+                    session.id,
+                    run_id=message.run_id or "",
+                )
+                if user_message is None or not user_message.content.strip():
+                    return None
+                return FollowUpContext(
+                    display_message=f"[{definition.label} supervisor turn]",
+                    execution_message=self._build_supervisor_execution_message(
+                        session=session,
+                        run_id=message.run_id or "",
+                        supervisor_prompt=definition.prompt,
+                        user_prompt=user_message.content.strip(),
+                        supervisor_member_ids=configuration.supervisor_member_ids,
+                        trigger_source=AgentTriggerSource.USER,
+                    ),
+                    user_message_id=user_message.id,
+                    conversation_kind=JobConversationKind.SUPERVISOR,
+                    agent_id=AgentId.SUPERVISOR,
+                    agent_type=AgentType.SUPERVISOR,
+                    trigger_source=AgentTriggerSource.USER,
+                )
+
+            specialist_id = self._agent_id_from_trigger_source(message.trigger_source)
+            if specialist_id not in SUPERVISOR_MEMBER_AGENT_IDS:
+                return None
+            specialist_message = self._latest_completed_agent_message(
+                session.id,
+                run_id=message.run_id or "",
+                agent_id=specialist_id,
+            )
+            if specialist_message is None or not specialist_message.content.strip():
+                return None
+            return FollowUpContext(
+                display_message=f"[{definition.label} supervisor turn]",
+                execution_message=self._build_supervisor_follow_up_message(
+                    session=session,
+                    session_id=session.id,
+                    run_id=message.run_id or "",
+                    supervisor_prompt=definition.prompt,
+                    supervisor_member_ids=configuration.supervisor_member_ids,
+                    specialist_id=specialist_id,
+                    specialist_report=specialist_message.content.strip(),
+                ),
+                user_message_id=None,
+                conversation_kind=JobConversationKind.SUPERVISOR,
+                agent_id=AgentId.SUPERVISOR,
+                agent_type=AgentType.SUPERVISOR,
+                trigger_source=message.trigger_source,
+            )
+
+        return None
+
+    def _launch_reserved_follow_up(
+        self,
+        *,
+        session: ChatSession,
+        message: ChatMessage,
+        display_message: str,
+        execution_message: str,
+        user_message_id: str | None,
+        conversation_kind: JobConversationKind,
+        agent_id: AgentId,
+        agent_type: AgentType,
+        trigger_source: AgentTriggerSource,
+        run_id: str,
+    ) -> None:
+        if not can_launch_reserved_follow_up(message):
+            return
+        submission_token = (
+            message.submission_token or message.dedupe_key or f"message:{message.id}"
+        )
+        message.sync(
+            status=ChatMessageStatus.SUBMISSION_PENDING,
+            submission_token=submission_token,
+        )
+        self._repository.save_message(message)
+        job = self._start_job(
+            session=session,
+            display_message=display_message,
+            execution_message=execution_message,
+            image_paths=None,
+            cleanup_paths=None,
+            user_message_id=user_message_id,
+            assistant_message_id=message.id,
+            provider_session_id=self._provider_session_id_for_agent(
+                session,
+                agent_id,
+            ),
+            model=self._model_for_agent(session, agent_id),
+            codex_options=None,
+            serial_key=self._serial_key_for_agent(session.id, agent_id),
+            conversation_kind=conversation_kind,
+            agent_id=agent_id,
+            agent_type=agent_type,
+            trigger_source=trigger_source,
+            run_id=run_id,
+            submission_token=submission_token,
+        )
+        message.sync(
+            status=ChatMessageStatus.PENDING,
+            job_id=job.id,
+        )
+        session.touch()
+        self._repository.save_turn(
+            session,
+            messages=[message],
+            job=job,
+        )
+        self._register_background_job_watch(job.id)
+
+    def _finalize_reserved_follow_up(
+        self,
+        *,
+        session: ChatSession,
+        message: ChatMessage,
+        status: ChatMessageStatus,
+        reason: str,
+        reason_code: ChatMessageReasonCode = ChatMessageReasonCode.FOLLOW_UP_TERMINAL_COMPLETED_RUN,
+    ) -> None:
+        message.sync(
+            content=reason,
+            reason_code=reason_code,
+            status=status,
+        )
+        self._repository.save_message(message)
+        if not message.run_id:
+            return
+        self._complete_agent_run(
+            session=session,
+            run_id=message.run_id,
+            completed_turn_index=self._completed_turn_index_for_run(
+                session,
+                run_id=message.run_id,
+            ),
+        )
+
+    def _register_background_job_watch(self, job_id: str) -> None:
+        with self._job_monitor_lock:
+            if job_id in self._job_monitor_unsubscribes:
+                return
+            self._job_monitor_unsubscribes[job_id] = None
+
+        def on_change(snapshot: ExecutionSnapshot) -> None:
+            if not snapshot.status.is_terminal:
+                return
+            try:
+                self.get_job(job_id)
+            finally:
+                unsubscribe = self._remove_background_job_watch(job_id)
+                if unsubscribe is not None:
+                    unsubscribe()
+
+        unsubscribe = self._execution_provider.watch_job(job_id, on_change)
+        if unsubscribe is None:
+            self._remove_background_job_watch(job_id)
+            return
+
+        should_unsubscribe = False
+        with self._job_monitor_lock:
+            if job_id not in self._job_monitor_unsubscribes:
+                should_unsubscribe = True
+            else:
+                self._job_monitor_unsubscribes[job_id] = unsubscribe
+
+        if should_unsubscribe:
+            unsubscribe()
+
+    def _remove_background_job_watch(
+        self,
+        job_id: str,
+    ) -> Callable[[], None] | None:
+        with self._job_monitor_lock:
+            return self._job_monitor_unsubscribes.pop(job_id, None)
+
+    def _latest_completed_agent_message(
+        self,
+        session_id: str,
+        *,
+        run_id: str,
+        agent_id: AgentId,
+    ) -> ChatMessage | None:
+        messages = [
+            message
+            for message in self._repository.list_messages(session_id)
+            if message.run_id == run_id
+            and message.agent_id == agent_id
+            and message.status == ChatMessageStatus.COMPLETED
+        ]
+        if not messages:
+            return None
+        messages.sort(key=lambda message: (message.created_at, message.id))
+        return messages[-1]
+
+    def _latest_user_message_for_run(
+        self,
+        session_id: str,
+        *,
+        run_id: str,
+    ) -> ChatMessage | None:
+        messages = [
+            message
+            for message in self._repository.list_messages(session_id)
+            if message.run_id == run_id
+            and message.role == ChatMessageRole.USER
+            and message.author_type == ChatMessageAuthorType.HUMAN
+        ]
+        if not messages:
+            return None
+        messages.sort(key=lambda message: (message.created_at, message.id))
+        return messages[-1]
+
+    def _job_response_for_message(
+        self,
+        message: ChatMessage,
+    ) -> str | None:
+        if message.job_id is None:
+            return None
+        job = self._repository.get_job(message.job_id)
+        return None if job is None else job.response
+
+    def _agent_id_from_trigger_source(
+        self,
+        trigger_source: AgentTriggerSource,
+    ) -> AgentId | None:
+        mapping = {
+            AgentTriggerSource.GENERATOR: AgentId.GENERATOR,
+            AgentTriggerSource.REVIEWER: AgentId.REVIEWER,
+            AgentTriggerSource.SUMMARY: AgentId.SUMMARY,
+            AgentTriggerSource.SUPERVISOR: AgentId.SUPERVISOR,
+            AgentTriggerSource.QA: AgentId.QA,
+            AgentTriggerSource.UX: AgentId.UX,
+            AgentTriggerSource.SENIOR_ENGINEER: AgentId.SENIOR_ENGINEER,
+            AgentTriggerSource.SCRAPER: AgentId.SCRAPER,
+        }
+        return mapping.get(trigger_source)
+
+    def _trigger_source_for_agent(
+        self,
+        agent_id: AgentId,
+    ) -> AgentTriggerSource:
+        return {
+            AgentId.GENERATOR: AgentTriggerSource.GENERATOR,
+            AgentId.REVIEWER: AgentTriggerSource.REVIEWER,
+            AgentId.SUMMARY: AgentTriggerSource.SUMMARY,
+            AgentId.SUPERVISOR: AgentTriggerSource.SUPERVISOR,
+            AgentId.QA: AgentTriggerSource.QA,
+            AgentId.UX: AgentTriggerSource.UX,
+            AgentId.SENIOR_ENGINEER: AgentTriggerSource.SENIOR_ENGINEER,
+            AgentId.SCRAPER: AgentTriggerSource.SCRAPER,
+        }.get(agent_id, AgentTriggerSource.SYSTEM)
+
+    def _build_generator_execution_message(
+        self,
+        *,
+        generator_prompt: str,
+        user_prompt: str,
+        trigger_source: AgentTriggerSource,
+    ) -> str:
+        default_generator_prompt = (
+            AgentConfiguration.default().agents[AgentId.GENERATOR].prompt
+        )
+        if (
+            trigger_source == AgentTriggerSource.USER
+            and generator_prompt.strip() == default_generator_prompt
+        ):
+            return user_prompt.strip()
+
+        prefix = (
+            "User request"
+            if trigger_source == AgentTriggerSource.USER
+            else "Follow-up request from another agent"
+        )
+        return f"{generator_prompt}\n\n{prefix}:\n{user_prompt.strip()}"
+
+    def _apply_codex_prompt_preferences(
+        self,
+        prompt: str,
+        codex_options: CodexRunOptions | None,
+    ) -> str:
+        guidance: list[str] = []
+        if _GITHUB_REPOSITORY_REFERENCE_PATTERN.search(prompt):
+            guidance.append(_GITHUB_ACCESS_GUIDANCE)
+
+        if codex_options is not None:
+            normalized = codex_options.normalized()
+            if normalized.skill_ids:
+                skills = ", ".join(f"`{skill_id}`" for skill_id in normalized.skill_ids)
+                guidance.append(
+                    "Prefer these Codex skills when they are relevant and available: "
+                    f"{skills}."
+                )
+            if normalized.mcp_server_ids:
+                servers = ", ".join(
+                    f"`{server_id}`" for server_id in normalized.mcp_server_ids
+                )
+                guidance.append(
+                    "If external tools are needed, prefer these MCP servers when relevant: "
+                    f"{servers}."
+                )
+        if not guidance:
+            return prompt
+        return f"{' '.join(guidance)}\n\n{prompt.strip()}"
+
+    def _build_supervisor_execution_message(
+        self,
+        *,
+        session: ChatSession,
+        run_id: str,
+        supervisor_prompt: str,
+        user_prompt: str,
+        supervisor_member_ids: tuple[AgentId, ...],
+        trigger_source: AgentTriggerSource,
+    ) -> str:
+        prefix = (
+            "User request"
+            if trigger_source == AgentTriggerSource.USER
+            else "Supervisor follow-up request"
+        )
+        available_specialists = ", ".join(
+            agent_id.value for agent_id in supervisor_member_ids
+        )
+        return (
+            f"{supervisor_prompt}\n\n"
+            f"Available specialist ids: {available_specialists}\n"
+            f"{self._summary_guidance_for_supervisor(session=session, run_id=run_id)}\n"
+            f"{prefix}:\n{user_prompt.strip()}"
+        )
+
+    def _build_supervisor_follow_up_message(
+        self,
+        *,
+        session: ChatSession,
+        session_id: str,
+        run_id: str,
+        supervisor_prompt: str,
+        supervisor_member_ids: tuple[AgentId, ...],
+        specialist_id: AgentId,
+        specialist_report: str,
+    ) -> str:
+        transcript = self._build_run_transcript(session_id=session_id, run_id=run_id)
+        available_specialists = ", ".join(
+            agent_id.value for agent_id in supervisor_member_ids
+        )
+        return (
+            f"{supervisor_prompt}\n\n"
+            f"Available specialist ids: {available_specialists}\n"
+            f"{self._summary_guidance_for_supervisor(session=session, run_id=run_id)}\n"
+            f"Latest specialist report agent_id: {specialist_id.value}\n"
+            f"Latest specialist report:\n{specialist_report.strip()}\n\n"
+            f"Conversation transcript for this run:\n{transcript}"
+        )
+
+    def _summary_guidance_for_supervisor(
+        self,
+        *,
+        session: ChatSession,
+        run_id: str,
+    ) -> str:
+        configuration = session.agent_configuration.normalized()
+        summary = configuration.agents[AgentId.SUMMARY]
+        if not summary.enabled:
+            return "Summary agent is disabled for this run."
+        strategy = configuration.summary_strategy
+        completed_turns = self._count_completed_non_summary_messages(
+            session.id,
+            run_id=run_id,
+        )
+        return (
+            "Summary agent window: turns "
+            f"{strategy.supervisor_window_start} to {strategy.supervisor_window_end}. "
+            f"Current completed agent turn: {completed_turns}. "
+            "Set request_summary=true only when you want the summary agent to act now."
+        )
+
+    def _build_specialist_execution_message(
+        self,
+        *,
+        specialist_prompt: str,
+        supervisor_instruction: str,
+        specialist_id: AgentId,
+    ) -> str:
+        return (
+            f"{specialist_prompt}\n\n"
+            f"Assigned specialist id: {specialist_id.value}\n"
+            "Supervisor assignment:\n"
+            f"{supervisor_instruction.strip()}"
+        )
+
+    def _build_reviewer_execution_message(
+        self,
+        *,
+        reviewer_prompt: str,
+        primary_response: str,
+        workspace_path: str | None = None,
+    ) -> str:
+        if workspace_path and self._quality_service is not None:
+            context = self._quality_service.reviewer_context(workspace_path)
+            if context:
+                return (
+                    f"{reviewer_prompt}\n\n{context}\n\n"
+                    "Inspect the specification, diff and actual executable evidence independently. "
+                    "Return only JSON: {\"status\":\"continue\",\"prompt\":\"specific missing work\"} "
+                    "or {\"status\":\"complete\",\"summary\":\"criteria and receipt references\"}. "
+                    "Use continue while any required criterion lacks current passing evidence. "
+                    "The generator narrative is deliberately absent. This process starts a fresh provider session; "
+                    "repository-wide ambient memory may still exist and must not be treated as proof."
+                )
+        return (
+            f"{reviewer_prompt}\n\n"
+            "Generator Codex latest answer:\n"
+            f"{primary_response}\n\n"
+            "Return only a JSON object with this shape:\n"
+            '{"status":"continue","prompt":"<next prompt for the generator Codex>"}\n'
+            "or:\n"
+            '{"status":"complete","summary":"<why no further generator work is needed>"}\n'
+            "Use status=continue when more implementation, fixes, tests, or validation "
+            "should be sent back to the generator. Use status=complete only when the "
+            "generator should not run again."
+        )
+
+    def _build_summary_execution_message(
+        self,
+        *,
+        session_id: str,
+        run_id: str,
+        summary_prompt: str,
+        summary_turn_start: int,
+        summary_turn_end: int,
+    ) -> str:
+        transcript = self._build_summary_turn_transcript(
+            session_id=session_id,
+            run_id=run_id,
+            start_turn=summary_turn_start,
+            end_turn=summary_turn_end,
+        )
+        return (
+            f"{summary_prompt}\n\n"
+            f"Summarize completed agent turns {summary_turn_start} through "
+            f"{summary_turn_end}.\n\n"
+            f"Conversation transcript for those turns:\n{transcript}"
+        )
+
+    def _build_run_transcript(
+        self,
+        *,
+        session_id: str,
+        run_id: str,
+    ) -> str:
+        transcript_parts: list[str] = []
+        for message in self._repository.list_messages(session_id):
+            if message.run_id != run_id or not message.content.strip():
+                continue
+            agent_label = (
+                message.agent_label.strip()
+                if message.agent_label and message.agent_label.strip()
+                else message.agent_id.value.replace("_", " ").title()
+            )
+            transcript_parts.append(
+                f"{agent_label} [{message.agent_id.value}/{message.role.value}]: "
+                f"{message.content.strip()}"
+            )
+        return "\n\n".join(transcript_parts)
+
+    def _build_summary_turn_transcript(
+        self,
+        *,
+        session_id: str,
+        run_id: str,
+        start_turn: int,
+        end_turn: int,
+    ) -> str:
+        run_messages = [
+            message
+            for message in self._repository.list_messages(session_id)
+            if message.run_id == run_id and message.content.strip()
+        ]
+        completed_turn_numbers_by_message_id: dict[str, int] = {}
+        completed_message_indexes: list[int] = []
+        completed_turn_index = 0
+        for index, message in enumerate(run_messages):
+            if (
+                message.status == ChatMessageStatus.COMPLETED
+                and message.agent_id not in {AgentId.USER, AgentId.SUMMARY}
+            ):
+                completed_turn_index += 1
+                completed_turn_numbers_by_message_id[message.id] = completed_turn_index
+                completed_message_indexes.append(index)
+
+        transcript_parts: list[str] = []
+        latest_completed_turn = 0
+        for index, message in enumerate(run_messages):
+            if message.agent_id == AgentId.SUMMARY:
+                continue
+
+            current_turn = completed_turn_numbers_by_message_id.get(message.id)
+            if current_turn is None:
+                current_turn = next(
+                    (
+                        completed_turn_numbers_by_message_id[
+                            run_messages[candidate_index].id
+                        ]
+                        for candidate_index in completed_message_indexes
+                        if candidate_index >= index
+                    ),
+                    latest_completed_turn or (1 if completed_message_indexes else 0),
+                )
+
+            if current_turn < start_turn or current_turn > end_turn:
+                if message.id in completed_turn_numbers_by_message_id:
+                    latest_completed_turn = completed_turn_numbers_by_message_id[
+                        message.id
+                    ]
+                continue
+
+            agent_label = (
+                message.agent_label.strip()
+                if message.agent_label and message.agent_label.strip()
+                else message.agent_id.value.replace("_", " ").title()
+            )
+            transcript_parts.append(
+                f"Turn {current_turn} - {agent_label} "
+                f"[{message.agent_id.value}/{message.role.value}]: {message.content.strip()}"
+            )
+            if message.id in completed_turn_numbers_by_message_id:
+                latest_completed_turn = completed_turn_numbers_by_message_id[message.id]
+
+        if transcript_parts:
+            return "\n\n".join(transcript_parts)
+        return self._build_run_transcript(session_id=session_id, run_id=run_id)
+
+    def _parse_supervisor_decision(
+        self,
+        raw: str,
+    ) -> SupervisorDecision | None:
+        normalized = raw.strip()
+        if not normalized:
+            return None
+        try:
+            payload = json.loads(normalized)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+
+        status = str(payload.get("status") or "").strip().lower()
+        if status not in {"continue", "complete"}:
+            return None
+
+        raw_plan = payload.get("plan")
+        if isinstance(raw_plan, list):
+            plan = tuple(str(item).strip() for item in raw_plan if str(item).strip())
+        else:
+            plan = ()
+
+        raw_next_agent_id = payload.get("next_agent_id")
+        next_agent_id: AgentId | None = None
+        if raw_next_agent_id not in {None, ""}:
+            try:
+                candidate = AgentId(
+                    normalize_agent_enum_value(str(raw_next_agent_id).strip())
+                )
+            except ValueError:
+                return None
+            if candidate not in SUPERVISOR_MEMBER_AGENT_IDS:
+                return None
+            next_agent_id = candidate
+
+        instruction = str(payload.get("instruction") or "").strip()
+        user_response = str(payload.get("user_response") or "").strip()
+        request_summary = payload.get("request_summary") is True
+        return SupervisorDecision(
+            status=status,
+            plan=plan,
+            next_agent_id=next_agent_id,
+            instruction=instruction,
+            user_response=user_response,
+            request_summary=request_summary,
+        )
+
+    def _format_supervisor_message_content(
+        self,
+        decision: SupervisorDecision,
+    ) -> str:
+        lines: list[str] = []
+        if decision.user_response:
+            lines.append(decision.user_response)
+        if decision.plan:
+            if lines:
+                lines.append("")
+            lines.append("Plan:")
+            lines.extend(f"- {step}" for step in decision.plan)
+        if not decision.is_complete and decision.next_agent_id is not None:
+            lines.append("")
+            lines.append(f"Next agent: {decision.next_agent_id.value}")
+        if decision.request_summary:
+            lines.append("")
+            lines.append("Summary requested for the current turn window.")
+        return "\n".join(lines).strip() or "Supervisor completed the turn."
+
+    def _maybe_generate_turn_summary(
+        self,
+        *,
+        session: ChatSession,
+        job: Job,
+    ) -> None:
+        if not session.turn_summaries_enabled or not job.status.is_terminal:
+            return
+
+        source_messages = self._pending_turn_summary_messages(session.id)
+        if len(source_messages) < _TURN_SUMMARY_TRIGGER_MESSAGE_COUNT:
+            return
+
+        content = self._generate_turn_summary_with_codex(session, source_messages)
+        if content is None:
+            return
+
+        summary = ChatTurnSummary(
+            id=str(uuid4()),
+            session_id=session.id,
+            content=content,
+            source_message_ids=tuple(message.id for message in source_messages),
+            source_messages=tuple(
+                ChatTurnSummarySourceMessage.from_message(message)
+                for message in source_messages
+            ),
+        )
+        self._repository.save_turn_summary(summary)
+        session.turn_summary_checkpoint_message_id = source_messages[-1].id
+        session.turn_summary_checkpoint_initialized = True
+        session.touch()
+        self._repository.save_session(session)
+
+    def _pending_turn_summary_messages(
+        self,
+        session_id: str,
+    ) -> list[ChatMessage]:
+        session = self._repository.get_session(session_id)
+        messages = self._eligible_messages_for_turn_summary(session_id)
+        checkpoint_message_id = (
+            session.turn_summary_checkpoint_message_id if session is not None else None
+        ) or self._latest_turn_summary_source_message_id(session_id)
+        if checkpoint_message_id is None:
+            return messages
+
+        start_index = next(
+            (
+                index + 1
+                for index, message in enumerate(messages)
+                if message.id == checkpoint_message_id
+            ),
+            0,
+        )
+        return messages[start_index:]
+
+    def _latest_turn_summary_source_message_id(
+        self,
+        session_id: str,
+    ) -> str | None:
+        summaries = self._repository.list_turn_summaries(session_id)
+        if not summaries:
+            return None
+        source_message_ids = summaries[-1].source_message_ids
+        if not source_message_ids:
+            return None
+        return source_message_ids[-1]
+
+    def _eligible_messages_for_turn_summary(
+        self,
+        session_id: str,
+    ) -> list[ChatMessage]:
+        return [
+            message
+            for message in self._repository.list_messages(session_id)
+            if message.content.strip()
+            and message.status
+            in {
+                ChatMessageStatus.COMPLETED,
+                ChatMessageStatus.FAILED,
+                ChatMessageStatus.CANCELLED,
+            }
+        ]
+
+    def _latest_eligible_turn_summary_message_id(
+        self,
+        session_id: str,
+    ) -> str | None:
+        eligible_messages = self._eligible_messages_for_turn_summary(session_id)
+        if not eligible_messages:
+            return None
+        return eligible_messages[-1].id
+
+    def _generate_turn_summary_with_codex(
+        self,
+        session: ChatSession,
+        source_messages: list[ChatMessage],
+    ) -> str | None:
+        prompt = self._build_turn_summary_prompt(source_messages)
+        if not prompt:
+            return None
+
+        try:
+            job_id = self._execution_provider.execute(
+                prompt,
+                serial_key=f"{session.id}:turn-summary",
+                workdir=session.workspace_path,
+            )
+        except Exception:
+            return None
+
+        deadline = time.monotonic() + _TURN_SUMMARY_COMPLETION_TIMEOUT_SECONDS
+        snapshot = self._execution_provider.get_snapshot(job_id)
+        while not snapshot.status.is_terminal and time.monotonic() < deadline:
+            time.sleep(0.05)
+            snapshot = self._execution_provider.get_snapshot(job_id)
+
+        if snapshot.status != JobStatus.COMPLETED:
+            return None
+
+        normalized = (snapshot.response or "").strip()
+        return normalized or None
+
+    def _build_turn_summary_prompt(
+        self,
+        messages: list[ChatMessage],
+    ) -> str:
+        transcript_lines: list[str] = []
+        for message in messages:
+            agent_label = (
+                message.agent_label.strip()
+                if message.agent_label and message.agent_label.strip()
+                else "User"
+                if message.role == ChatMessageRole.USER
+                else message.agent_id.value.replace("_", " ").title()
+            )
+            content = sanitize_image_attachment_error_text(message.content)
+            transcript_lines.append(
+                f"{agent_label} [{message.agent_id.value}/{message.role.value}/{message.status.value}]: "
+                f"{' '.join((content or '').split()).strip()}"
+            )
+
+        if not transcript_lines:
+            return ""
+
+        return (
+            "Summarize these recent chat updates for future context. "
+            "Explain what happened, what changed, current state, open risks, and the next likely step. "
+            "Use plain text and keep it concise but specific.\n\n"
+            "Updates:\n" + "\n\n".join(transcript_lines)
+        )
+
+    def _derive_title(self, message: str) -> str:
+        normalized = " ".join(message.split())
+        if len(normalized) <= 48:
+            return normalized or "New chat"
+        return f"{normalized[:45]}..."
+
+    def _maybe_finalize_session_title(self, session_id: str) -> None:
+        session = self._repository.get_session(session_id)
+        if (
+            session is None
+            or session.archived_at is not None
+            or not session.title_is_placeholder
+        ):
+            return
+
+        messages = self._repository.list_messages(session_id)
+        titleable_turns = self._count_titleable_turns(messages)
+        if titleable_turns < 1:
+            return
+        if (
+            titleable_turns > 1
+            and titleable_turns % _TITLE_REFRESH_USER_TURN_INTERVAL != 0
+        ):
+            return
+
+        generated_title = self._generate_title_with_codex(
+            session, messages
+        ) or self._derive_conversation_title(messages)
+        normalized_title = self._normalize_generated_title(generated_title)
+        if normalized_title is None:
+            return
+
+        latest_session = self._repository.get_session(session_id)
+        if latest_session is None or latest_session.archived_at is not None:
+            return
+        if not latest_session.title_is_placeholder:
+            return
+
+        latest_session.title = normalized_title
+        latest_session.title_is_placeholder = True
+        latest_session.touch()
+        self._repository.save_session(latest_session)
+
+    def _queue_session_title_refresh(self, session_id: str) -> None:
+        thread = threading.Thread(
+            target=self._maybe_finalize_session_title,
+            args=(session_id,),
+            name=f"session-title-refresh-{session_id[:8]}",
+            daemon=True,
+        )
+        thread.start()
+
+    def _count_titleable_turns(self, messages: list[ChatMessage]) -> int:
+        return sum(
+            1
+            for message in messages
+            if message.role == ChatMessageRole.USER
+            and message.author_type == ChatMessageAuthorType.HUMAN
+            and message.content.strip()
+        )
+
+    def _generate_title_with_codex(
+        self,
+        session: ChatSession,
+        messages: list[ChatMessage],
+        *,
+        instructions: str | None = None,
+    ) -> str | None:
+        prompt = self._build_title_generation_prompt(
+            messages,
+            instructions=instructions,
+        )
+        if not prompt:
+            return None
+
+        try:
+            job_id = self._execution_provider.execute(
+                prompt,
+                serial_key=f"{session.id}:title",
+                workdir=session.workspace_path,
+                model=self._title_generation_model,
+            )
+        except Exception:
+            return None
+
+        deadline = time.monotonic() + 4.0
+        snapshot = self._execution_provider.get_snapshot(job_id)
+        while not snapshot.status.is_terminal and time.monotonic() < deadline:
+            time.sleep(0.05)
+            snapshot = self._execution_provider.get_snapshot(job_id)
+
+        if snapshot.status != JobStatus.COMPLETED:
+            return None
+        return snapshot.response
+
+    def _build_title_generation_prompt(
+        self,
+        messages: list[ChatMessage],
+        *,
+        instructions: str | None = None,
+    ) -> str:
+        conversation_lines: list[str] = []
+        recent_messages = [message for message in messages if message.content.strip()][
+            -8:
+        ]
+        for message in recent_messages:
+            content = " ".join(message.content.split()).strip()
+            if not content:
+                continue
+            role_label = "User" if message.role == ChatMessageRole.USER else "Assistant"
+            conversation_lines.append(f"{role_label}: {content}")
+
+        normalized_instructions = " ".join((instructions or "").split()).strip()
+
+        if not conversation_lines and not normalized_instructions:
+            return ""
+
+        prompt = (
+            "Create a concise, specific chat title from this conversation. "
+            "Prefer the latest user request when the topic changed. "
+            "Return only the title, 3 to 6 words, no quotes, maximum 60 characters.\n\n"
+        )
+        if normalized_instructions:
+            prompt += f"User title instructions:\n{normalized_instructions}\n\n"
+        if conversation_lines:
+            prompt += "Conversation:\n" + "\n".join(conversation_lines)
+        return prompt
+
+    def _derive_title_from_instructions(self, instructions: str | None) -> str | None:
+        normalized = " ".join((instructions or "").split()).strip()
+        if not normalized:
+            return None
+
+        trimmed = re.sub(
+            r"^(quiero|necesito|haz|hace|crear|crea|t[íi]tulo|sobre|que)\s+",
+            "",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        if len(trimmed) <= 60:
+            return trimmed or None
+        return f"{trimmed[:57].rstrip()}..."
+
+    def _derive_conversation_title(self, messages: list[ChatMessage]) -> str:
+        for message in messages:
+            if message.role != ChatMessageRole.USER:
+                continue
+            normalized = " ".join(message.content.split()).strip()
+            if not normalized:
+                continue
+            if len(normalized) <= 60:
+                return normalized
+            return f"{normalized[:57]}..."
+        return "New chat"
+
+    def _normalize_generated_title(self, raw_title: str | None) -> str | None:
+        if raw_title is None:
+            return None
+
+        first_line = next(
+            (line.strip() for line in raw_title.splitlines() if line.strip()),
+            "",
+        )
+        if not first_line:
+            return None
+
+        normalized = first_line.strip().strip('"').strip("'").strip()
+        if not normalized:
+            return None
+        if len(normalized) > 60:
+            return None
+        if ":" in normalized and len(normalized.split()) > 8:
+            return None
+        return normalized
+
+    def _normalize_manual_session_title(self, raw_title: str) -> str:
+        normalized = " ".join(raw_title.split()).strip()
+        if not normalized:
+            raise ValueError("Session title cannot be empty.")
+        if len(normalized) > 120:
+            normalized = f"{normalized[:117].rstrip()}..."
+        return normalized
+
+    def _classify_document(
+        self,
+        *,
+        filename: str,
+        content_type: str | None,
+    ) -> DocumentKind:
+        suffix = Path(filename).suffix.lower()
+        normalized_content_type = (
+            (content_type or "").split(";", maxsplit=1)[0].strip().lower()
+        )
+
+        if suffix in _CAD_SUFFIXES or normalized_content_type in _CAD_CONTENT_TYPES:
+            return "cad"
+        if normalized_content_type.startswith("image/") or suffix in _IMAGE_SUFFIXES:
+            return "image"
+        if normalized_content_type.startswith("video/") or suffix in _VIDEO_SUFFIXES:
+            return "video"
+        if normalized_content_type.startswith("audio/"):
+            return "audio"
+        if suffix in _AUDIO_SUFFIXES:
+            return "audio"
+        if suffix == ".docx" or normalized_content_type in {
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        }:
+            return "docx"
+        if suffix == ".pptx" or normalized_content_type in {
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        }:
+            return "pptx"
+        if suffix == ".xlsx" or normalized_content_type in {
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        }:
+            return "xlsx"
+        if suffix == ".pdf" or normalized_content_type == "application/pdf":
+            return "pdf"
+        if suffix == ".zip" or normalized_content_type in _ZIP_CONTENT_TYPES:
+            return "zip"
+        if self._looks_like_text_document(
+            suffix=suffix, content_type=normalized_content_type
+        ):
+            return "text"
+
+        raise UnsupportedDocumentError(
+            "Unsupported document type. Supported uploads are audio, video, images, "
+            "PDFs, DXF/DWG CAD files, text/code files, ZIP archives, and "
+            ".docx/.pptx/.xlsx documents."
+        )
+
+    def _looks_like_text_document(
+        self,
+        *,
+        suffix: str,
+        content_type: str,
+    ) -> bool:
+        if suffix in _TEXT_SUFFIXES:
+            return True
+        if content_type.startswith("text/"):
+            return True
+        return content_type in {
+            "application/json",
+            "application/ld+json",
+            "application/sql",
+            "application/toml",
+            "application/x-sh",
+            "application/xml",
+            "application/x-yaml",
+        }
+
+    def _build_document_display_message(
+        self,
+        *,
+        message: str | None,
+        document_kind: DocumentKind,
+        document_name: str,
+    ) -> str:
+        summary = f"[Attached {document_kind} document: {document_name}]"
+        instructions = (message or "").strip()
+        if not instructions:
+            return summary
+        return f"{instructions}\n\n{summary}"
+
+    def _build_document_execution_message(
+        self,
+        *,
+        message: str | None,
+        document_kind: DocumentKind,
+        document_name: str,
+        content_label: str,
+        content: str,
+    ) -> str:
+        instructions = (message or "").strip() or (
+            f"Please analyze the attached {document_kind} document."
+        )
+        truncated_content = self._truncate_document_text(content)
+        return (
+            f"{instructions}\n\n"
+            f"Document name: {document_name}\n"
+            f"Document kind: {document_kind}\n\n"
+            f"{content_label}:\n{truncated_content}"
+        )
+
+    def _build_attachment_detail_section(
+        self,
+        *,
+        index: int,
+        document_kind: DocumentKind,
+        document_name: str,
+        content_label: str,
+        content: str,
+    ) -> str:
+        truncated_content = self._truncate_document_text(content)
+        return (
+            f"Attachment {index}\n"
+            f"Document name: {document_name}\n"
+            f"Document kind: {document_kind}\n\n"
+            f"{content_label}:\n{truncated_content}"
+        )
+
+    def _build_attachment_batch_display_message(
+        self,
+        *,
+        message: str | None,
+        attachment_summaries: list[str],
+    ) -> str:
+        summary_block = "[Attached files]\n" + "\n".join(attachment_summaries)
+        instructions = (message or "").strip()
+        if not instructions:
+            return summary_block
+        return f"{instructions}\n\n{summary_block}"
+
+    def _build_attachment_batch_execution_message(
+        self,
+        *,
+        message: str | None,
+        attachment_summaries: list[str],
+        attachment_details: list[str],
+        image_count: int,
+    ) -> str:
+        instructions = (
+            message or ""
+        ).strip() or self._default_attachment_batch_instruction(
+            attachment_summaries=attachment_summaries,
+            image_count=image_count,
+        )
+        sections = [
+            instructions,
+            "Attached files:\n" + "\n".join(attachment_summaries),
+        ]
+        if image_count > 0:
+            image_label = "image is" if image_count == 1 else "images are"
+            sections.append(
+                f"The attached {image_label} provided separately to this prompt."
+            )
+        if attachment_details:
+            sections.append("\n\n".join(attachment_details))
+        return "\n\n".join(section for section in sections if section.strip())
+
+    def _default_attachment_batch_instruction(
+        self,
+        *,
+        attachment_summaries: list[str],
+        image_count: int,
+    ) -> str:
+        if len(attachment_summaries) == 1:
+            if image_count == 1:
+                return "Please analyze the attached image."
+            summary = attachment_summaries[0].removeprefix("- ").strip()
+            if ":" in summary:
+                document_kind = summary.split(":", maxsplit=1)[0]
+                return f"Please analyze the attached {document_kind} document."
+        if image_count == len(attachment_summaries):
+            return "Please analyze the attached images."
+        return "Please analyze the attached files."
+
+    def _truncate_document_text(self, text: str) -> str:
+        normalized = text.strip()
+        if len(normalized) <= self._document_text_char_limit:
+            return normalized
+        return (
+            f"{normalized[: self._document_text_char_limit].rstrip()}\n\n"
+            "[Document content truncated by the backend.]"
+        )
+
+    def _build_text_preview(self, text: str) -> str:
+        normalized = " ".join(text.split())
+        if len(normalized) <= 240:
+            return normalized
+        return f"{normalized[:237]}..."
+
+    def _build_empty_document_extraction_note(
+        self,
+        *,
+        document_kind: DocumentKind,
+        document_name: str,
+    ) -> str:
+        return (
+            f"No extractable text was found in {document_name}. "
+            f"The upload was accepted as a {document_kind} document, but the "
+            "backend could not derive readable text from it. Ask the user for a "
+            "text-exported version if the visual or embedded content is required."
+        )
+
+    def _extract_document_text(
+        self,
+        *,
+        document_path: Path,
+        document_kind: DocumentKind,
+    ) -> str:
+        if document_kind == "docx":
+            return self._extract_docx_text(document_path)
+        if document_kind == "pptx":
+            return self._extract_pptx_text(document_path)
+        if document_kind == "xlsx":
+            return self._extract_xlsx_text(document_path)
+        if document_kind == "pdf":
+            return self._extract_pdf_text(document_path)
+        if document_kind == "zip":
+            return self._extract_zip_manifest(document_path)
+        if document_kind == "text":
+            return document_path.read_text(encoding="utf-8", errors="replace")
+        raise DocumentProcessingError(
+            f"Document text extraction is not supported for {document_kind} files."
+        )
+
+    def _extract_docx_text(self, document_path: Path) -> str:
+        try:
+            with zipfile.ZipFile(document_path) as archive:
+                xml_payload = archive.read("word/document.xml")
+        except FileNotFoundError as exc:
+            raise DocumentProcessingError(
+                "The uploaded .docx file could not be read."
+            ) from exc
+        except KeyError as exc:
+            raise DocumentProcessingError(
+                "The uploaded .docx file is missing word/document.xml."
+            ) from exc
+        except zipfile.BadZipFile as exc:
+            raise DocumentProcessingError(
+                "The uploaded .docx file is not a valid ZIP archive."
+            ) from exc
+
+        try:
+            root = ET.fromstring(xml_payload)
+        except ET.ParseError as exc:
+            raise DocumentProcessingError(
+                "The uploaded .docx file could not be parsed."
+            ) from exc
+
+        namespace = {
+            "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        }
+        paragraphs: list[str] = []
+        for paragraph in root.findall(".//w:p", namespace):
+            runs = [
+                node.text.strip()
+                for node in paragraph.findall(".//w:t", namespace)
+                if node.text and node.text.strip()
+            ]
+            if runs:
+                paragraphs.append("".join(runs))
+
+        return "\n\n".join(paragraphs)
+
+    def _extract_pptx_text(self, document_path: Path) -> str:
+        try:
+            with zipfile.ZipFile(document_path) as archive:
+                slide_names = sorted(
+                    (
+                        name
+                        for name in archive.namelist()
+                        if re.fullmatch(r"ppt/slides/slide\d+\.xml", name)
+                    ),
+                    key=self._pptx_slide_sort_key,
+                )
+                if not slide_names:
+                    raise DocumentProcessingError(
+                        "The uploaded .pptx file does not contain slide XML."
+                    )
+                slide_payloads = [
+                    (slide_name, archive.read(slide_name)) for slide_name in slide_names
+                ]
+        except FileNotFoundError as exc:
+            raise DocumentProcessingError(
+                "The uploaded .pptx file could not be read."
+            ) from exc
+        except zipfile.BadZipFile as exc:
+            raise DocumentProcessingError(
+                "The uploaded .pptx file is not a valid ZIP archive."
+            ) from exc
+
+        slides: list[str] = []
+        namespace = {"a": "http://schemas.openxmlformats.org/drawingml/2006/main"}
+        for index, (slide_name, xml_payload) in enumerate(slide_payloads, start=1):
+            try:
+                root = ET.fromstring(xml_payload)
+            except ET.ParseError as exc:
+                raise DocumentProcessingError(
+                    f"The uploaded .pptx file could not parse {slide_name}."
+                ) from exc
+
+            text_runs = [
+                node.text.strip()
+                for node in root.findall(".//a:t", namespace)
+                if node.text and node.text.strip()
+            ]
+            if text_runs:
+                slides.append(f"Slide {index}:\n" + "\n".join(text_runs))
+
+        return "\n\n".join(slides)
+
+    def _extract_pptx_embedded_images(
+        self,
+        *,
+        document_path: Path,
+        output_dir: Path,
+        document_name: str,
+    ) -> list[str]:
+        try:
+            with zipfile.ZipFile(document_path) as archive:
+                media_names = sorted(
+                    name
+                    for name in archive.namelist()
+                    if name.startswith("ppt/media/")
+                    and Path(name).suffix.lower() in _IMAGE_SUFFIXES
+                )
+                image_payloads = [
+                    (media_name, archive.read(media_name)) for media_name in media_names
+                ]
+        except (FileNotFoundError, zipfile.BadZipFile):
+            return []
+
+        if not image_payloads:
+            return []
+
+        safe_stem = (
+            re.sub(r"[^A-Za-z0-9_.-]+", "-", Path(document_name).stem).strip(".-")
+            or "pptx"
+        )
+        image_paths: list[str] = []
+        for index, (media_name, payload) in enumerate(image_payloads, start=1):
+            suffix = Path(media_name).suffix.lower()
+            image_path = output_dir / f"{safe_stem}-embedded-{index}{suffix}"
+            image_path.write_bytes(payload)
+            image_paths.append(str(image_path))
+        return image_paths
+
+    @staticmethod
+    def _pptx_slide_sort_key(slide_name: str) -> tuple[int, str]:
+        match = re.search(r"slide(\d+)\.xml$", slide_name)
+        return (int(match.group(1)) if match else 0, slide_name)
+
+    def _extract_xlsx_text(self, document_path: Path) -> str:
+        try:
+            with zipfile.ZipFile(document_path) as archive:
+                shared_strings = self._read_xlsx_shared_strings(archive)
+                sheet_names = sorted(
+                    (
+                        name
+                        for name in archive.namelist()
+                        if re.fullmatch(r"xl/worksheets/sheet\d+\.xml", name)
+                    ),
+                    key=self._xlsx_sheet_sort_key,
+                )
+                if not sheet_names:
+                    raise DocumentProcessingError(
+                        "The uploaded .xlsx file does not contain worksheet XML."
+                    )
+                sheet_payloads = [
+                    (sheet_name, archive.read(sheet_name)) for sheet_name in sheet_names
+                ]
+        except FileNotFoundError as exc:
+            raise DocumentProcessingError(
+                "The uploaded .xlsx file could not be read."
+            ) from exc
+        except zipfile.BadZipFile as exc:
+            raise DocumentProcessingError(
+                "The uploaded .xlsx file is not a valid ZIP archive."
+            ) from exc
+
+        sheets: list[str] = []
+        namespace = {"s": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+        for index, (sheet_name, xml_payload) in enumerate(sheet_payloads, start=1):
+            try:
+                root = ET.fromstring(xml_payload)
+            except ET.ParseError as exc:
+                raise DocumentProcessingError(
+                    f"The uploaded .xlsx file could not parse {sheet_name}."
+                ) from exc
+
+            rows: list[str] = []
+            for row in root.findall(".//s:row", namespace):
+                cells = [
+                    value
+                    for cell in row.findall("s:c", namespace)
+                    if (value := self._extract_xlsx_cell_text(cell, shared_strings))
+                ]
+                if cells:
+                    rows.append("\t".join(cells))
+            if rows:
+                sheets.append(f"Sheet {index}:\n" + "\n".join(rows))
+
+        return "\n\n".join(sheets)
+
+    def _read_xlsx_shared_strings(self, archive: zipfile.ZipFile) -> list[str]:
+        try:
+            shared_strings_xml = archive.read("xl/sharedStrings.xml")
+        except KeyError:
+            return []
+
+        try:
+            root = ET.fromstring(shared_strings_xml)
+        except ET.ParseError as exc:
+            raise DocumentProcessingError(
+                "The uploaded .xlsx file could not parse shared strings."
+            ) from exc
+
+        namespace = {"s": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+        strings: list[str] = []
+        for item in root.findall("s:si", namespace):
+            text_runs = [
+                node.text
+                for node in item.findall(".//s:t", namespace)
+                if node.text is not None
+            ]
+            strings.append("".join(text_runs).strip())
+        return strings
+
+    def _extract_xlsx_cell_text(
+        self,
+        cell: ET.Element,
+        shared_strings: list[str],
+    ) -> str:
+        namespace = {"s": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+        cell_type = cell.attrib.get("t")
+        if cell_type == "inlineStr":
+            return " ".join(
+                node.text.strip()
+                for node in cell.findall(".//s:t", namespace)
+                if node.text and node.text.strip()
+            )
+
+        value_node = cell.find("s:v", namespace)
+        if value_node is None or value_node.text is None:
+            return ""
+
+        raw_value = value_node.text.strip()
+        if not raw_value:
+            return ""
+        if cell_type == "s":
+            try:
+                return shared_strings[int(raw_value)]
+            except (ValueError, IndexError) as exc:
+                raise DocumentProcessingError(
+                    "The uploaded .xlsx file has an invalid shared string reference."
+                ) from exc
+        return raw_value
+
+    @staticmethod
+    def _xlsx_sheet_sort_key(sheet_name: str) -> tuple[int, str]:
+        match = re.search(r"sheet(\d+)\.xml$", sheet_name)
+        return (int(match.group(1)) if match else 0, sheet_name)
+
+    def _extract_zip_manifest(self, document_path: Path) -> str:
+        try:
+            with zipfile.ZipFile(document_path) as archive:
+                entries = archive.infolist()
+        except FileNotFoundError as exc:
+            raise DocumentProcessingError(
+                "The uploaded ZIP file could not be read."
+            ) from exc
+        except zipfile.BadZipFile as exc:
+            raise DocumentProcessingError(
+                "The uploaded ZIP file is not a valid ZIP archive."
+            ) from exc
+
+        file_entries = [entry for entry in entries if not entry.is_dir()]
+        directory_count = len(entries) - len(file_entries)
+        total_uncompressed = sum(entry.file_size for entry in file_entries)
+        total_compressed = sum(entry.compress_size for entry in file_entries)
+        lines = [
+            "ZIP archive manifest:",
+            f"Files: {len(file_entries)}",
+            f"Directories: {directory_count}",
+            f"Total compressed size: {self._format_byte_count(total_compressed)}",
+            f"Total uncompressed size: {self._format_byte_count(total_uncompressed)}",
+        ]
+        if total_uncompressed > _ZIP_MANIFEST_TOTAL_UNCOMPRESSED_LIMIT:
+            lines.append(
+                "Warning: total uncompressed size is large; extract only requested "
+                "paths and verify available disk space first."
+            )
+
+        if not file_entries:
+            lines.append("No files were found in the ZIP archive.")
+            return "\n".join(lines)
+
+        lines.append("")
+        lines.append("Entries:")
+        for index, entry in enumerate(
+            file_entries[:_ZIP_MANIFEST_ENTRY_LIMIT], start=1
+        ):
+            flags: list[str] = []
+            if entry.flag_bits & 0x1:
+                flags.append("encrypted")
+            if not self._is_safe_zip_member_name(entry.filename):
+                flags.append("unsafe path")
+            flag_suffix = f" ({', '.join(flags)})" if flags else ""
+            lines.append(
+                f"{index}. {entry.filename} - "
+                f"{self._format_byte_count(entry.file_size)} uncompressed, "
+                f"{self._format_byte_count(entry.compress_size)} compressed"
+                f"{flag_suffix}"
+            )
+        remaining_count = len(file_entries) - _ZIP_MANIFEST_ENTRY_LIMIT
+        if remaining_count > 0:
+            lines.append(f"... {remaining_count} more file(s) omitted from manifest.")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _is_safe_zip_member_name(name: str) -> bool:
+        normalized = name.replace("\\", "/").strip()
+        if not normalized:
+            return False
+        path = PurePosixPath(normalized)
+        if path.is_absolute():
+            return False
+        if any(part in {"", ".", ".."} for part in path.parts):
+            return False
+        if re.match(r"^[A-Za-z]:", normalized):
+            return False
+        return True
+
+    @staticmethod
+    def _format_byte_count(byte_count: int) -> str:
+        if byte_count < 1024:
+            return f"{byte_count} B"
+        value = float(byte_count)
+        for unit in ("KiB", "MiB", "GiB", "TiB"):
+            value /= 1024
+            if value < 1024:
+                return f"{value:.1f} {unit}"
+        return f"{value:.1f} PiB"
+
+    def _extract_pdf_text(self, document_path: Path) -> str:
+        try:
+            reader = PdfReader(str(document_path))
+        except FileNotFoundError as exc:
+            raise DocumentProcessingError(
+                "The uploaded PDF file could not be read."
+            ) from exc
+        except PdfReadError as exc:
+            raise DocumentProcessingError(
+                "The uploaded PDF file could not be parsed."
+            ) from exc
+
+        pages: list[str] = []
+        for index, page in enumerate(reader.pages, start=1):
+            try:
+                page_text = (page.extract_text() or "").strip()
+            except PdfReadError as exc:
+                raise DocumentProcessingError(
+                    f"The uploaded PDF file could not extract page {index}."
+                ) from exc
+            if page_text:
+                pages.append(f"Page {index}:\n{page_text}")
+
+        return "\n\n".join(pages)
+
+    def _resolve_workspace(self, workspace_path: str | None) -> Workspace:
+        workspaces = self._repository.list_workspaces()
+        if not workspaces:
+            raise ValueError("No workspaces were found.")
+
+        if workspace_path is None:
+            for workspace in workspaces:
+                if workspace.path == self._default_workspace_path:
+                    return workspace
+            return workspaces[0]
+
+        for workspace in workspaces:
+            if workspace.path == workspace_path:
+                return workspace
+
+        raise ValueError(f"Workspace {workspace_path} was not found.")

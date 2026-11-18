@@ -3,7 +3,8 @@
 Silent intake and project/group reconciliation service. It links a dedicated
 WhatsApp account as a companion device, discovers its groups, associates each
 group with a project, and writes new text, audio, image, and PDF messages as atomic project
-inbox records under `.data/whatsapp_ingest/inbox`.
+inbox records under `.data/whatsapp_ingest/inbox`. Videos are supported too,
+including captionless videos and video files sent as documents.
 
 This integration uses the unofficial WhatsApp Web protocol through Baileys. It
 must not be used for bulk messaging, unsolicited contact, or automated replies.
@@ -159,7 +160,7 @@ state lives in `.data/whatsapp_ingest/community.json`.
 
 ## Temporary direct intake
 
-Bruno can send private text, voice notes, images, and PDFs to Nienfos Codex while
+Bruno can send private text, voice notes, images, videos, and PDFs to Nienfos Codex while
 project groups are still being provisioned. The receiver accepts only Bruno's
 stored WhatsApp identities and silently ignores every other private sender.
 
@@ -172,14 +173,25 @@ Proyecto: proyecto-inmobiliaria
 
 `Proyecto:` is case-insensitive, but the colon is mandatory and the value must
 match one project slug, declared name, WhatsApp subject, or configured alias.
+An exact normalized workspace directory name takes precedence over names and
+aliases inherited by other checkouts. If there is no exact directory match,
+ambiguous aliases still remain pending.
 The directive and every adjacent text, voice note, and image are first stored
 together under the neutral `direct-bruno` inbox. After the quiet window, all
 audio is transcribed locally and the complete batch is moved into the selected
-project's inbox for ordinary triage. Images and PDFs are attached to the triage
-and, for actionable requests, to the planning chat; the Bridge extracts PDF
+project's inbox and opens a project chat unconditionally, without semantic
+triage. Questions, greetings, captionless images, and even a routing directive
+by itself all open the chat. The agent answers questions or asks for missing
+context there; project changes still require approval inside that chat.
+Images, videos and PDFs are attached to the project chat; the Bridge extracts PDF
 text before Codex runs. Missing, conflicting, unresolved, or ambiguous
 directives remain pending and never create a Codex chat. No WhatsApp reply is
 sent.
+
+Each resolved private batch keeps a stable batch ID and is processed as one
+request, even when it exceeds the group worker's default 20-message batch size.
+Separate private batches remain independent. A pause of 45 seconds closes the
+batch, so send the routing directive and all related content within that window.
 
 The original text/media, audio transcript, sender, project-resolution decision,
 triage, and Codex submission markers remain together for auditability.
@@ -196,7 +208,8 @@ transcripts without a WhatsApp wrapper; images and PDFs are attached normally.
 The `CLI` control message itself is omitted. The frontend therefore treats the
 result like an ordinary chat created in the DEV app. This mode does not send a
 WhatsApp reply, and its session/job identifiers remain recorded locally for
-deduplication and auditability.
+deduplication and auditability. A standalone `CLI` with no other content also
+opens the chat, asking what the user wishes to consult or do.
 
 ## Stored record
 
@@ -208,6 +221,7 @@ Each accepted message becomes an immutable directory:
 ├── message.txt          # text messages only
 ├── audio-original.ogg   # audio messages only; extension follows MIME type
 ├── image-original.jpg   # image messages only; extension follows MIME type
+├── video-original.mp4   # videos, including videos sent as documents
 ├── document-original.pdf # PDF messages only
 └── READY
 ```
@@ -215,9 +229,60 @@ Each accepted message becomes an immutable directory:
 `READY` is written last. Downstream Drive or Codex workers should only consume
 directories containing that marker.
 
+### Videos
+
+Send `Proyecto: <slug>` (or `CLI`) as a separate message, then the video within
+the same quiet window. A caption is optional. The original received bytes are
+preserved without transcoding; the manifest records `video_seconds`, MIME type,
+caption and original document filename when available. Known file extensions
+include MP4, MOV, M4V, WebM, MKV, AVI, 3GP and 3G2. Playback depends on the device's
+codecs. Before launching the agent, the Bridge now decodes timestamped PNG previews
+with local PyAV (no ffmpeg command or model API required). Native image inputs work
+in read-only planning chats too. Up to 12 frames per video and 24 per batch are
+sampled across the duration, approximately every 3 seconds for short clips, with
+a maximum image edge of 1280 px. This is sampled visual inspection, not continuous
+playback: brief events can be missed. Video speech is automatically transcribed
+by the configured local faster-whisper backend (offline cached model, no model
+API), with approximate timestamps in the agent context. This also applies to
+direct video attachments and videos sent as documents. Other transcription
+backends never receive video audio automatically: the prompt reports unavailable.
+
+Audio preprocessing is bounded to 10 minutes of source audio, 180 seconds elapsed,
+150 seconds CPU and 8 GiB address space per process. No audio track, no detected
+speech, duration limit and unavailable/error are explicit states; the original
+and frames are still delivered. Speech recognition can contain errors and is not
+human listening verification. Atomic, hash-verified cache entries depend on media
+SHA256, model, language and parameters. Repeated jobs retain the prepared context;
+concurrent equivalent preprocessing uses a local file lock. WhatsApp multipart
+uploads allow 240 seconds per video for decoding and recognition. No outbound
+WhatsApp response is sent.
+
+Preview decoding runs in a separate bounded process (35 s wall time, 25 s CPU,
+1.5 GiB address space), accepts clips up to 2 hours and 4K source pixels, and
+rejects playlist/network formats. Corrupt or unsupported media keep their original
+attachment with an explicit preview failure note. SHA256-verified previews are
+reused; retries preserve the exact original and images. The agent must not claim
+to have seen or heard content when the corresponding input is unavailable.
+Tests: `.venv/bin/python -m pytest tests/test_video_preview.py tests/test_whatsapp_video.py -q`.
+
+The updated Bridge retains video download descriptors across SQLite reloads and
+job retries. The updated mobile client shows an explicit **Abrir video** action.
+Downloads retain the managed attachment directory boundary used by images.
+Uploads use the Bridge's configured `document_max_upload_bytes` limit (25 MB by
+default). Failed downloads never create `READY`; upload failures leave error
+records pending rather than marking them as delivered.
+No automated reply is sent in WhatsApp.
+
+Reproducible offline checks: `.venv/bin/python scripts/check_whatsapp_videos.py`.
+The WhatsApp transport and Codex execution are replaced only in the test harness;
+the parser, persistence, worker, multipart API, download and SQLite paths execute
+real project code. Live activation requires updating the intake service, worker,
+Bridge backend and mobile client, then testing an actual WhatsApp message.
+
 ## Local transcription and Codex triage
 
-The companion worker scans only complete `READY` records. For matched projects
+The companion worker scans only complete `READY` records. For matched groups
+without explicit private routing directives,
 it:
 
 1. transcribes audio locally with the existing `faster-whisper` installation;
@@ -235,6 +300,12 @@ requires the first turn to present a plan and wait. WhatsApp content never
 counts as implementation approval. Only a later explicit approval from Bruno
 Jaime inside that Codex chat enables implementation. No reply is ever sent to
 WhatsApp.
+
+Requests longer than the Bridge's 10,000-character message limit are uploaded
+as a complete `whatsapp-request.txt` attachment, alongside any original media.
+This applies to triage, planning, and direct CLI delivery; conversation JSON is
+never truncated to fit the message limit. Temporary upload files are removed
+after submission, while the Bridge retains its normal attachment copy.
 
 Install the worker as a user service:
 

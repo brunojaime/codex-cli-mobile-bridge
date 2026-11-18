@@ -30,6 +30,17 @@ class ChatController extends ChangeNotifier {
 
   static const int initialTranscriptMessageLimit = 6;
   static const int olderTranscriptPageLimit = 5;
+  static const int sessionCacheLimit = 8;
+  static const int sessionCacheCharacterLimit = 2000000;
+
+  final Map<String, SessionDetail> _sessionCache = {};
+  final Map<int, _OptimisticTextMessage> _optimisticTextMessages = {};
+  int _selectionRevision = 0;
+  int _sessionReadRevision = 0;
+  int _nextTextToken = 0;
+  bool _disposed = false;
+  Future<void>? _sessionsRefresh;
+  bool _sessionsRefreshAgain = false;
 
   final ApiClient _apiClient;
   final ChatNotificationService _notificationService;
@@ -83,20 +94,20 @@ class ChatController extends ChangeNotifier {
   bool get hasSessions => _sessions.isNotEmpty;
   List<ChatMessage> get messages {
     final currentSession = _currentSession;
-    if (currentSession == null) {
-      return const <ChatMessage>[];
-    }
-
-    final optimisticMessages = _optimisticAudioMessages.values
-        .where((message) => message.sessionId == currentSession.id)
-        .map((message) => message.message)
-        .toList(growable: false);
-    if (optimisticMessages.isEmpty) {
-      return currentSession.messages;
-    }
-
-    return List<ChatMessage>.unmodifiable(<ChatMessage>[
-      ...currentSession.messages,
+    final sessionId = currentSession?.id ?? _selectedSessionId;
+    final serverMessages = currentSession?.messages ?? const <ChatMessage>[];
+    final optimisticMessages = <ChatMessage>[
+      ..._optimisticAudioMessages.values
+          .where((message) => message.sessionId == sessionId)
+          .map((message) => message.message),
+      ..._optimisticTextMessages.values
+          .where((entry) => entry.sessionId == sessionId &&
+              !entry.isPresentIn(serverMessages))
+          .map((entry) => entry.message),
+    ];
+    if (optimisticMessages.isEmpty) return serverMessages;
+    return List<ChatMessage>.unmodifiable([
+      ...serverMessages,
       ...optimisticMessages,
     ]);
   }
@@ -242,8 +253,84 @@ class ChatController extends ChangeNotifier {
     }
   }
 
-  Future<void> refreshSessions() async {
+  Future<void> refreshSessions() {
+    final pending = _sessionsRefresh;
+    if (pending != null) {
+      // An overlapping refresh may follow a mutation accepted after the read
+      // started. Coalesce the burst, then make one trailing read for freshness.
+      _sessionsRefreshAgain = true;
+      return pending;
+    }
+    final future = _drainSessionRefreshes();
+    _sessionsRefresh = future;
+    return future;
+  }
+
+  Future<void> _drainSessionRefreshes() async {
+    try {
+      do {
+        _sessionsRefreshAgain = false;
+        await _fetchSessionSummaries();
+      } while (_sessionsRefreshAgain && !_disposed);
+    } finally {
+      _sessionsRefresh = null;
+    }
+  }
+
+  int _historyFilterRevision = 0;
+  bool _loadingMoreSessions = false;
+  bool _loadingSessionFilter = false;
+  bool get hasMoreSessions => _apiClient.hasMoreSessions;
+  bool get isLoadingSessionList => _loadingMoreSessions || _loadingSessionFilter;
+
+  Future<void> filterSessions({required bool archived, String search = ''}) async {
+    final revision = ++_historyFilterRevision;
+    _apiClient.setSessionFilter(archived: archived, search: search);
+    _sessions.clear();
+    _loadingSessionFilter = true;
+    notifyListeners();
+    try {
+      // Wait for an old filter read, then request the new filter explicitly.
+      await _sessionsRefresh;
+      if (revision != _historyFilterRevision || _disposed) return;
+      await refreshSessions();
+    } catch (error) {
+      if (revision == _historyFilterRevision) _errorText = '$error';
+    } finally {
+      if (revision == _historyFilterRevision) _loadingSessionFilter = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> loadMoreSessions() async {
+    if (_loadingMoreSessions || !hasMoreSessions) return;
+    final revision = _historyFilterRevision;
+    _loadingMoreSessions = true;
+    notifyListeners();
+    try {
+      final sessions = await _apiClient.loadMoreSessions();
+      if (_disposed || revision != _historyFilterRevision) return;
+      _replaceSessionSummaries(sessions);
+    } catch (error) {
+      if (revision == _historyFilterRevision) _errorText = '$error';
+    } finally {
+      _loadingMoreSessions = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> _fetchSessionSummaries() async {
+    final revision = _historyFilterRevision;
+    _apiClient.trackSessionCards({
+      ..._pendingJobs.values,
+      ..._deferredRunNotifications.values.map((entry) => entry.snapshot.sessionId),
+    });
     final sessions = await _apiClient.listSessions();
+    if (_disposed || revision != _historyFilterRevision) return;
+    _replaceSessionSummaries(sessions);
+  }
+
+  void _replaceSessionSummaries(List<ChatSessionSummary> sessions) {
     sessions.sort(_compareSessionsByRecentActivity);
     _sessions
       ..clear()
@@ -493,42 +580,75 @@ class ChatController extends ChangeNotifier {
     }
   }
 
-  Future<void> selectSession(String sessionId) async {
-    ChatSessionSummary? sessionSummary;
-    for (final session in _sessions) {
-      if (session.id == sessionId) {
-        sessionSummary = session;
-        break;
-      }
+  Future<void> selectSession(
+    String sessionId, {
+    bool preserveCurrentOnError = false,
+  }) async {
+    final revision = ++_selectionRevision;
+    final readRevision = ++_sessionReadRevision;
+    final previous = _currentSession;
+    if (previous != null && _sessionCache.containsKey(previous.id)) {
+      _cacheSession(previous);
     }
-    if (sessionSummary != null) {
+    final cached = _sessionCache[sessionId];
+    final summary = _sessionSummaryForId(sessionId);
+    if (!preserveCurrentOnError) {
       _selectedSessionId = sessionId;
-      _currentSession = _placeholderSessionDetail(sessionSummary);
-      _errorText = null;
-      notifyListeners();
+      _currentSession = cached == null
+          ? (summary == null || !summary.hasFullAgentConfiguration
+              ? null
+              : _placeholderSessionDetail(summary))
+          : _overlaySessionWithJobSnapshots(cached);
     }
-
-    _setLoading(true);
+    _errorText = null;
+    _olderMessagesError = null;
+    _isLoadingOlderMessages = false;
+    _setLoading(cached == null);
     try {
       final session = await _apiClient.getSession(
         sessionId,
         limit: initialTranscriptMessageLimit,
       );
-      _currentSession = _overlaySessionWithJobSnapshots(session);
+      if (_disposed || revision != _selectionRevision ||
+          readRevision != _sessionReadRevision) {
+        return;
+      }
+      _currentSession = _overlaySessionWithJobSnapshots(
+        _mergeWithCurrentSession(session),
+      );
       _selectedSessionId = sessionId;
-      _olderMessagesError = null;
+      _cacheSession(_currentSession!);
+      _reconcileOptimisticText(_currentSession!);
       _reconcilePendingJobsForSession(_currentSession);
       _trackPendingJobsFromSession(_currentSession);
-      await _maybeImportGeneratedAgentProfiles(_currentSession);
       _errorText = null;
       _flushDeferredRunNotifications();
       notifyListeners();
+      unawaited(_maybeImportGeneratedAgentProfiles(_currentSession));
     } catch (error) {
+      if (_disposed || revision != _selectionRevision) return;
       _errorText = '$error';
       notifyListeners();
     } finally {
-      _setLoading(false);
+      if (!_disposed && revision == _selectionRevision) _setLoading(false);
     }
+  }
+
+  void _cacheSession(SessionDetail session) {
+    _sessionCache.remove(session.id);
+    _sessionCache[session.id] = session;
+    int characters() => _sessionCache.values.fold(0, (total, item) =>
+        total + item.messages.fold(0, (sum, message) => sum + message.text.length));
+    while (_sessionCache.length > sessionCacheLimit ||
+        characters() > sessionCacheCharacterLimit) {
+      _sessionCache.remove(_sessionCache.keys.first);
+    }
+  }
+
+  void _reconcileOptimisticText(SessionDetail session) {
+    _optimisticTextMessages.removeWhere((_, entry) =>
+        entry.accepted && entry.sessionId == session.id &&
+        entry.isPresentIn(session.messages));
   }
 
   Future<bool> loadOlderMessages() async {
@@ -543,6 +663,7 @@ class ChatController extends ChangeNotifier {
       return false;
     }
 
+    final selectionRevision = _selectionRevision;
     _isLoadingOlderMessages = true;
     _olderMessagesError = null;
     notifyListeners();
@@ -552,7 +673,8 @@ class ChatController extends ChangeNotifier {
         before: cursor,
         limit: olderTranscriptPageLimit,
       );
-      if (_currentSession?.id != currentSession.id) {
+      if (_disposed || selectionRevision != _selectionRevision ||
+          _currentSession?.id != currentSession.id) {
         return false;
       }
       _currentSession = _overlaySessionWithJobSnapshots(
@@ -576,12 +698,15 @@ class ChatController extends ChangeNotifier {
       notifyListeners();
       return true;
     } catch (error) {
+      if (_disposed || selectionRevision != _selectionRevision) return false;
       _olderMessagesError = '$error';
       notifyListeners();
       return false;
     } finally {
-      _isLoadingOlderMessages = false;
-      notifyListeners();
+      if (!_disposed && selectionRevision == _selectionRevision) {
+        _isLoadingOlderMessages = false;
+        notifyListeners();
+      }
     }
   }
 
@@ -769,24 +894,53 @@ class ChatController extends ChangeNotifier {
     CodexRunOptions? codexRunOptions,
   }) async {
     final text = rawText.trim();
-    if (text.isEmpty) {
-      return false;
-    }
+    if (text.isEmpty) return false;
     final originSessionId = sessionIdOverride ?? _selectedSessionId;
     final originWorkspacePath =
         workspacePathOverride ?? _currentSession?.workspacePath;
-
+    // Ignore a repeated tap while this exact submission is awaiting acceptance.
+    if (_optimisticTextMessages.values.any((entry) =>
+        !entry.accepted && entry.sessionId == originSessionId &&
+        entry.message.text == text)) {
+      return false;
+    }
+    final token = _nextTextToken++;
+    final now = DateTime.now().toUtc();
+    final optimistic = _OptimisticTextMessage(
+      sessionId: originSessionId,
+      knownMessageIds: (_currentSession?.id == originSessionId
+              ? _currentSession?.messages ?? const <ChatMessage>[]
+              : _sessionCache[originSessionId]?.messages ?? const <ChatMessage>[])
+          .map((message) => message.id).toSet(),
+      message: ChatMessage(
+        id: 'local-text-$token', text: text, isUser: true,
+        authorType: ChatMessageAuthorType.human,
+        agentId: AgentId.user, agentType: AgentType.human,
+        status: ChatMessageStatus.sending, createdAt: now, updatedAt: now,
+      ),
+    );
+    _optimisticTextMessages[token] = optimistic;
+    _errorText = null;
+    notifyListeners();
     try {
-      _errorText = null;
       final accepted = await _apiClient.sendMessage(
-        text,
-        sessionId: originSessionId,
-        workspacePath: originWorkspacePath,
+        text, sessionId: originSessionId, workspacePath: originWorkspacePath,
         codexRunOptions: codexRunOptions,
       );
-      await _registerAcceptedJob(accepted, originSessionId: originSessionId);
+      if (_disposed) return true;
+      optimistic.accepted = true;
+      optimistic.sessionId = accepted.sessionId.isEmpty
+          ? originSessionId : accepted.sessionId;
+      optimistic.runId = accepted.runId;
+      optimistic.message = optimistic.message.copyWith(
+        status: ChatMessageStatus.completed,
+      );
+      if (_currentSession != null) _reconcileOptimisticText(_currentSession!);
+      await _registerAcceptedJob(accepted,
+          originSessionId: originSessionId, waitForRefresh: false);
       return true;
     } catch (error) {
+      _optimisticTextMessages.remove(token);
       _errorText = 'Failed to send message.\n$error';
       notifyListeners();
       return false;
@@ -1042,7 +1196,15 @@ class ChatController extends ChangeNotifier {
   }
 
   @override
+  void notifyListeners() {
+    if (!_disposed) super.notifyListeners();
+  }
+
+  @override
   void dispose() {
+    _disposed = true;
+    _sessionCache.clear();
+    _optimisticTextMessages.clear();
     _pollTimer?.cancel();
     for (final channel in _jobChannels.values.toList(growable: false)) {
       channel.sink.close();
@@ -1052,6 +1214,7 @@ class ChatController extends ChangeNotifier {
   }
 
   void _ensurePolling() {
+    if (_disposed) return;
     _pollTimer ??= Timer.periodic(
       const Duration(seconds: 2),
       (_) => _pollJobs(),
@@ -1060,6 +1223,7 @@ class ChatController extends ChangeNotifier {
   }
 
   Future<void> _pollJobs() async {
+    if (_disposed) return;
     if (_pollInFlight || _pendingJobs.isEmpty) {
       if (_pendingJobs.isEmpty) {
         _pollTimer?.cancel();
@@ -1077,6 +1241,7 @@ class ChatController extends ChangeNotifier {
       for (final entry in _pendingJobs.entries.toList()) {
         try {
           final result = await _apiClient.getJob(entry.key);
+          if (_disposed) return;
           _pollFailures.remove(entry.key);
           _applyJobSnapshot(result);
           _errorText = null;
@@ -1122,30 +1287,35 @@ class ChatController extends ChangeNotifier {
   }
 
   Future<void> _reloadCurrentSession() async {
-    if (_selectedSessionId == null) {
-      notifyListeners();
+    final sessionId = _selectedSessionId;
+    final selectionRevision = _selectionRevision;
+    if (sessionId == null || _disposed) return;
+    final readRevision = ++_sessionReadRevision;
+    final session = await _apiClient.getSession(
+      sessionId, limit: initialTranscriptMessageLimit,
+    );
+    if (_disposed || selectionRevision != _selectionRevision ||
+        readRevision != _sessionReadRevision ||
+        sessionId != _selectedSessionId) {
       return;
     }
-
-    final session = await _apiClient.getSession(
-      _selectedSessionId!,
-      limit: initialTranscriptMessageLimit,
-    );
     _currentSession = _overlaySessionWithJobSnapshots(
       _mergeWithCurrentSession(session),
     );
+    _cacheSession(_currentSession!);
+    _reconcileOptimisticText(_currentSession!);
     _reconcilePendingJobsForSession(_currentSession);
     _trackPendingJobsFromSession(_currentSession);
-    await _maybeImportGeneratedAgentProfiles(_currentSession);
     _errorText = null;
     _flushDeferredRunNotifications();
     notifyListeners();
+    unawaited(_maybeImportGeneratedAgentProfiles(_currentSession));
   }
 
   Future<void> _restoreCurrentSelectionAfterRefresh() async {
     final selectedSessionId = _selectedSessionId;
-    if (selectedSessionId != null &&
-        _sessions.any((session) => session.id == selectedSessionId)) {
+    // Selected chats can be outside the loaded page or sidebar filter.
+    if (selectedSessionId != null) {
       await _reloadCurrentSession();
       return;
     }
@@ -1164,6 +1334,7 @@ class ChatController extends ChangeNotifier {
   Future<void> _registerAcceptedJob(
     JobStatusResponse accepted, {
     required String? originSessionId,
+    bool waitForRefresh = true,
   }) async {
     final resolvedSessionId = accepted.sessionId.isNotEmpty
         ? accepted.sessionId
@@ -1180,12 +1351,41 @@ class ChatController extends ChangeNotifier {
     _ensureJobStream(acceptedSnapshot.jobId);
     _ensurePolling();
 
-    await refreshSessions();
-
-    if (shouldKeepOriginSessionSelected ||
-        _selectedSessionId == resolvedSessionId) {
+    if (shouldKeepOriginSessionSelected) {
       _selectedSessionId = resolvedSessionId;
-      await _reloadCurrentSession();
+    }
+    notifyListeners();
+    if (waitForRefresh) {
+      await _refreshAfterAcceptedJob(resolvedSessionId);
+    } else {
+      unawaited(_refreshAfterAcceptedJob(resolvedSessionId));
+    }
+  }
+
+  Future<void> _refreshAfterAcceptedJob(String sessionId) async {
+    // Refresh the visible transcript independently of the potentially large list.
+    Future<void> refreshTranscript() async {
+      if (_selectedSessionId == sessionId) await _reloadCurrentSession();
+    }
+    final results = await Future.wait([
+      _backgroundRefresh(refreshTranscript),
+      _backgroundRefresh(refreshSessions),
+    ]);
+    if (_disposed || _selectedSessionId != sessionId) return;
+    if (results.any((success) => !success)) {
+      _errorText = 'Message accepted. Could not refresh the conversation. '
+          'Refresh to synchronize; do not resend.';
+      notifyListeners();
+    }
+  }
+
+  Future<bool> _backgroundRefresh(Future<void> Function() refresh) async {
+    try {
+      if (_disposed) return false;
+      await refresh();
+      return true;
+    } catch (_) {
+      return false;
     }
   }
 
@@ -1260,16 +1460,19 @@ class ChatController extends ChangeNotifier {
   }
 
   void _ensureJobStream(String jobId) {
-    if (_jobChannels.containsKey(jobId)) {
+    if (_disposed || _jobChannels.containsKey(jobId)) {
       return;
     }
 
     try {
       final channel = WebSocketChannel.connect(_apiClient.jobStreamUri(jobId));
       _jobChannels[jobId] = channel;
+      // Connection failure is also delivered through ready, independently of
+      // the stream error; consume it while polling handles recovery.
+      unawaited(channel.ready.catchError((Object _) {}));
       channel.stream.listen(
         (event) {
-          if (event is! String) {
+          if (_disposed || event is! String) {
             return;
           }
           final payload = jsonDecode(event) as Map<String, dynamic>;
@@ -1311,10 +1514,12 @@ class ChatController extends ChangeNotifier {
   }
 
   void _applyJobSnapshot(JobStatusResponse snapshot) {
+    final previous = _jobSnapshots[snapshot.jobId];
+    if (previous != null && previous.sameUpdateAs(snapshot)) return;
     _jobSnapshots[snapshot.jobId] = snapshot;
     _maybeNotifyForTerminalJob(snapshot);
 
-    if (_currentSession == null) {
+    if (_currentSession == null || _currentSession!.id != snapshot.sessionId) {
       notifyListeners();
       return;
     }
@@ -1548,7 +1753,8 @@ class ChatController extends ChangeNotifier {
 
   SessionDetail _mergeWithCurrentSession(SessionDetail freshSession) {
     final currentSession = _currentSession;
-    if (currentSession == null || currentSession.id != freshSession.id) {
+    if (currentSession == null || currentSession.id != freshSession.id ||
+        currentSession.messages.isEmpty) {
       return freshSession;
     }
     final messages = _mergeChronologicalMessages(
@@ -1590,7 +1796,7 @@ class ChatController extends ChangeNotifier {
         return summary;
       }
     }
-    return null;
+    return _apiClient.activityCard(sessionId);
   }
 
   String _resolveSessionTitle(String sessionId, SessionDetail? session) {
@@ -1634,6 +1840,8 @@ class ChatController extends ChangeNotifier {
       return sessionConfiguration.label.trim();
     }
 
+    final cardLabel = sessionSummary?.agentLabels[agentIdToJson(snapshot.agentId)];
+    if (cardLabel != null && cardLabel.trim().isNotEmpty) return cardLabel;
     final summaryConfiguration = sessionSummary?.agentConfiguration.byId(
       snapshot.agentId,
     );
@@ -1726,6 +1934,9 @@ class ChatController extends ChangeNotifier {
     }
 
     final summary = _sessionSummaryForId(sessionId);
+    if (currentSession == null && summary?.isMultiAgent != null) {
+      return summary!.isMultiAgent!;
+    }
     final configuration = currentSession?.agentConfiguration ??
         summary?.agentConfiguration ??
         kDefaultAgentConfiguration;
@@ -2134,4 +2345,19 @@ class _DeferredRunNotification {
 
   final String runId;
   final JobStatusResponse snapshot;
+}
+
+class _OptimisticTextMessage {
+  _OptimisticTextMessage({required this.sessionId, required this.message,
+    required this.knownMessageIds});
+  String? sessionId;
+  ChatMessage message;
+  final Set<String> knownMessageIds;
+  bool accepted = false;
+  String? runId;
+
+  bool isPresentIn(List<ChatMessage> messages) => messages.any((candidate) =>
+      candidate.isUser && candidate.text == message.text &&
+      !knownMessageIds.contains(candidate.id) &&
+      (runId == null || candidate.runId == runId));
 }

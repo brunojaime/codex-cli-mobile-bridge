@@ -1,0 +1,37 @@
+{
+  "backend_tests": "39 passed",
+  "frontend_tests": {
+    "regression": "40 passed; one obsolete old-endpoint expectation corrected and rerun successfully",
+    "recheck": "17 passed",
+    "final_pagination_notifications_selection": "13 passed"
+  },
+  "flutter_analyze": "No issues found",
+  "data_migration": false,
+  "existing_summary_settings_changed": false,
+  "new_chat_summaries_default": false,
+  "api_compatibility": "Existing /sessions response maintained; new /sessions/page, /sessions/changes and /sessions/cards",
+  "activation": "Wait for both prod:8000 and dev:8118 to be idle; require full drain and unchanged source hashes; restart dev then prod; publish web after verification",
+  "android": "Shared Flutter implementation updated; no APK published or installed",
+  "files": [
+    "backend/app/api/routes.py",
+    "backend/app/api/schemas.py",
+    "backend/app/api/session_list_routes.py",
+    "backend/app/application/services/message_service.py",
+    "backend/app/domain/repositories/chat_repository.py",
+    "backend/app/domain/session_listing.py",
+    "backend/app/infrastructure/persistence/sqlite_chat_repository.py",
+    "frontend/mobile_app/lib/src/models/chat_session_summary.dart",
+    "frontend/mobile_app/lib/src/screens/chat_screen.dart",
+    "frontend/mobile_app/lib/src/services/api_client.dart",
+    "frontend/mobile_app/lib/src/state/chat_controller.dart",
+    "frontend/mobile_app/test/bridge_performance_test.dart",
+    "frontend/mobile_app/test/chat_controller_initialize_test.dart",
+    "frontend/mobile_app/test/new_chat_picker_test.dart",
+    "frontend/mobile_app/test/session_pagination_test.dart",
+    "scripts/activate_history_efficiency.py",
+    "tests/test_history_activation.py",
+    "tests/test_session_listing.py"
+  ],
+  "web_build": "passed",
+  "web_main_sha256": "946a90b459361ab7ae98e84a308fd33398ed4514e126793c054a9f56f3856685"
+}
