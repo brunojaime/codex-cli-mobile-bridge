@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.app.api.routes import ensure_dev_stage_chat_run, get_container, router
 from backend.app.api.quality_routes import router as quality_router
 from backend.app.api.agent_launch_routes import router as agent_launch_router
+from backend.app.api.meeting_intake_routes import router as meeting_intake_router
 from backend.app.application.services.message_service import MaintenanceModeError
 from backend.app.container import AppContainer, build_container
 from backend.app.infrastructure.config.settings import Settings
@@ -32,6 +33,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(quality_router, prefix="/api/v1")
     app.include_router(agent_launch_router)
     app.include_router(agent_launch_router, prefix="/api/v1")
+    app.include_router(meeting_intake_router)
+    app.include_router(meeting_intake_router, prefix="/api/v1")
     return app
 
 
