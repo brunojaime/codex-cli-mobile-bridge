@@ -1848,7 +1848,9 @@ class ChatController extends ChangeNotifier {
     if (previous != null &&
         ((previous.isTerminal && !snapshot.isTerminal) ||
             (previous.updatedAt != null && snapshot.updatedAt != null &&
-                snapshot.updatedAt!.isBefore(previous.updatedAt!)))) return;
+                snapshot.updatedAt!.isBefore(previous.updatedAt!)))) {
+      return;
+    }
     _jobSnapshots[snapshot.jobId] = snapshot;
     _maybeNotifyForTerminalJob(snapshot);
 

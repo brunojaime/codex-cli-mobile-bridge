@@ -1011,8 +1011,8 @@ void main() {
           _message(
             id: 'user-a',
             text:
-                'User-authored note that should still be individually collapsible.' +
-                    '\nline' * 12,
+                'User-authored note that should still be individually collapsible.'
+                '${'\nline' * 12}',
             isUser: true,
             authorType: ChatMessageAuthorType.human,
             agentId: AgentId.user,
@@ -1020,11 +1020,11 @@ void main() {
           ),
           _message(
             id: 'assistant-a',
-            text: 'First visible message' + '\nline' * 12,
+            text: 'First visible message${'\nline' * 12}',
           ),
           _message(
             id: 'assistant-b',
-            text: 'Second visible message' + '\nline' * 12,
+            text: 'Second visible message${'\nline' * 12}',
           ),
         ],
       ),
