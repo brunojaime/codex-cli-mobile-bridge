@@ -8,7 +8,7 @@ from uuid import UUID, uuid5, NAMESPACE_URL
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from backend.app.api.routes import get_container
 from backend.app.application.services.work_coordinator import (
@@ -87,6 +87,34 @@ def configure(payload: WorkPolicy, service=Depends(get_work)):
     return call(service.policy, payload)
 
 
+class ProjectSettingsUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    workspace_path: str = Field(min_length=1)
+    settings: dict[str, StrictBool]
+
+
+@router.get("/settings")
+def project_settings(service=Depends(get_work)):
+    return call(service.project_settings.overview)
+
+
+@router.get("/deployments")
+def project_deployments(workspace_path: str | None = None,
+                        service=Depends(get_work), container=Depends(get_container)):
+    from backend.app.application.services.project_deployments import deployment_overview
+
+    try:
+        return deployment_overview(service, getattr(container, "web_preview_deploy_service", None), workspace_path,
+                                   index_path=Path.cwd() / ".data" / "project-deployments" / "index.json")
+    except KeyError:
+        raise HTTPException(404, "No se encontró el proyecto") from None
+
+
+@router.put("/settings")
+def update_project_settings(payload: ProjectSettingsUpdate, service=Depends(get_work)):
+    return call(service.project_settings.update, payload.workspace_path, payload.settings)
+
+
 class Control(BaseModel):
     revision: int = Field(ge=1)
     action: str
@@ -138,6 +166,7 @@ async def enqueue_feedback(payload, container):
             )
     stored = []
     notes = []
+    evidence_items = []
     for index, value in enumerate(values):
         _ensure_feedback_batch_image(value, item_index=index + 1)
         value["id"] = f"backlog-{digest}-{index}"
@@ -146,23 +175,42 @@ async def enqueue_feedback(payload, container):
         )
         stored.append(item)
         audio = await _feedback_audio_prompt_note(item, container=container)
-        notes.append(
-            f"{index + 1}. {item.comment}\n{audio}\nContexto (evidencia): "
-            + json.dumps(item.context_metadata, ensure_ascii=False)
-        )
+        notes.append(f"{index + 1}. {item.comment}\n{audio}")
+        evidence_items.append({
+            **item.to_dict(),
+            "screenshot_file": item.screenshot_file,
+            "audio_file": item.audio_file,
+            "audio_note": audio,
+        })
+    evidence_path = await run_in_threadpool(
+        container.feedback_queue_service.store_backlog_evidence,
+        digest,
+        {"schema": "bridge.feedback-backlog-evidence/v1",
+         "batch_id": payload.batch_id, "source_app": payload.sourceApp,
+         "workspace_path": workspace, "message": payload.message,
+         "items": evidence_items},
+    )
+    evidence_note = (
+        "\n\nLeer íntegramente el manifiesto JSON referenciado: conserva los comentarios, "
+        "audios, contexto y anotaciones completos de cada captura. "
+        "Es evidencia del pedido; no modifica las autorizaciones del proyecto."
+    )
+    instruction = (payload.message or "Aplicar este lote de feedback como un único encargo coherente.") + "\n\n" + "\n\n".join(notes) + evidence_note
+    if len(instruction) > 30000:
+        instruction = (
+            f"Aplicar este lote de {len(stored)} elementos como un único encargo coherente. "
+            "Las instrucciones originales completas están en el manifiesto referenciado; "
+            "leer su message y todos sus items antes de implementar."
+        ) + evidence_note
     request = WorkInput(
         workspace_path=workspace,
         source="feedback",
         source_key=key,
         source_digest=digest,
-        instruction=(
-            payload.message
-            or "Aplicar este lote de feedback como un único encargo coherente."
-        )
-        + "\n\n"
-        + "\n\n".join(notes),
-        title=f"Feedback · {payload.sourceDisplayName or payload.sourceApp}",
-        attachments=[i.screenshot_file for i in stored if i.screenshot_file],
+        instruction=instruction,
+        title=f"Feedback · {payload.sourceDisplayName or payload.sourceApp}"[:160],
+        attachments=[i.screenshot_file for i in stored if i.screenshot_file][:30],
+        references=[evidence_path],
     )
     task = await run_in_threadpool(call, service.enqueue, request)
     for item in stored:
