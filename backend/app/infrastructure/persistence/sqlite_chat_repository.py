@@ -138,6 +138,23 @@ class SqliteChatRepository(ChatRepository):
                 ).fetchall()
         return [self._job_from_row(row) for row in rows]
 
+    def list_summary_jobs(self) -> list[Job]:
+        # Do not read execution prompts, responses or attachment arrays just to
+        # derive lifecycle states. Keep the same status/date validation as jobs.
+        with self._lock, self._connect() as connection:
+            rows = connection.execute("""
+                SELECT id, session_id, '' AS message, user_message_id,
+                       assistant_message_id, provider_session_id, conversation_kind,
+                       agent_id, agent_type, trigger_source, run_id,
+                       NULL AS submission_token, auto_chain_processed,
+                       NULL AS execution_message, '[]' AS image_paths_json,
+                       '[]' AS video_paths_json, status, NULL AS response,
+                       NULL AS error, phase, latest_activity,
+                       created_at, updated_at, completed_at
+                FROM jobs ORDER BY updated_at DESC, id DESC
+            """).fetchall()
+        return [self._job_from_row(row) for row in rows]
+
     def list_jobs_for_session(self, session_id: str) -> list[Job]:
         with self._lock, self._connect() as connection:
             rows = connection.execute(
@@ -584,6 +601,9 @@ class SqliteChatRepository(ChatRepository):
         self._ensure_column(connection, "sessions", "archived_at", "TEXT")
 
         self._ensure_column(connection, "jobs", "execution_message", "TEXT")
+        self._ensure_column(
+            connection, "jobs", "video_paths_json", "TEXT NOT NULL DEFAULT '[]'"
+        )
         self._ensure_column(connection, "jobs", "user_message_id", "TEXT")
         self._ensure_column(connection, "jobs", "assistant_message_id", "TEXT")
         self._ensure_column(connection, "jobs", "provider_session_id", "TEXT")
@@ -1081,6 +1101,7 @@ class SqliteChatRepository(ChatRepository):
             auto_chain_processed=bool(row["auto_chain_processed"]),
             execution_message=row["execution_message"],
             image_paths=json.loads(row["image_paths_json"] or "[]"),
+            video_paths=json.loads(row["video_paths_json"] or "[]"),
             status=self._read_required_enum(
                 row["status"],
                 JobStatus,
@@ -1633,6 +1654,7 @@ class SqliteChatRepository(ChatRepository):
                 auto_chain_processed,
                 execution_message,
                 image_paths_json,
+                video_paths_json,
                 status,
                 response,
                 error,
@@ -1641,7 +1663,7 @@ class SqliteChatRepository(ChatRepository):
                 created_at,
                 updated_at,
                 completed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 session_id = excluded.session_id,
                 message = excluded.message,
@@ -1657,6 +1679,7 @@ class SqliteChatRepository(ChatRepository):
                 auto_chain_processed = excluded.auto_chain_processed,
                 execution_message = excluded.execution_message,
                 image_paths_json = excluded.image_paths_json,
+                video_paths_json = excluded.video_paths_json,
                 status = excluded.status,
                 response = excluded.response,
                 error = excluded.error,
@@ -1682,6 +1705,7 @@ class SqliteChatRepository(ChatRepository):
                 1 if job.auto_chain_processed else 0,
                 job.execution_message,
                 json.dumps(job.image_paths),
+                json.dumps(job.video_paths),
                 job.status.value,
                 job.response,
                 job.error,

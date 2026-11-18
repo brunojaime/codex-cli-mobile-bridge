@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from dataclasses import dataclass
 import sqlite3
 
@@ -16,6 +18,8 @@ from backend.app.application.services.domain_factory_service import (
     DomainFactoryService,
 )
 from backend.app.application.services.dev_pipeline_service import DevPipelineService
+from backend.app.application.services.pipeline_quality_service import PipelineQualityService
+from backend.app.application.services.jev_advisor import JevAdvisor
 from backend.app.application.services.message_service import MessageService
 from backend.app.application.services.project_factory_service import (
     ProjectFactoryService,
@@ -113,10 +117,40 @@ class AppContainer:
     audio_transcriber: AudioTranscriber
     speech_synthesizer: SpeechSynthesizer
     persistence_startup_issue: PersistenceDiagnosticIssue | None = None
+    pipeline_quality_service: PipelineQualityService | None = None
 
 
 def build_container(settings: Settings | None = None) -> AppContainer:
     resolved_settings = settings or Settings()
+    quality_service = (
+        PipelineQualityService(
+            database_path=resolved_settings.pipeline_quality_database,
+            allowed_roots=(
+                [resolved_settings.bridge_stage_worktree_path]
+                if resolved_settings.bridge_stage_worktree_path
+                else [
+                    resolved_settings.projects_root,
+                    resolved_settings.dev_pipeline_runtime_root,
+                    str(Path(resolved_settings.codex_workdir).resolve().parent),
+                ]
+            )
+            + [
+                p.strip()
+                for p in resolved_settings.pipeline_quality_project_roots.split(",")
+                if p.strip()
+            ],
+            advisor=JevAdvisor(
+                api_key=resolved_settings.open_router_api_key.get_secret_value()
+                if resolved_settings.open_router_api_key
+                else None,
+                enabled=resolved_settings.pipeline_quality_jev_enabled,
+                model=resolved_settings.pipeline_quality_jev_model,
+                timeout=resolved_settings.pipeline_quality_jev_timeout_seconds,
+            ),
+        )
+        if resolved_settings.pipeline_quality_enabled
+        else None
+    )
     persistence_startup_issue: PersistenceDiagnosticIssue | None = None
     try:
         repository = _build_repository(resolved_settings)
@@ -132,8 +166,10 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         default_workspace_path=resolved_settings.codex_workdir,
         audio_transcriber=audio_transcriber,
         bridge_environment=resolved_settings.bridge_environment,
+        bridge_api_port=resolved_settings.api_port,
         document_text_char_limit=resolved_settings.document_text_char_limit,
         title_generation_model=resolved_settings.codex_title_generation_model,
+        quality_service=quality_service if resolved_settings.bridge_environment == "dev" else None,
         follow_up_reconcile_interval_seconds=(
             float(resolved_settings.poll_interval_seconds)
             if resolved_settings.poll_interval_seconds > 0
@@ -200,6 +236,9 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         ),
         remote_publication_preflight=cloudflare_preview_doctor_service.doctor,
         async_jobs=resolved_settings.project_factory_async_jobs,
+        quality_service=quality_service.scoped([resolved_settings.projects_root])
+        if quality_service
+        else None,
     )
     project_factory_init_service = ProjectFactoryInitService(
         state_root=resolved_settings.project_factory_state_dir,
@@ -269,9 +308,7 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         promotion_enabled=resolved_settings.dev_pipeline_promotion_enabled,
         app_update_registry_path=resolved_settings.app_update_registry_path,
         app_update_public_base_url=resolved_settings.app_update_public_base_url,
-        app_update_github_token_present=bool(
-            resolved_settings.app_update_github_token
-        ),
+        app_update_github_token_present=bool(resolved_settings.app_update_github_token),
         project_factory_github_owner=resolved_settings.project_factory_github_owner,
         project_factory_github_visibility=(
             resolved_settings.project_factory_github_visibility
@@ -286,6 +323,7 @@ def build_container(settings: Settings | None = None) -> AppContainer:
             resolved_settings.dev_pipeline_prod_update_executor_enabled
         ),
         execution_provider=provider,
+        quality_service=quality_service,
     )
     message_service.set_domain_factory_service(domain_factory_service)
     return AppContainer(
@@ -312,6 +350,7 @@ def build_container(settings: Settings | None = None) -> AppContainer:
         audio_transcriber=audio_transcriber,
         speech_synthesizer=speech_synthesizer,
         persistence_startup_issue=persistence_startup_issue,
+        pipeline_quality_service=quality_service,
     )
 
 

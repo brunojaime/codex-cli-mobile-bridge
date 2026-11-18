@@ -17,6 +17,7 @@ from uuid import uuid4
 
 from backend.app.domain.entities.codex_options import CodexRunOptions
 from backend.app.domain.entities.job import JobStatus
+from backend.app.domain.video_handoff import VIDEO_HANDOFF_HINT, with_video_handoff
 from backend.app.infrastructure.codex_tooling import sync_repo_skills
 from backend.app.infrastructure.execution.base import (
     ExecutionProvider,
@@ -39,7 +40,10 @@ _MOBILE_FILE_CONTEXT = (
 
 
 def _message_with_mobile_file_context(message: str) -> str:
-    return f"{_MOBILE_FILE_CONTEXT}\n\nUser request:\n{message}"
+    context = _MOBILE_FILE_CONTEXT
+    if VIDEO_HANDOFF_HINT not in message:
+        context = with_video_handoff(context)
+    return f"{context}\n\nUser request:\n{message}"
 
 
 def _skill_path(skill_id: str, workdir: str | None) -> Path | None:
@@ -136,9 +140,8 @@ class LocalExecutionProvider(ExecutionProvider):
         self._streaming_mode = streaming_mode
         self._exec_args = exec_args
         self._resume_args = resume_args
-        self._default_reasoning_effort = (
-            default_reasoning_effort or ""
-        ).strip() or None
+        # Batata bridge policy: every execution uses medium, including resumed chats.
+        self._default_reasoning_effort = "medium"
         self._workdir = str(Path(workdir).resolve()) if workdir else None
         self._timeout_seconds = timeout_seconds
         self._states: dict[str, _ExecutionState] = {}
@@ -976,7 +979,11 @@ class LocalExecutionProvider(ExecutionProvider):
         codex_options: CodexRunOptions | None,
     ) -> list[str]:
         normalized = codex_options.normalized() if codex_options is not None else None
-        overrides = list(normalized.config_overrides) if normalized is not None else []
+        overrides = [
+            override
+            for override in (normalized.config_overrides if normalized else ())
+            if override.partition("=")[0].strip() != "model_reasoning_effort"
+        ]
         has_sandbox_override = any(
             override.partition("=")[0].strip() == "sandbox_mode"
             for override in overrides
@@ -1016,18 +1023,13 @@ class LocalExecutionProvider(ExecutionProvider):
             codex_args.extend(["--profile", normalized.profile])
         if normalized is not None and normalized.search_enabled:
             codex_args.append("--search")
-        overrides = list(normalized.config_overrides) if normalized is not None else []
-        if (
-            include_default_reasoning_effort
-            and self._default_reasoning_effort is not None
-            and not any(
-                override.strip().startswith("model_reasoning_effort")
-                for override in overrides
-            )
-        ):
-            overrides.append(
-                f'model_reasoning_effort="{self._default_reasoning_effort}"'
-            )
+        overrides = [
+            override
+            for override in (normalized.config_overrides if normalized else ())
+            if override.partition("=")[0].strip() != "model_reasoning_effort"
+        ]
+        if include_default_reasoning_effort:
+            overrides.append('model_reasoning_effort="medium"')
         for override in overrides:
             codex_args.extend(["-c", override])
         return codex_args
@@ -1045,13 +1047,7 @@ class LocalExecutionProvider(ExecutionProvider):
         self,
         codex_options: CodexRunOptions | None,
     ) -> str | None:
-        normalized = codex_options.normalized() if codex_options is not None else None
-        overrides = normalized.config_overrides if normalized is not None else ()
-        for override in overrides:
-            key, _, value = override.partition("=")
-            if key.strip() != "model_reasoning_effort":
-                continue
-            return value.strip().strip('"').strip("'") or None
+        # Enforce the same policy for app-server turns and CLI executions.
         return self._default_reasoning_effort
 
     def _approval_policy_for_app_server(self, args: str) -> str | None:

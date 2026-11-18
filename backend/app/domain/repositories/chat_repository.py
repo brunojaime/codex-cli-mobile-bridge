@@ -64,6 +64,10 @@ class PersistenceUnavailableError(RuntimeError):
 
 
 class ChatRepository(ABC):
+    def list_summary_jobs(self) -> list[Job]:
+        """Status metadata for the sidebar; implementations may avoid large bodies."""
+        return self.list_jobs()
+
     def is_available(self) -> bool:
         return True
 

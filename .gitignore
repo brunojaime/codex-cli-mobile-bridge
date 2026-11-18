@@ -41,3 +41,5 @@ backend/app/infrastructure/config/app_updates.json.bak.*
 # Local IDE files
 .idea/
 .vscode/
+
+/reports/

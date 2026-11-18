@@ -25,6 +25,7 @@ from backend.app.application.services.project_factory_job_runner import (
     ProjectFactoryRemotePreflight,
     ProjectFactoryRunnerContext,
 )
+from backend.app.application.services.pipeline_quality_service import PipelineQualityService
 from backend.app.application.services.project_factory_manifest_service import (
     DEFAULT_BACKEND,
     DEFAULT_CREATION_GENERATOR_RUNS,
@@ -251,6 +252,7 @@ class ProjectFactoryService:
         runner: ProjectFactoryJobRunner | None = None,
         remote_publication_preflight: ProjectFactoryRemotePreflight | None = None,
         async_jobs: bool = True,
+        quality_service: PipelineQualityService | None = None,
     ) -> None:
         self._projects_root = Path(projects_root).expanduser().resolve()
         self._state_root = (
@@ -279,6 +281,7 @@ class ProjectFactoryService:
         self._runner = runner or ProjectFactoryJobRunner(
             generator_service=self._generator_service,
             remote_preflight=remote_publication_preflight,
+            quality_service=quality_service,
         )
         self._codex_command = codex_command
         self._timeout_seconds = timeout_seconds
