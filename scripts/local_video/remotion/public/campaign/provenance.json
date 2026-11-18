@@ -1,0 +1,52 @@
+{
+  "website": "https://nienfos.com/",
+  "source_scope": "Public home, assets and official brand kit; no private product data",
+  "source_record": "reports/videos/nienfos-10-versiones/source/source.json",
+  "ocean_route_speed": 3,
+  "background_frames_fps": 15,
+  "film_fps": 30,
+  "assets": [
+    {
+      "file": "logo-primary.png",
+      "sha256": "216711c7016c97b713468f721faeb98e6f7cd1fadc26aca784c57847f15c034d"
+    },
+    {
+      "file": "logo-reverse.png",
+      "sha256": "603d3412989a6b2d54b57c02d07ae9720a5838673b1b58935601fe509ddd1ef8"
+    },
+    {
+      "file": "NotoSans-Regular.ttf",
+      "sha256": "89c3c497f618fdaa0b2d1e98fef93582f28c71debd2c4a8cdf41f190ced2909d"
+    },
+    {
+      "file": "NotoSans-Bold.ttf",
+      "sha256": "e83493c945848ecd4a9ad0f6d19164541a0d3e23a9c952304a00a46e00272ac5"
+    },
+    {
+      "file": "chrem-web.webp",
+      "sha256": "9b13c32906d5578864a727579775a5fd5b8cff9149ff7a4f07baa08da74bccff"
+    },
+    {
+      "file": "rd-access.webp",
+      "sha256": "586b26a8464adde3a938c402742ce0c1de83bb5051109f4ac24662e4f2391b9e"
+    },
+    {
+      "file": "chrem-mobile.webp",
+      "sha256": "70cf2361f7bef6a4e0111dc6c436c39725a16c063a25c591ba379f441e179376"
+    },
+    {
+      "file": "rd-mobile.webp",
+      "sha256": "57c8db73d362ead816fd6b06d66dfc690de4f49a8a8647ccbec68c9e22177df1"
+    },
+    {
+      "file": "site-desktop.png",
+      "sha256": "17fef0ee0e31d88e15686bfc019e6c48fd8338a02bdc074f8e4c956bd4263254"
+    },
+    {
+      "file": "whale-original.svg",
+      "source": "nienfos.com/src/components/RightWhales.svelte · original franca-body paths",
+      "sha256": "ae178744aedb8b9008ff364576c891a23431c26e4bd8d355bbd7a6a8f9f1d253"
+    }
+  ],
+  "whale_close_up": "Version 08 reuses original SVG geometry with a larger framing and film-specific motion"
+}

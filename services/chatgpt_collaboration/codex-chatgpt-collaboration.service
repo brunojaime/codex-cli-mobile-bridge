@@ -1,0 +1,19 @@
+[Unit]
+Description=ChatGPT Pro result monitor and durable Codex continuation
+Wants=network-online.target
+After=network-online.target codex-mobile-bridge-backend.service
+
+[Service]
+Type=simple
+User=batata
+WorkingDirectory=/home/batata/Projects/codex-cli-mobile-bridge
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/home/batata/.local/bin:/home/batata/.nvm/versions/node/v22.22.2/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/batata/Projects/codex-cli-mobile-bridge/.venv/bin/python -m services.chatgpt_collaboration.server
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=120
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

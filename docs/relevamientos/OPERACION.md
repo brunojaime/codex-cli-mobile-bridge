@@ -1,5 +1,14 @@
 # Relevamientos de reuniones en Bridge DEV
 
+Actualización del 04/11/2026: el receptor automático está activo y revisa cada
+diez minutos `codex-folder/<proyecto>/relevamientos/<reunión>/`. Admite una
+grabación principal de video o audio MP3, transcripción y resumen desde la Lenovo,
+adjuntos y cierre con `LISTO.json`. Para MP3, declarar `role: "audio"`; se conserva
+el contrato versión 1. La validación real de una entrega de audio sigue pendiente. Ver
+[implementación y activación](automaticos/PROPUESTA.md) y
+[prompt para la Lenovo](automaticos/PROMPT_LENOVO.md). El resto de este documento
+describe el worker anterior bajo demanda, no el flujo nuevo.
+
 Estado al 16/10/2026: **implementación local parcial bajo demanda; sin monitor periódico**.
 No alcanza todavía para subir una reunión y obtener automáticamente sus resultados.
 El pedido original se conserva; la decisión `source-aad59428ebc4ef733184fd9e` reemplaza el monitor por pedidos explícitos de carpeta. Requisito vigente: `REQ-BRIDGE-RELEVAMIENTOS-ON-DEMAND-20261016`.
@@ -159,3 +168,28 @@ Los flags de configuración reducen superficie, pero no sustituyen una prueba de
 Ver [informe y recibos](../../reports/relevamientos-20261016/INFORME.md).
 Los tests usan Drive, ASR y analizador sintéticos; los transportes HTTP se ejercitan con MockTransport.
 La prueba FFmpeg sí usa el binario real sobre tonos generados. Las pruebas de modelos están en `spanish-smoke.json` y `diarization-smoke.json`. No equivalen a comprensión semántica, flujo completo ni subida de resultados reales comprobados.
+# Acceso de lectura de relevamientos en Batata — 03/11/2026
+
+En Ubuntu 24.04, el error `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted`
+impedía leer el repositorio desde los comandos del agente. Se instalaron
+`apparmor-profiles` y `apparmor-utils` y se cargó el perfil de distribución
+`/usr/share/apparmor/extra-profiles/bwrap-userns-restrict` en
+`/etc/apparmor.d/bwrap-userns-restrict` mediante `apparmor_parser -r`.
+La restricción global `kernel.apparmor_restrict_unprivileged_userns=1` permanece activa.
+No se cambió el sandbox de los relevamientos: continúa en `read-only`, sin red,
+sin apps/MCP y con aprobación `never`.
+
+Comprobación reproducible sin modelo, chat ni análisis de la reunión:
+
+```bash
+.venv/bin/python scripts/check_meeting_project_access.py /home/batata/Projects/patsa \
+  --output reports/relevamientos-automaticos/patsa-acceso-verificado.json
+```
+
+El chequeo usa el app-server con las opciones del intake, envía únicamente
+`initialize` y `command/exec`, verifica lectura de instrucciones, handoff y código,
+y comprueba que escritura y red sigan bloqueadas. No envía `thread/start` ni
+`turn/start`. El perfil instalado persiste entre reinicios. El informe anterior
+de Patsa permanece sin modificaciones y su análisis no se volvió a ejecutar.
+
+Referencia: https://learn.chatgpt.com/docs/sandboxing (sección Ubuntu/AppArmor).

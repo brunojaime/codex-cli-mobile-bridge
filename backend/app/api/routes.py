@@ -37,6 +37,7 @@ from fastapi import (
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
+from backend.app.application.services.workspace_execution_order import workspaces_by_execution
 from backend.app.api.session_list_routes import build_session_list_router
 from backend.app.api.project_secret_routes import build_secret_router
 from backend.app.api.schemas import (
@@ -5281,6 +5282,9 @@ async def start_feedback_batch_session(
     payload: FeedbackBatchStartRequest,
     container: AppContainer = Depends(get_container),
 ) -> MessageAcceptedResponse:
+    if payload.execution_mode == 'backlog':
+        from backend.app.api.work_routes import enqueue_feedback
+        return await enqueue_feedback(payload,container)
     quick_ask_record = None
     if payload.quick_ask_id:
         try:
@@ -6310,11 +6314,14 @@ async def post_attachment_message(
 @router.get("/workspaces", response_model=list[WorkspaceResponse])
 async def list_workspaces(
     service: MessageService = Depends(get_message_service),
+    order: str = Query(default="name", pattern="^(name|last_execution)$"),
 ) -> list[WorkspaceResponse]:
-    return [
-        WorkspaceResponse(name=workspace.name, path=workspace.path)
-        for workspace in service.list_workspaces()
-    ]
+    workspaces = service.list_workspaces()
+    if order == "last_execution":
+        ordered = workspaces_by_execution(workspaces, service.list_sessions(), service.list_summary_jobs())
+        return [WorkspaceResponse(name=w.name, path=w.path, last_execution_at=stamp)
+                for w, stamp in ordered]
+    return [WorkspaceResponse(name=w.name, path=w.path) for w in workspaces]
 
 
 @router.get("/agent-profiles", response_model=list[AgentProfileResponse])
@@ -7379,6 +7386,20 @@ def _app_update_apk_proxy_url(
     channel: str,
     preview_url: str | None = None,
 ) -> str:
+    # Explicit opt-in for public releases: Android's system downloader can fetch
+    # and resume independently of the app's private Bridge/VPN connection.
+    config = container.app_update_service.get_config(source_app)
+    if (
+        (config.release_metadata or {}).get("apkDownloadMode") == "public-github"
+        and config.release_channel != "private-install"
+    ):
+        from urllib.parse import quote
+        from backend.app.application.services.app_update_service import _validate_repo
+        repo = _validate_repo(config.repo)
+        return (
+            f"https://github.com/{repo}/releases/download/"
+            f"{quote(release_tag, safe='')}/{quote(asset_name, safe='')}"
+        )
     generated_apk_url = request.url_for(
         "download_app_update_apk",
         source_app=source_app,

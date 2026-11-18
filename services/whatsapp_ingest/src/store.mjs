@@ -52,7 +52,7 @@ export class IntakeStore {
     return false
   }
 
-  async persist({ manifest, mediaBuffer = null, project, receivedAt = new Date() }) {
+  async persist({ manifest, mediaBuffer = null, project, receivedAt = new Date(), ready = true }) {
     const destination = this.destinationFor(project, manifest.message_id, receivedAt)
     if (await this.exists(project, manifest.message_id, receivedAt)) {
       return { duplicate: true, path: destination }
@@ -73,7 +73,7 @@ export class IntakeStore {
       }
 
       if (mediaBuffer) {
-        const filename = `${mediaBasename(manifest.kind)}${extensionForMime(manifest.mime_type)}`
+        const filename = mediaFilename(manifest)
         await writeFile(path.join(temporary, filename), mediaBuffer, { mode: 0o600 })
         materialized.media_file = filename
         materialized.media_bytes = mediaBuffer.length
@@ -84,7 +84,7 @@ export class IntakeStore {
         `${JSON.stringify(materialized, null, 2)}\n`,
         { encoding: 'utf8', mode: 0o600 },
       )
-      await writeFile(path.join(temporary, 'READY'), '', { mode: 0o600 })
+      if (ready) await writeFile(path.join(temporary, 'READY'), '', { mode: 0o600 })
 
       await mkdir(path.dirname(destination), { recursive: true, mode: 0o700 })
       try {
@@ -186,4 +186,14 @@ function validateProjectSlug(project) {
 function safeComponent(value) {
   const safe = String(value || '').replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 160)
   return safe || 'unknown-message'
+}
+
+// Prefix prevents reserved names (READY/message.json) from overwriting intake metadata.
+function mediaFilename(manifest) {
+  if (manifest.kind === 'document' && manifest.original_filename && extensionForMime(manifest.mime_type) !== '.pdf') {
+    const basename = String(manifest.original_filename).split(/[\\/]/).pop()
+    const safe = basename.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-140)
+    if (safe && safe !== '.' && safe !== '..') return `document-original-${safe}`
+  }
+  return `${mediaBasename(manifest.kind)}${extensionForMime(manifest.mime_type)}`
 }

@@ -1087,6 +1087,7 @@ class InstallableAppRegistrationRequest(BaseModel):
 
 
 class FeedbackBatchStartRequest(BaseModel):
+    execution_mode: Literal['execute','backlog'] = Field(default='execute', validation_alias=AliasChoices('execution_mode','executionMode'))
     batch_id: str | None = Field(
         default=None,
         max_length=160,
@@ -3420,6 +3421,7 @@ class CurrentRunExecutionResponse(BaseModel):
 class WorkspaceResponse(BaseModel):
     name: str
     path: str
+    last_execution_at: datetime | None = None
 
 
 class ProjectSecretUpsertRequest(BaseModel):

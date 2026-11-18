@@ -1,0 +1,23 @@
+{
+  "name": "bridge-remotion-video-tools",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "description": "Local Remotion tooling for future video compositions",
+  "scripts": {
+    "check:browser": "node check-browser.mjs",
+    "versions": "remotion versions",
+    "browser:ensure": "remotion browser ensure",
+    "studio": "remotion studio"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.540",
+    "@remotion/renderer": "4.0.540",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "remotion": "4.0.540",
+    "@remotion/bundler": "4.0.540"
+  }
+}

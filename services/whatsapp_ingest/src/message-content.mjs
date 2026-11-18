@@ -72,11 +72,11 @@ export function parseInboundContent(message) {
     }
   }
 
-  if (isPdfDocument(content.documentMessage)) {
+  if (content.documentMessage) {
     return {
       kind: 'document',
       media: content.documentMessage,
-      mimeType: content.documentMessage.mimetype || 'application/pdf',
+      mimeType: content.documentMessage.mimetype || (String(content.documentMessage.fileName || '').toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream'),
       fileName: content.documentMessage.fileName || null,
       seconds: null,
       text,
@@ -119,13 +119,6 @@ export async function downloadInboundMedia(message, parsed, downloadMediaMessage
     throw new Error('WhatsApp media download returned no bytes')
   }
   return buffer
-}
-
-function isPdfDocument(document) {
-  if (!document) return false
-  const mimeType = String(document.mimetype || '').split(';', 1)[0].trim().toLowerCase()
-  const fileName = String(document.fileName || '').trim().toLowerCase()
-  return mimeType === 'application/pdf' || fileName.endsWith('.pdf')
 }
 
 export function parseSharedContacts(message) {

@@ -1,0 +1,46 @@
+{
+  "schema": "nienfos.notifications.consumer/v2",
+  "productId": "codex-mobile",
+  "package": {
+    "version": "0.1.0-dev.9",
+    "artifact": "vendor/nienfos-notifications-0.1.0-dev.9.tgz",
+    "sha256": "022f2822497b87fb3d152da408a894990f4a4325c12ff4c315908e63ef2588c5"
+  },
+  "capabilities": "notifications.capabilities.json",
+  "catalog": "notifications.catalog.json",
+  "environments": {
+    "dev": {
+      "origin": "https://batata-default-string.tail0302c4.ts.net",
+      "state": "configured",
+      "firebaseProjectId": "nienfos-codex-bridge-dev",
+      "androidPackage": "io.github.brunojaime.codexmobilebridge.dev",
+      "webConfigured": false,
+      "androidConfigured": true,
+      "senderConfigured": true,
+      "pushSendsEnabled": false,
+      "deviceEvidence": null
+    },
+    "prod": {
+      "origin": "https://batata-default-string.tail0302c4.ts.net",
+      "state": "configured",
+      "firebaseProjectId": "nienfos-codex-bridge-prod",
+      "androidPackage": "com.example.codex_mobile_frontend",
+      "webConfigured": false,
+      "androidConfigured": true,
+      "senderConfigured": true,
+      "pushSendsEnabled": false,
+      "deviceEvidence": null
+    }
+  },
+  "integration": {
+    "backend": "src/engine.mjs",
+    "web": "docs/platforms.md",
+    "serviceWorker": "docs/platforms.md",
+    "android": "docs/flutter-port.md",
+    "sessionRevocation": "src/engine.mjs",
+    "scheduler": "src/worker.mjs",
+    "migration": "migrations/001-push.sql",
+    "tests": "test/engine.test.mjs"
+  },
+  "guide": "docs/notifications.md"
+}

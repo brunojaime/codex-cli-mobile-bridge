@@ -1,0 +1,143 @@
+COLABORACIÓN CHATGPT PRO — BACKEND BATATA
+
+Servicio: codex-chatgpt-collaboration.service
+API: http://127.0.0.1:8166 (sólo loopback; autenticación por token privado)
+Estado: ~/.local/share/chatgpt-collaboration/backend/tasks.sqlite3
+Token: ~/.local/share/chatgpt-collaboration/backend/api.token (no copiar a chat)
+Bridge de continuación: http://127.0.0.1:8000
+Intervalo:30segundos; no se mantiene una ejecución Codex durante la espera.
+
+La primera parte la hace el Codex que recibió el pedido: preparar solicitud y
+evidencia, publicar en collaboration/<run_id>, enviar UNA vez a ChatGPT Pro
+desde el navegador autenticado y obtener el enlace real. El monitor no controla
+el navegador ni finge haber enviado un mensaje: se registra DESPUÉS del envío.
+
+Registrar y terminar la ejecución actual:
+
+python3 /home/batata/Projects/codex-cli-mobile-bridge/scripts/chatgpt_handoff.py register \
+  --run-folder /home/batata/.local/share/chatgpt-collaboration/runs/RUN_ID \
+  --session-id BRIDGE_SESSION_ID \
+  --chatgpt-url https://chatgpt.com/c/CONVERSACION_REAL \
+  --continue-with 'Leer el resultado y continuar el encargo autorizado' \
+  --timeout 1800
+
+Usar source_session_id del contexto de Bridge cuando esté disponible.
+Alternativa: --thread-id con el ID actual de Codex, o CODEX_THREAD_ID; se resuelve
+contra las sesiones de Bridge sin adivinar por el nombre del workspace.
+Fuera de Bridge se requiere una sesión Bridge explícita: no se inventa una
+continuación en otra conversación ni se utiliza codex resume --last.
+
+No quedarse en sleep en Codex: el comando devuelve un recibo persistido.
+El proceso monitor hace polling GitHub por git/HTTPS con autorización del host,
+sin necesitar un token de API nuevo ni usar endpoints privados de ChatGPT.
+ChatGPT debe escribir result.md y AL FINAL result.json según el contrato de la
+skill. Codex puede exportar una respuesta completa con producer=codex-export;
+esto es recuperación explícita, no lectura automática del navegador por el monitor.
+PROTOCOLO DE RECUPERACIÓN 2
+
+register usa --delivery-mode supervised por defecto. El monitor comprueba GitHub
+como antes; sin entrega verificable, a los 300s (configurable con --recovery-after,
+acotado por --timeout) entrega UNA recuperación al MISMO chat mediante outbox.
+Ese Codex inspecciona el navegador, exporta la respuesta completa si existe como
+codex-export y valida hashes antes de ejecutar el encargo original. Si está
+bloqueado informa el motivo; no reenvía la consulta ni crea otro chat ChatGPT.
+Una nueva ronda solicitada por el encargo sí lleva otra identidad y registro.
+
+--delivery-mode github --write-probe-run-id RUN_PROBADO exige un run completado
+hace menos de24h del MISMO repo/producto/proyecto ChatGPT, con producer chatgpt;
+se revalida su entrega remota. Una exportación de Codex o una prueba de otro repo
+no certifican escritura ChatGPT. Github usa el plazo --timeout para recuperación.
+La prueba no elimina posibles confirmaciones de permisos en futuras rondas.
+
+Estados nuevos: recovery_pending (espera al cierre del turno original),
+recovery_waking (entrega/reconciliación durable), recovery_running (job activo).
+Antes de entregar se verifican workspace, entorno, archivo y run de origen.
+Si avanzó la conversación no se ejecuta el encargo viejo. El monitor encola un
+aviso sólo de estado cuando el chat queda libre; su instrucción explícita es
+informar el bloqueo sin herramientas, cambios ni otra consulta.
+
+API health expone recovery_protocol=2 y attention_required. status y
+.codex-mobile-bridge/chatgpt/RUN_ID/status.json permiten ver el estado sin secretos.
+Los avisos y la recuperación tienen claves estables propias: reinicios, ACK
+perdido y retry reconcilian el MISMO recibo. No se repite automáticamente una
+recuperación fallida ni una consulta a ChatGPT. Si Bridge no está disponible se
+persiste el fallo y se reintenta la entrega dentro del plazo; la notificación
+sólo puede aparecer al recuperar conectividad. No es garantía de disponibilidad.
+
+Los runs terminales anteriores a esta actualización NO se reabren ni notifican
+por instalarla. Para uno autorizado usar recover RUN_ID. El comando no cambia
+el destino ni el encargo original. No usar retry para esconder un envío incierto.
+
+Consultar:
+  python3 scripts/chatgpt_handoff.py health
+  python3 scripts/chatgpt_handoff.py list
+  python3 scripts/chatgpt_handoff.py status RUN_ID
+  python3 scripts/chatgpt_handoff.py cancel RUN_ID
+  python3 scripts/chatgpt_handoff.py retry RUN_ID
+  python3 scripts/chatgpt_handoff.py recover RUN_ID
+
+Estados: waiting, validated, waking, running, completed, needs_attention,
+timed_out, cancelled. El resultado se copia al workspace en
+.codex-mobile-bridge/chatgpt/RUN_ID/, con commit de origen registrado.
+Una respuesta inválida requiere inspección supervisada; otro turno del usuario
+o chat archivado detienen la continuación del encargo antiguo. Una ejecución original aún activa retrasa el despertar.
+Reinicio y pérdida de confirmación se reconcilian con la MISMA clave de la cola
+message-outbox de Bridge, nunca con un segundo identificador de ejecución.
+Una entrega incierta de Bridge requiere inspección; retry no elude ese control.
+
+Cancelar una espera no cancela ChatGPT. Si ya pasó a Bridge, usar los controles
+de Bridge para su trabajo: el monitor no afirma haberlo detenido.
+
+El servicio sobrevive al cierre de terminal/app y arranca con el equipo.
+Batata, Tailscale/GitHub y Bridge deben estar disponibles. No publica productos,
+no habilita investigación profunda ni amplía autorizaciones del proyecto.
+
+Pruebas: tests/test_chatgpt_collaboration.py y pruebas del verificador de la skill.
+
+DEV incorporado 03/11/2026: servicio codex-chatgpt-collaboration-dev.service,
+API8167 → Bridge8118 y backend-dev/ para estado/token. DEV sólo acepta el producto
+codex-cli-mobile-bridge (alias codex-bridge) y su repositorio. Usar
+scripts/chatgpt_handoff.py --environment dev register ...; prepare --environment dev.
+PROD conserva8166 →8000. Ambos validan identidad y rechazan solicitudes de otro
+entorno. prod-environment.conf reproduce el drop-in instalado de prod.
+Ver VALIDACION_DEV.txt para la prueba real del retorno y sus límites.
+
+### Generación todavía en curso (04/11/2026)
+
+Cuando una recuperación observa que ChatGPT sigue generando, sin bloqueo de
+login, permisos o cuota, consultar `status RUN_ID` y registrar antes de salir:
+
+```bash
+python3 scripts/chatgpt_handoff.py --environment prod defer RUN_ID --job-id RECOVERY_JOB_ID
+```
+
+Usar `--environment dev` para DEV. RECOVERY_JOB_ID es `recovery_job_id` del
+estado, no el run_id. El comando autenticado valida entorno, chat y job activo.
+Sólo con recibo exitoso informar próxima revisión y terminar el turno. El monitor
+espera el cierre de ese job, vuelve a `waiting`, sigue comprobando GitHub y agenda
+otra inspección del mismo chat ChatGPT en cinco minutos. Máximo tres inspecciones
+totales y treinta minutos desde la primera recuperación; el límite no se renueva
+con `defer`. Login/permisos/cuota, resultado inválido o límite agotado requieren
+atención. No reenviar la consulta ni usar sleep. Health anuncia
+`generation_wait_supported=true` cuando esta capacidad está instalada.
+
+Cada inspección nueva tiene su propia identidad persistida antes de enviarse;
+reinicios y ACK perdidos reconcilian la misma identidad de esa inspección. Si el
+usuario cambia de turno, se detiene la continuación antigua. La actualización
+no reabre tareas terminales anteriores ni acredita otra prueba real con ChatGPT.
+
+## Lectura remota y cierre reconciliado (04/11/2026)
+
+El monitor consulta primero GitHub API con gh autenticado. Sólo ante error de
+transporte API prueba Git; nunca usa un transporte alternativo para aceptar
+manifests, identidades o hashes inválidos. Un fetch interrumpido puede dejar un
+shallow.lock privado: no inferir por ese error que ChatGPT no terminó.
+
+Si una recuperación ya terminó el trabajo y su estado quedó detenido, inspeccionar
+su respuesta final, informe y pruebas. Para reconocer ese cierre sin ejecutar
+otra vez, usar `chatgpt_handoff.py --environment prod reconcile RUN_ID --job-id JOB_ID`
+(o dev según corresponda). Se exige job original de continuación/recuperación,
+estado completed, mismo chat y resultado final revalidado en remoto. No basta que
+el job haya terminado sin resultado ni que haya una propuesta pendiente de aplicar.
+El cierre deja closure_kind=operator_reconciled y completion_job_id; no encola
+mensajes ni retoma el encargo. No usar retry/recover para reconocer trabajo ya hecho.

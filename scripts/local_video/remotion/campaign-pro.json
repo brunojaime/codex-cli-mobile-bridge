@@ -1,0 +1,498 @@
+[
+  {
+    "id": "01",
+    "title": "La portada cobra vida",
+    "focus": "Portada real de nienfos.com y sus ballenas",
+    "accent": "#a7c7ce",
+    "scenes": [
+      {
+        "layout": "hero",
+        "lines": [
+          "Tu negocio.",
+          "Nuestro punto",
+          "de partida."
+        ],
+        "label": "Diseño y desarrollo",
+        "seconds": 3.5
+      },
+      {
+        "layout": "ocean",
+        "lines": [
+          "Webs y software",
+          "pensados para vos."
+        ],
+        "label": "La identidad de Nienfos",
+        "seconds": 3.0
+      },
+      {
+        "layout": "services",
+        "lines": [
+          "Diseñamos.",
+          "Desarrollamos.",
+          "Conectamos."
+        ],
+        "label": "Tecnología a medida",
+        "seconds": 3.5
+      },
+      {
+        "layout": "close",
+        "lines": [
+          "Demos el",
+          "próximo paso."
+        ],
+        "seconds": 3.0
+      }
+    ]
+  },
+  {
+    "id": "02",
+    "title": "Que te conozcan. Y te elijan.",
+    "focus": "Webs institucionales y catálogos",
+    "accent": "#a7c7ce",
+    "scenes": [
+      {
+        "layout": "type",
+        "lines": [
+          "Tu marca",
+          "merece verse",
+          "así de bien."
+        ],
+        "label": "Presencia digital",
+        "seconds": 2.5
+      },
+      {
+        "layout": "browser",
+        "asset": "chrem-web.webp",
+        "lines": [
+          "Una web para",
+          "conectar."
+        ],
+        "label": "Proyecto real · Chrem Propiedades",
+        "seconds": 3.5
+      },
+      {
+        "layout": "tiles",
+        "lines": [
+          "Del interés",
+          "a la consulta."
+        ],
+        "items": [
+          "Web institucional",
+          "Catálogo digital",
+          "Diseño claro"
+        ],
+        "light": true,
+        "seconds": 3.0
+      },
+      {
+        "layout": "close",
+        "lines": [
+          "Que te conozcan.",
+          "Y te elijan."
+        ],
+        "seconds": 3.0
+      }
+    ]
+  },
+  {
+    "id": "03",
+    "title": "Tu gestión, en su lugar",
+    "focus": "Aplicaciones y plataformas de gestión a medida",
+    "accent": "#a7c7ce",
+    "scenes": [
+      {
+        "layout": "type",
+        "lines": [
+          "Tu operación,",
+          "más simple."
+        ],
+        "label": "Software para tu forma de trabajar",
+        "items": [
+          "Clientes",
+          "Tareas",
+          "Información"
+        ],
+        "seconds": 3.0
+      },
+      {
+        "layout": "tiles",
+        "lines": [
+          "Todo en",
+          "un mismo lugar."
+        ],
+        "items": [
+          "Tu equipo",
+          "Tu operación",
+          "Tu aplicación"
+        ],
+        "light": true,
+        "seconds": 3.0
+      },
+      {
+        "layout": "browser",
+        "asset": "rd-access.webp",
+        "lines": [
+          "Software para",
+          "tu forma de",
+          "trabajar."
+        ],
+        "label": "Consultora RD · acceso público",
+        "seconds": 3.5
+      },
+      {
+        "layout": "close",
+        "lines": [
+          "Menos vueltas.",
+          "Más claridad."
+        ],
+        "seconds": 3.0
+      }
+    ]
+  },
+  {
+    "id": "04",
+    "title": "Conectá lo que ya usás",
+    "focus": "Integración y automatización de herramientas",
+    "accent": "#a7c7ce",
+    "scenes": [
+      {
+        "layout": "network",
+        "lines": [
+          "Tus herramientas.",
+          "Conectadas."
+        ],
+        "label": "Integración y automatización",
+        "seconds": 3.0
+      },
+      {
+        "layout": "type",
+        "lines": [
+          "Menos tareas",
+          "repetidas."
+        ],
+        "label": "Simplificamos lo cotidiano",
+        "light": true,
+        "seconds": 2.5
+      },
+      {
+        "layout": "flow",
+        "lines": [
+          "Más tiempo para",
+          "lo que importa."
+        ],
+        "items": [
+          "Conectar",
+          "Simplificar",
+          "Avanzar"
+        ],
+        "seconds": 3.0
+      },
+      {
+        "layout": "close",
+        "lines": [
+          "Hacé espacio",
+          "para lo que sigue."
+        ],
+        "seconds": 3.0
+      }
+    ]
+  },
+  {
+    "id": "05",
+    "title": "Cerca, en cada etapa",
+    "focus": "Escucha, diseño colaborativo y acompañamiento",
+    "accent": "#a7c7ce",
+    "scenes": [
+      {
+        "layout": "type",
+        "lines": [
+          "El primer paso:",
+          "escucharte."
+        ],
+        "label": "Empezamos por escucharte",
+        "seconds": 3.0
+      },
+      {
+        "layout": "step",
+        "number": "01",
+        "lines": [
+          "Entendemos",
+          "tu negocio."
+        ],
+        "label": "Acordamos un alcance claro",
+        "light": true,
+        "seconds": 2.5
+      },
+      {
+        "layout": "step",
+        "number": "02",
+        "lines": [
+          "Le damos forma.",
+          "Con vos."
+        ],
+        "label": "Ves avances y probás la solución",
+        "seconds": 2.5
+      },
+      {
+        "layout": "step",
+        "number": "03",
+        "lines": [
+          "Seguimos cerca."
+        ],
+        "label": "Para ajustar y mejorar",
+        "light": true,
+        "seconds": 2.5
+      },
+      {
+        "layout": "close",
+        "lines": [
+          "Diseño. Desarrollo.",
+          "Acompañamiento."
+        ],
+        "seconds": 3.0
+      }
+    ]
+  },
+  {
+    "id": "06",
+    "title": "Tres formas de avanzar",
+    "focus": "Las tres líneas de servicio de Nienfos",
+    "accent": "#a7c7ce",
+    "scenes": [
+      {
+        "layout": "type",
+        "lines": [
+          "¿Qué te gustaría",
+          "hacer mejor?"
+        ],
+        "label": "Empecemos por tu negocio",
+        "light": true,
+        "seconds": 2.5
+      },
+      {
+        "layout": "service",
+        "number": "01",
+        "lines": [
+          "Que te",
+          "encuentren."
+        ],
+        "label": "Webs institucionales · Catálogos",
+        "seconds": 2.5
+      },
+      {
+        "layout": "service",
+        "number": "02",
+        "lines": [
+          "Ordenar",
+          "tu gestión."
+        ],
+        "label": "Aplicaciones · Plataformas",
+        "light": true,
+        "seconds": 2.5
+      },
+      {
+        "layout": "service",
+        "number": "03",
+        "lines": [
+          "Conectar",
+          "tus sistemas."
+        ],
+        "label": "Integración · Automatización",
+        "seconds": 2.5
+      },
+      {
+        "layout": "close",
+        "lines": [
+          "Tu necesidad.",
+          "La solución justa."
+        ],
+        "seconds": 3.0
+      }
+    ]
+  },
+  {
+    "id": "07",
+    "title": "Trabajo que se ve",
+    "focus": "Casos públicos Chrem Propiedades y Consultora RD",
+    "accent": "#a7c7ce",
+    "scenes": [
+      {
+        "layout": "type",
+        "lines": [
+          "Ideas que ya",
+          "son proyectos."
+        ],
+        "label": "Nuestro trabajo",
+        "seconds": 2.5
+      },
+      {
+        "layout": "portfolio",
+        "asset": "chrem-web.webp",
+        "mobile": "chrem-mobile.webp",
+        "lines": [
+          "Chrem",
+          "Propiedades."
+        ],
+        "label": "Web inmobiliaria · Catálogo digital",
+        "light": true,
+        "seconds": 3.5
+      },
+      {
+        "layout": "portfolio",
+        "asset": "rd-access.webp",
+        "mobile": "rd-mobile.webp",
+        "lines": [
+          "Consultora RD."
+        ],
+        "label": "Plataforma de gestión · Acceso público",
+        "seconds": 3.5
+      },
+      {
+        "layout": "close",
+        "lines": [
+          "Conocé nuestro",
+          "trabajo."
+        ],
+        "seconds": 3.0
+      }
+    ]
+  },
+  {
+    "id": "08",
+    "title": "Una identidad con profundidad",
+    "focus": "Ballenas y paisaje auténtico de la portada web",
+    "accent": "#a7c7ce",
+    "scenes": [
+      {
+        "layout": "ocean",
+        "lines": [
+          "Una mirada",
+          "con profundidad."
+        ],
+        "label": "Nienfos · Diseño y desarrollo",
+        "seconds": 3.5
+      },
+      {
+        "layout": "ocean",
+        "lines": [
+          "Diseño claro.",
+          "Tecnología",
+          "a medida."
+        ],
+        "label": "Para tu negocio",
+        "seconds": 3.5
+      },
+      {
+        "layout": "hero",
+        "lines": [
+          "De la idea",
+          "a lo que sigue."
+        ],
+        "label": "Nuestra portada · nienfos.com",
+        "seconds": 3.5
+      },
+      {
+        "layout": "close",
+        "lines": [
+          "Construyamos",
+          "lo que viene."
+        ],
+        "seconds": 3.0
+      }
+    ]
+  },
+  {
+    "id": "09",
+    "title": "Menos vueltas, más claridad",
+    "focus": "Problemas cotidianos y soluciones a medida",
+    "accent": "#a7c7ce",
+    "scenes": [
+      {
+        "layout": "split",
+        "lines": [
+          "Menos vueltas.",
+          "Más claridad."
+        ],
+        "label": "Tu operación puede ser más simple",
+        "seconds": 3.0
+      },
+      {
+        "layout": "stack",
+        "lines": [
+          "Una aplicación",
+          "pensada para vos."
+        ],
+        "label": "Software a medida",
+        "items": [
+          "Clientes",
+          "Procesos",
+          "Equipo"
+        ],
+        "light": true,
+        "seconds": 3.0
+      },
+      {
+        "layout": "network",
+        "lines": [
+          "Información",
+          "que conecta."
+        ],
+        "label": "Herramientas que trabajan juntas",
+        "seconds": 3.0
+      },
+      {
+        "layout": "close",
+        "lines": [
+          "Tecnología",
+          "para avanzar."
+        ],
+        "seconds": 3.0
+      }
+    ]
+  },
+  {
+    "id": "10",
+    "title": "Un recorrido por Nienfos",
+    "focus": "Portada, servicios y casos públicos de nienfos.com",
+    "accent": "#a7c7ce",
+    "scenes": [
+      {
+        "layout": "hero",
+        "lines": [
+          "Esto es",
+          "Nienfos."
+        ],
+        "label": "Webs y software para tu negocio",
+        "seconds": 3.5
+      },
+      {
+        "layout": "services",
+        "lines": [
+          "Tu web.",
+          "Tu gestión.",
+          "Tus herramientas."
+        ],
+        "label": "Una solución bien hecha",
+        "light": true,
+        "seconds": 3.0
+      },
+      {
+        "layout": "duo",
+        "lines": [
+          "Proyectos",
+          "con nombre propio."
+        ],
+        "label": "Chrem Propiedades + Consultora RD",
+        "seconds": 3.5
+      },
+      {
+        "layout": "close",
+        "lines": [
+          "Contanos qué",
+          "tenés en mente."
+        ],
+        "seconds": 3.0
+      }
+    ]
+  }
+]

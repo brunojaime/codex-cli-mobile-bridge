@@ -1,0 +1,39 @@
+COLABORACIÓN CHATGPT — BRIDGE DEV — 03/11/2026
+
+Servicio habilitado: codex-chatgpt-collaboration-dev.service
+API: 127.0.0.1:8167; callback: 127.0.0.1:8118
+Estado/token exclusivos: ~/.local/share/chatgpt-collaboration/backend-dev/
+PROD: API8166, callback8000, backend/. Identidad de entorno comprobada por ambos.
+No se reiniciaron los backends Bridge de prod ni dev; sólo los monitores propios.
+
+DEV fijo al producto codex-cli-mobile-bridge, alias codex-bridge.
+GitHub: brunojaime/codex-cli-mobile-bridge
+ChatGPT: https://chatgpt.com/g/g-p-6aea4404bac4819180e6443dc3f2a5d4/project
+Rechaza otro producto, repo, origen Git del workspace o identidad de backend.
+CLI --environment dev. Hereda BRIDGE_ENVIRONMENT=dev y reconoce el stage dev;
+la ruta conocida se conserva en dev-routing.json para no caer en prod sin dev.
+
+Pruebas: 23 de backend/política y 5 de elección de entorno; 9 de verificador y
+4 de resolución de proyectos. Comprobaciones reales negativas: cliente dev→8166
+rechazado, solicitud dev enviada al monitor prod rechazada antes de encolar,
+prepare dev con repo Peluquerías rechazado antes de consultar.
+
+Prueba real de transporte DEV (FIXTURE sintético, no nueva consulta a ChatGPT):
+Run: dev-backend-smoke-20261103-01
+Rama aislada: collaboration/dev-backend-smoke-20261103-01
+Resultado: c1158cdd604ec10133c639ed0a7f581bba83e8e7
+Productor: codex-export; synthetic_fixture=true. Texto/objetivo/manifiesto
+identifican expresamente que Codex generó el fixture y no proviene de ChatGPT.
+La URL de conversación se usó sólo como dato asociado al proyecto en la prueba.
+No se simuló que ChatGPT hubiera enviado o escrito este resultado.
+Chat DEV: 26fa7fc2-fd51-42a9-bf27-a7e8fa55285b (no existe en prod: 404).
+Semilla DEV_INICIO_OK y continuación DEV_CONTINUACION_OK en el MISMO hilo:
+01a1a357-77df-7e93-bf66-f3938d6dc5b4.
+Job de continuación: 5591af79-f130-468d-a402-e4cf3ce10013.
+Outbox: b7cd883de7f9df409e34fca3c3c89a0cedb86de8bff18dcca06b3145872bb379.
+Estado completed. Sólo una continuación. No se modificó código del producto
+ni se publicaron cambios en main/develop/qa por esta prueba.
+
+Referencia operativa: skill compartida, references/backend.md; política añadida
+al AGENTS del workspace y al AGENTS del stage DEV vigente. El envío inicial a
+ChatGPT y los permisos/login del conector mantienen los límites documentados.

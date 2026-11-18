@@ -1,0 +1,53 @@
+{
+  "schema": "nienfos.notifications.capabilities/v1",
+  "version": "0.1.0-dev.9",
+  "exports": {
+    "transport": "@nienfos/notifications",
+    "worker": "@nienfos/notifications/worker",
+    "web": "@nienfos/notifications/web",
+    "serviceWorker": "@nienfos/notifications/sw",
+    "native": "@nienfos/notifications/native",
+    "center": "@nienfos/notifications/center",
+    "centerD1": "@nienfos/notifications/center-d1"
+  },
+  "supported": [
+    "web-notification-branding",
+    "web-push",
+    "android-fcm",
+    "durable-outbox",
+    "inbox",
+    "shared-read-state",
+    "preferences-by-kind-and-platform",
+    "session-revocation",
+    "resource-reauthorization",
+    "retries",
+    "expiry"
+  ],
+  "consumerOwns": [
+    "events",
+    "recipients",
+    "sessions",
+    "permissions",
+    "resource-authorization",
+    "navigation",
+    "business-transaction",
+    "deployment"
+  ],
+  "notIncluded": [
+    "email-transport",
+    "sms",
+    "whatsapp",
+    "marketing",
+    "guaranteed-delivery",
+    "universal-native-framework-adapter"
+  ],
+  "native": "Ports are framework-neutral; the consumer supplies its FCM SDK, secure storage, permission and UI adapters. An APNs or Expo token is not an FCM token.",
+  "states": [
+    "prepared",
+    "configured",
+    "deployed",
+    "provider-accepted",
+    "device-verified"
+  ],
+  "guide": "docs/notifications.md"
+}

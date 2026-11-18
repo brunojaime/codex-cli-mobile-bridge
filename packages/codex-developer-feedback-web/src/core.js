@@ -49,13 +49,14 @@ export function createItem(config, { screenshot, comment, points, strokes = [], 
   };
 }
 
-export function createBatch(config, items, preset) {
+export function createBatch(config, items, preset, executionMode = 'execute') {
   if (!items.length) throw new Error('Agregá al menos una captura.');
   if (items.some(item => item.sourceApp !== config.sourceApp)) throw new Error('La cola pertenece a otra app.');
   return {
     kind: 'codex.developerFeedbackBatch', version: 1,
     sourceApp: config.sourceApp, sourceDisplayName: config.sourceDisplayName,
-    workflowPresetId: preset, releaseWhenComplete: false, items: items.flatMap(expandFeedback).map(item => ({ ...item, contextMetadata: { ...item.contextMetadata, feedbackInstructions: `Feedback del entorno ${config.environment}. Implementar y validar. No desplegar producción. La publicación requiere autorización específica.` } })),
+    workflowPresetId: preset, releaseWhenComplete: false,
+    ...(executionMode === 'backlog' ? {executionMode, batchId: backlogIdentity(config,items)} : {}), items: items.flatMap(expandFeedback).map(item => ({ ...item, contextMetadata: { ...item.contextMetadata, feedbackInstructions: `Feedback del entorno ${config.environment}. Implementar y validar. No desplegar producción. La publicación requiere autorización específica.` } })),
     // Omit message: the Bridge builds the prompt with comments AND audio transcripts.
   };
 }
@@ -93,16 +94,23 @@ export function expandTrace(item) {
   });
 }
 
-export async function submitBatch(config, items, preset, fetcher = fetch) {
+export async function submitBatch(config, items, preset, fetcher = fetch, executionMode = 'execute') {
   const response = await fetcher(`${bridgeUrl(config.bridgeUrl)}/feedback-batches/start-session`, {
     method: 'POST', credentials: 'omit', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(createBatch(config, items, preset)),
+    body: JSON.stringify(createBatch(config, items, preset, executionMode)),
     signal: AbortSignal.timeout(items.some(item => item.hasAudio || item.voiceNotes?.length) ? 600000 : 60000),
   });
   if (!response.ok) throw new Error(`El Bridge no aceptó el envío (${response.status}). La cola sigue guardada.`);
   const result = await response.json();
-  if (!result.job_id && !result.jobId && !result.batchId && !result.feedback_batch_id) {
+  if (!result.backlogId && !result.job_id && !result.jobId && !result.batchId && !result.feedback_batch_id) {
     throw new Error('El Bridge no confirmó el envío. Revisá Codex Mobile antes de volver a enviarlo.');
   }
   return result;
+}
+
+function backlogIdentity(config,items) {
+  const text = JSON.stringify([config.sourceApp, config.bridgeUrl, items.map(i=>[i.id,i.comment])]);
+  let first=2166136261, second=5381;
+  for(const character of text) { const unit=character.codePointAt(0); first=Math.imul(first^unit,16777619)>>>0; second=((second*33)^unit)>>>0; }
+  return `feedback-backlog-${first.toString(16)}-${second.toString(16)}`;
 }

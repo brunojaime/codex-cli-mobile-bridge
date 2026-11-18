@@ -44,6 +44,33 @@ def test_absolute_file_uri_and_relative_screenshot(workspace):
     assert result["text"] is None
 
 
+@pytest.mark.parametrize("relative", [False, True])
+def test_malformed_file_authority_is_a_validation_error(workspace, relative):
+    with pytest.raises(SessionFileError) as error:
+        resolve_session_file(
+            str(workspace),
+            "reports/INFORME.md" if relative else "file://[broken/report.md",
+            "file://[broken/report.md" if relative else None,
+        )
+    assert error.value.status_code == 422
+
+
+@pytest.mark.parametrize("endpoint", ["files", "files/content"])
+@pytest.mark.parametrize("parameter", ["path", "relative_to"])
+def test_routes_reject_malformed_file_authorities(workspace, endpoint, parameter):
+    settings = Settings(
+        codex_command="unused", projects_root=str(workspace.parent),
+        codex_workdir=str(workspace), chat_store_backend="memory",
+        audio_transcription_backend="disabled", speech_synthesis_backend="disabled",
+    )
+    with TestClient(create_app(settings)) as client:
+        session = client.post("/sessions", json={"workspace_path": str(workspace)}).json()
+        params = {"path": "reports/INFORME.md", parameter: "file://[broken/report.md"}
+        response = client.get(f"/sessions/{session['id']}/{endpoint}", params=params)
+        assert response.status_code == 422
+        assert response.json()["detail"] == "La referencia al archivo no es válida."
+
+
 @pytest.mark.parametrize(
     "target",
     [

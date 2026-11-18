@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-105 -60 220 120" fill="#315360" stroke="#7f9eaa" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Original Nienfos RightWhales.svelte geometry, enlarged for the film. -->
+  <path d="M-73-3Q-79-18-61-27C-46-35-31-31-17-29C12-31 38-17 54-5L71 1Q82-11 95-10L86 2L97 12Q81 14 71 7C48 23 7 31-28 21Q-61 16-73-3Z" stroke-width="1"/>
+  <path d="M-71-3Q-52-24-36-16Q-26-3-12 9" fill="none" stroke-width=".85" opacity=".8"/>
+  <path d="M-15 12Q-13 33 5 39Q11 31 0 15" stroke-width=".8"/>
+  <path d="M-61-26l4-2m7 0l3 1m-22 14l3-2m5 24l4 1" fill="none" stroke-width="2.1" opacity=".7"/>
+  <circle cx="-53" cy="-1" r="1.2" fill="#91adb7" stroke="none"/>
+  <path d="M-25 20Q-5 29 19 21" fill="none" stroke-width="2.4" opacity=".18"/>
+</svg>

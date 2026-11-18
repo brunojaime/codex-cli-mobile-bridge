@@ -1,3 +1,5 @@
+import { InteractiveIntake } from './interactive-intake.mjs'
+import { PollEcho } from './poll-echo.mjs'
 import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
 import process from 'node:process'
@@ -51,6 +53,8 @@ const communities = new CommunityManager({
   subject: settings.communitySubject,
 })
 
+const pollEcho = new PollEcho({ file: path.join(settings.dataDir, 'poll-echo.json'), recipient: '5491132788446@s.whatsapp.net' })
+const interactive = new InteractiveIntake({ dataDir: settings.dataDir })
 const runtime = createRuntimeState()
 createAdminServer({
   state: runtime,
@@ -58,6 +62,10 @@ createAdminServer({
   port: settings.adminPort,
   logger,
 })
+
+setInterval(() => {
+  if (runtime.connection === 'connected') interactive.tick(activeSocket).catch(() => logger.warn('Interactive intake tick failed; private state retained'))
+}, 2000).unref()
 
 let activeSocket = null
 let starting = false
@@ -103,6 +111,7 @@ async function startSocket() {
         runtime.qrPng = null
         runtime.setConnection('connected', 'Sesión vinculada y escuchando grupos autorizados.')
         await refreshGroups(socket)
+        await pollEcho.start(socket)
       }
 
       if (update.connection === 'close') {
@@ -295,11 +304,13 @@ async function provisionConfiguredGroups(socket, projects, groups) {
 }
 
 async function processMessage(socket, message) {
+  if (await pollEcho.handle(socket, message)) return
+  if (await interactive.handleVote(socket, message)) return
   const groupId = message?.key?.remoteJid
   if (!groupId || message.key.fromMe) return
 
   if (!groupId.endsWith('@g.us')) {
-    await processDirectMessage(message)
+    await processDirectMessage(socket, message)
     return
   }
 
@@ -422,7 +433,7 @@ async function processMessage(socket, message) {
   )
 }
 
-async function processDirectMessage(message) {
+async function processDirectMessage(socket, message) {
   const chatId = message?.key?.remoteJid
   if (!isDirectChat(chatId)) return
   if (await adminGroups.roleForMessage(message) !== 'bruno') {
@@ -434,6 +445,7 @@ async function processDirectMessage(message) {
   }
 
   const parsed = parseInboundContent(message.message)
+  if (await interactive.control(socket, message, parsed?.text)) return
   const directive = parsed?.kind === 'text'
     ? parseDirectProjectDirective(parsed.text)
     : null
@@ -490,7 +502,11 @@ async function processDirectMessage(message) {
     mediaBuffer,
     project: settings.directInboxProject,
     receivedAt,
+    ready: !await interactive.enabled(),
   })
+  if (!result.duplicate && await interactive.enabled()) {
+    await interactive.capture(socket, message, result.path, parsed.text)
+  }
   runtime.capturedMessages += result.duplicate ? 0 : 1
   runtime.recordRecent({
     kind: parsed.kind,

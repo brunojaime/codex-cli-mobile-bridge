@@ -1,0 +1,8 @@
+{
+  "scenes": [
+    {"id": "scene-1", "text": "Cada proyecto empieza con una idea."},
+    {"id": "scene-2", "text": "Una mirada simple para desafíos complejos."},
+    {"id": "scene-3", "text": "De la primera conversación a una solución con sentido."},
+    {"id": "scene-4", "text": "Conversemos sobre lo que viene."}
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "938918311794",
+    "project_id": "nienfos-codex-bridge-prod",
+    "storage_bucket": "nienfos-codex-bridge-prod.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:938918311794:android:720eae92780d87251f4feb",
+        "android_client_info": {
+          "package_name": "com.example.codex_mobile_frontend"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBfE1F31o0soh1XwYbY31NyuAg75-5599I"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,0 +1,23 @@
+{
+  "schema": "codex.push.firebase/v1",
+  "projects": [
+    {
+      "environment": "prod",
+      "projectId": "nienfos-codex-bridge-prod",
+      "androidPackage": "com.example.codex_mobile_frontend",
+      "androidAppId": "1:938918311794:android:720eae92780d87251f4feb",
+      "secretName": "CODEX_PROD_FIREBASE_SERVICE_ACCOUNT_JSON",
+      "senderConfigured": true,
+      "deviceReceived": false
+    },
+    {
+      "environment": "dev",
+      "projectId": "nienfos-codex-bridge-dev",
+      "androidPackage": "io.github.brunojaime.codexmobilebridge.dev",
+      "androidAppId": "1:521070790052:android:2877f24ea755816177ad31",
+      "secretName": "CODEX_DEV_FIREBASE_SERVICE_ACCOUNT_JSON",
+      "senderConfigured": true,
+      "deviceReceived": false
+    }
+  ]
+}

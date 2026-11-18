@@ -63,8 +63,8 @@ test('video formats and captionless default remain video attachments', () => {
     assert.equal(parsed.mimeType, mime)
     assert.equal(extensionForMime(mime), `.${extension}`)
   }
-  assert.equal(parseInboundContent({ documentMessage: { fileName: 'other.exe' } }), null)
-  assert.equal(parseInboundContent({ documentMessage: { fileName: 'other.constructor' } }), null)
+  assert.equal(parseInboundContent({ documentMessage: { fileName: 'other.exe' } }).kind, 'document')
+  assert.equal(parseInboundContent({ documentMessage: { fileName: 'other.constructor' } }).kind, 'document')
 })
 
 test('failed or empty downloads fail before persistence', async () => {

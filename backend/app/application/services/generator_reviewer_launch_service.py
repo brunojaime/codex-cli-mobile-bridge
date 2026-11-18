@@ -6,6 +6,7 @@ from contextlib import contextmanager
 import fcntl
 import hashlib
 import json
+import re
 from pathlib import Path
 import sqlite3
 from uuid import UUID, uuid5, NAMESPACE_URL
@@ -26,13 +27,29 @@ class GeneratorReviewerLaunch(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     source_session_id: UUID
-    source_message_id: UUID
+    # Mobile outbox messages use deterministic client-intake IDs. Keep the
+    # original identifier so source membership and idempotency still match.
+    source_message_id: str = Field(min_length=1, max_length=200)
     title: str = Field(min_length=1, max_length=200)
     generator_prompt: str = Field(min_length=1, max_length=12_000)
     reviewer_prompt: str = Field(min_length=1, max_length=12_000)
     kickoff: str = Field(min_length=1, max_length=10_000)
     generator_turns: int = Field(default=25, ge=1, le=2**63 - 1, strict=True)
     reviewer_turns: int = Field(default=25, ge=1, le=2**63 - 1, strict=True)
+
+    @field_validator("source_message_id", mode="before")
+    @classmethod
+    def valid_source_message_id(cls, value) -> str:
+        if isinstance(value, UUID):
+            return str(value)
+        if not isinstance(value, str):
+            raise ValueError("El identificador del mensaje debe ser texto")
+        if re.fullmatch(r"client-intake-[a-f0-9]{64}", value):
+            return value
+        try:
+            return str(UUID(value))
+        except ValueError as exc:
+            raise ValueError("Se requiere UUID o client-intake con SHA-256 válido") from exc
 
     @field_validator("title", "generator_prompt", "reviewer_prompt", "kickoff")
     @classmethod

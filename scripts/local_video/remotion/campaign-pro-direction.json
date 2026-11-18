@@ -1,0 +1,306 @@
+{
+  "revision": "profesional-02",
+  "audio": "none",
+  "source_recipe": "campaign-pro.json",
+  "direction": {
+    "palette": [
+      "#142a32",
+      "#f4f6f5",
+      "#a7c7ce",
+      "#b99552"
+    ],
+    "type": "Noto Sans original de Nienfos",
+    "transitions": "15 fotogramas de barrido superpuesto; la escena previa continúa debajo",
+    "movement": [
+      "tipografía por línea con desaceleración",
+      "cámara y perspectiva en proyectos reales",
+      "paneo y acercamiento en océano",
+      "ballenas originales ampliadas y animadas",
+      "líneas editoriales y conexiones con pulsos"
+    ],
+    "pacing": "Escenas de 2,5 a 3,5 segundos; avance legible sin pausas vacías",
+    "safety": "Sin audio, APIs de modelos, publicación ni datos privados"
+  },
+  "stories": [
+    {
+      "id": "01",
+      "title": "La portada cobra vida",
+      "duration": 13.0,
+      "scenes": [
+        {
+          "layout": "hero",
+          "seconds": 3.5,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        },
+        {
+          "layout": "ocean",
+          "seconds": 3.0,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        },
+        {
+          "layout": "services",
+          "seconds": 3.5,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        },
+        {
+          "layout": "close",
+          "seconds": 3.0,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        }
+      ]
+    },
+    {
+      "id": "02",
+      "title": "Que te conozcan. Y te elijan.",
+      "duration": 12.0,
+      "scenes": [
+        {
+          "layout": "type",
+          "seconds": 2.5,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        },
+        {
+          "layout": "browser",
+          "seconds": 3.5,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        },
+        {
+          "layout": "tiles",
+          "seconds": 3.0,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        },
+        {
+          "layout": "close",
+          "seconds": 3.0,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        }
+      ]
+    },
+    {
+      "id": "03",
+      "title": "Tu gestión, en su lugar",
+      "duration": 12.5,
+      "scenes": [
+        {
+          "layout": "type",
+          "seconds": 3.0,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        },
+        {
+          "layout": "tiles",
+          "seconds": 3.0,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        },
+        {
+          "layout": "browser",
+          "seconds": 3.5,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        },
+        {
+          "layout": "close",
+          "seconds": 3.0,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        }
+      ]
+    },
+    {
+      "id": "04",
+      "title": "Conectá lo que ya usás",
+      "duration": 11.5,
+      "scenes": [
+        {
+          "layout": "network",
+          "seconds": 3.0,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        },
+        {
+          "layout": "type",
+          "seconds": 2.5,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        },
+        {
+          "layout": "flow",
+          "seconds": 3.0,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        },
+        {
+          "layout": "close",
+          "seconds": 3.0,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        }
+      ]
+    },
+    {
+      "id": "05",
+      "title": "Cerca, en cada etapa",
+      "duration": 13.5,
+      "scenes": [
+        {
+          "layout": "type",
+          "seconds": 3.0,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        },
+        {
+          "layout": "step",
+          "seconds": 2.5,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        },
+        {
+          "layout": "step",
+          "seconds": 2.5,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        },
+        {
+          "layout": "step",
+          "seconds": 2.5,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        },
+        {
+          "layout": "close",
+          "seconds": 3.0,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        }
+      ]
+    },
+    {
+      "id": "06",
+      "title": "Tres formas de avanzar",
+      "duration": 13.0,
+      "scenes": [
+        {
+          "layout": "type",
+          "seconds": 2.5,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        },
+        {
+          "layout": "service",
+          "seconds": 2.5,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        },
+        {
+          "layout": "service",
+          "seconds": 2.5,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        },
+        {
+          "layout": "service",
+          "seconds": 2.5,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        },
+        {
+          "layout": "close",
+          "seconds": 3.0,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        }
+      ]
+    },
+    {
+      "id": "07",
+      "title": "Trabajo que se ve",
+      "duration": 12.5,
+      "scenes": [
+        {
+          "layout": "type",
+          "seconds": 2.5,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        },
+        {
+          "layout": "portfolio",
+          "seconds": 3.5,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        },
+        {
+          "layout": "portfolio",
+          "seconds": 3.5,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        },
+        {
+          "layout": "close",
+          "seconds": 3.0,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        }
+      ]
+    },
+    {
+      "id": "08",
+      "title": "Una identidad con profundidad",
+      "duration": 13.5,
+      "scenes": [
+        {
+          "layout": "ocean",
+          "seconds": 3.5,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        },
+        {
+          "layout": "ocean",
+          "seconds": 3.5,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        },
+        {
+          "layout": "hero",
+          "seconds": 3.5,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        },
+        {
+          "layout": "close",
+          "seconds": 3.0,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        }
+      ]
+    },
+    {
+      "id": "09",
+      "title": "Menos vueltas, más claridad",
+      "duration": 12.0,
+      "scenes": [
+        {
+          "layout": "split",
+          "seconds": 3.0,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        },
+        {
+          "layout": "stack",
+          "seconds": 3.0,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        },
+        {
+          "layout": "network",
+          "seconds": 3.0,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        },
+        {
+          "layout": "close",
+          "seconds": 3.0,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        }
+      ]
+    },
+    {
+      "id": "10",
+      "title": "Un recorrido por Nienfos",
+      "duration": 13.0,
+      "scenes": [
+        {
+          "layout": "hero",
+          "seconds": 3.5,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        },
+        {
+          "layout": "services",
+          "seconds": 3.0,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        },
+        {
+          "layout": "duo",
+          "seconds": 3.5,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        },
+        {
+          "layout": "close",
+          "seconds": 3.0,
+          "reason": "Tiempo de lectura y reconocimiento de imagen; transición superpuesta sin sumar pausa."
+        }
+      ]
+    }
+  ]
+}

@@ -22,3 +22,12 @@ release.
 ## Project secrets
 
 Add or rotate credentials through the chat's **Secrets** panel. They are stored in the workspace `.env`; never ask the user to paste secret values into chat and never print or reveal them.
+
+## Notifications contract
+
+Android push adopts [notifications.consumer.json](services/notifications/notifications.consumer.json), [capabilities](services/notifications/notifications.capabilities.json) and [catalog](services/notifications/notifications.catalog.json). Follow [the integration guide](services/notifications/docs/notifications.md); keep production/dev Firebase isolated and never equate provider acceptance with phone receipt.
+
+
+## Correcciones automáticas del Bridge — 07/11/2026
+
+El usuario eligió corrección de errores, pruebas y publicación en DEV. Usar el coordinador, frontend y backend de Bridge PROD y un checkout separado; DEV designa sólo el destino de publicación de la aplicación. Leer docs/automatic-dev-bugfixes.md. Publicar sólo después de validar, sin cortar trabajos ni mensajes aceptados. No habilita funciones nuevas ni producción.

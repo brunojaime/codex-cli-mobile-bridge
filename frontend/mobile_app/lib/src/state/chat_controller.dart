@@ -14,6 +14,7 @@ import '../models/codex_tooling.dart';
 import '../models/current_run_execution.dart';
 import '../models/job_status_response.dart';
 import '../models/session_detail.dart';
+import '../models/reviewer_lifecycle_state.dart';
 import '../models/workspace.dart';
 import '../models/outbox_entry.dart';
 import '../services/message_outbox.dart';
@@ -95,6 +96,8 @@ class ChatController extends ChangeNotifier {
   final Map<String, int> _pollFailures = <String, int>{};
   final Map<String, JobStatusResponse> _jobSnapshots =
       <String, JobStatusResponse>{};
+  final Set<String> _notifiedRuns = <String>{};
+  bool _flushingNotifications = false;
   final Map<String, _DeferredRunNotification> _deferredRunNotifications =
       <String, _DeferredRunNotification>{};
   final Map<String, WebSocketChannel> _jobChannels =
@@ -1395,7 +1398,17 @@ class ChatController extends ChangeNotifier {
 
   Future<void> _pollJobs() async {
     if (_disposed) return;
-    if (_pollInFlight || _pendingJobs.isEmpty) {
+    if (_pollInFlight) return;
+    if (_pendingJobs.isEmpty && _deferredRunNotifications.isNotEmpty) {
+      _pollInFlight = true;
+      try {
+        await refreshSessions();
+        _flushDeferredRunNotifications();
+      } catch (_) { /* Retry on the next poll. */ }
+      finally { _pollInFlight = false; }
+      return;
+    }
+    if (_pendingJobs.isEmpty) {
       if (_pendingJobs.isEmpty) {
         _pollTimer?.cancel();
         _pollTimer = null;
@@ -1827,48 +1840,88 @@ class ChatController extends ChangeNotifier {
       return;
     }
 
-    final runId = _runIdForJob(snapshot);
-    if (runId != null && _isRunStillActive(snapshot.sessionId, runId)) {
-      _deferredRunNotifications[runId] = _DeferredRunNotification(
-        runId: runId,
-        snapshot: snapshot,
-      );
-      return;
-    }
-
-    if (runId != null && _wasRunMultiAgent(snapshot.sessionId, runId)) {
-      final notification = _buildRunTerminalNotification(snapshot, runId);
-      unawaited(_notificationService.showChatCompleted(notification));
-      return;
-    }
-
-    final notification = _buildTerminalNotification(snapshot);
-    unawaited(_notificationService.showChatCompleted(notification));
+    final knownRunId = _runIdForJob(snapshot);
+    final runId = knownRunId ?? 'job:session:${snapshot.sessionId}';
+    if (knownRunId != null && _notifiedRuns.contains(runId)) return;
+    _deferredRunNotifications[runId] = _DeferredRunNotification(
+      runId: runId, snapshot: snapshot);
+    // Keep checking even when the last tracked job ends before the backend
+    // closes the run or schedules the next Generator/Reviewer stage.
+    _pollTimer ??= Timer.periodic(const Duration(seconds: 2), (_) => _pollJobs());
+    _flushDeferredRunNotifications();
   }
 
   void _flushDeferredRunNotifications() {
-    if (_deferredRunNotifications.isEmpty) {
-      return;
-    }
+    if (_flushingNotifications || _deferredRunNotifications.isEmpty || _disposed) return;
+    unawaited(_flushConfirmedNotifications());
+  }
 
-    for (final entry in _deferredRunNotifications.entries.toList()) {
-      final deferred = entry.value;
-      if (_isRunStillActive(deferred.snapshot.sessionId, deferred.runId)) {
-        continue;
+  Future<void> _flushConfirmedNotifications() async {
+    _flushingNotifications = true;
+    try {
+      for (final entry in _deferredRunNotifications.entries.toList()) {
+        final deferred = entry.value;
+        try {
+          // A terminal job is not evidence that the orchestration finished.
+          // Read the authoritative session, including its latest reply.
+          final session = await _apiClient.getSession(deferred.snapshot.sessionId,
+              limit: initialTranscriptMessageLimit);
+          if (_disposed) return;
+          if (session.activeAgentRunId != null || session.currentRun?.isActive == true ||
+              session.messages.any((m) => !m.isUser && m.status == ChatMessageStatus.pending) ||
+              {ReviewerLifecycleState.running, ReviewerLifecycleState.queued, ReviewerLifecycleState.waitingOnGenerator}.contains(session.reviewerState) ||
+              _sessions.any((other) => other.workspacePath == session.workspacePath &&
+                  other.id != session.id && (other.hasPendingMessages || other.activeAgentRunId != null))) {
+            continue;
+          }
+          final isRun = !deferred.runId.startsWith('job:');
+          final run = isRun ? _runExecutionForId(session, deferred.runId) : null;
+          if (run?.isActive == true) continue;
+          final pending = _deferredRunNotifications[entry.key] ?? deferred;
+          var snapshot = pending.snapshot;
+          final replies = session.messages.where((m) => !m.isUser && (isRun ? m.runId == deferred.runId : m.jobId == snapshot.jobId) &&
+              m.status != ChatMessageStatus.pending).toList();
+          if (replies.isNotEmpty) {
+            final reply = replies.last;
+            snapshot = snapshot.copyWith(jobId: reply.jobId ?? snapshot.jobId,
+                response: reply.text, status: reply.jobStatus ?? snapshot.status);
+          }
+          if (run?.state == CurrentRunStageState.failed) {
+            snapshot = snapshot.copyWith(status: 'failed', error: snapshot.error ?? snapshot.response);
+          }
+          if ((isRun && _notifiedRuns.contains(deferred.runId)) || run?.state == CurrentRunStageState.cancelled) {
+            _deferredRunNotifications.remove(entry.key);
+            continue;
+          }
+          final target = _notificationTarget(snapshot, session);
+          await _notificationService.showChatCompleted(isRun ? buildRunCompletedNotification(
+              snapshot: snapshot, runId: deferred.runId, workspaceName: session.workspaceName,
+              sessionTitle: session.title, target: target) : _buildTerminalNotification(snapshot, session));
+          if (isRun) _notifiedRuns.add(deferred.runId);
+          if (identical(_deferredRunNotifications[entry.key], pending)) {
+            _deferredRunNotifications.remove(entry.key);
+          }
+        } catch (_) {
+          // Retain the notice and retry after connectivity recovers.
+        }
       }
-      _deferredRunNotifications.remove(entry.key);
-      final notification = _buildRunTerminalNotification(
-        deferred.snapshot,
-        deferred.runId,
-      );
-      unawaited(_notificationService.showChatCompleted(notification));
+    } finally { _flushingNotifications = false; }
+  }
+
+  ChatNotificationTarget _notificationTarget(JobStatusResponse snapshot, SessionDetail? session) {
+    String? messageId;
+    for (final message in session?.messages ?? <ChatMessage>[]) {
+      if (message.jobId == snapshot.jobId) messageId = message.id;
     }
+    return ChatNotificationTarget(server: _apiClient.baseUrl, sessionId: snapshot.sessionId,
+        jobId: snapshot.jobId, workspacePath: session?.workspacePath ??
+            _sessionSummaryForId(snapshot.sessionId)?.workspacePath ?? '', messageId: messageId);
   }
 
   ChatCompletedNotification _buildTerminalNotification(
-    JobStatusResponse snapshot,
+    JobStatusResponse snapshot, [SessionDetail? detail]
   ) {
-    final session = _sessionDetailForId(snapshot.sessionId);
+    final session = detail ?? _sessionDetailForId(snapshot.sessionId);
     final sessionSummary = _sessionSummaryForId(snapshot.sessionId);
     final sessionTitle = _resolveSessionTitle(snapshot.sessionId, session);
     final workspaceName = _resolveWorkspaceName(snapshot.sessionId, session);
@@ -1876,26 +1929,12 @@ class ChatController extends ChangeNotifier {
       snapshot: snapshot,
       workspaceName: workspaceName,
       sessionTitle: sessionTitle,
+      target: _notificationTarget(snapshot, session),
       configuredAgentLabel: _resolveConfiguredAgentLabel(
         snapshot,
         session,
         sessionSummary,
       ),
-    );
-  }
-
-  ChatCompletedNotification _buildRunTerminalNotification(
-    JobStatusResponse snapshot,
-    String runId,
-  ) {
-    final session = _sessionDetailForId(snapshot.sessionId);
-    final sessionTitle = _resolveSessionTitle(snapshot.sessionId, session);
-    final workspaceName = _resolveWorkspaceName(snapshot.sessionId, session);
-    return buildRunCompletedNotification(
-      snapshot: snapshot,
-      runId: runId,
-      workspaceName: workspaceName,
-      sessionTitle: sessionTitle,
     );
   }
 
@@ -2065,61 +2104,6 @@ class ChatController extends ChangeNotifier {
     }
 
     return null;
-  }
-
-  bool _isRunStillActive(String sessionId, String runId) {
-    final currentSession = _sessionDetailForId(sessionId);
-    if (currentSession != null) {
-      if (currentSession.activeAgentRunId == runId) {
-        return true;
-      }
-      final currentRun = currentSession.currentRun;
-      if (currentRun != null &&
-          currentRun.runId == runId &&
-          currentRun.isActive) {
-        return true;
-      }
-      return false;
-    }
-
-    final summary = _sessionSummaryForId(sessionId);
-    return summary?.activeAgentRunId == runId;
-  }
-
-  bool _wasRunMultiAgent(String sessionId, String runId) {
-    final currentSession = _sessionDetailForId(sessionId);
-    if (currentSession != null) {
-      final run = _runExecutionForId(currentSession, runId);
-      if (run != null && run.participantAgentIds.length > 1) {
-        return true;
-      }
-
-      final participantIds = currentSession.messages
-          .where((message) => message.runId == runId)
-          .map((message) => message.agentId)
-          .where((agentId) => agentId != AgentId.user)
-          .toSet();
-      if (participantIds.length > 1) {
-        return true;
-      }
-    }
-
-    final summary = _sessionSummaryForId(sessionId);
-    if (currentSession == null && summary?.isMultiAgent != null) {
-      return summary!.isMultiAgent!;
-    }
-    final configuration = currentSession?.agentConfiguration ??
-        summary?.agentConfiguration ??
-        kDefaultAgentConfiguration;
-    final normalized = configuration;
-    return normalized.preset != AgentPreset.solo &&
-        normalized.agents.any(
-          (agent) =>
-              agent.agentId != AgentId.generator &&
-              agent.agentId != AgentId.user &&
-              agent.enabled &&
-              agent.maxTurns > 0,
-        );
   }
 
   CurrentRunExecution? _runExecutionForId(SessionDetail session, String runId) {

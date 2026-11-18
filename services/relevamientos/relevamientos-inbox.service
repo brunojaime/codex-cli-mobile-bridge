@@ -1,0 +1,18 @@
+[Unit]
+Description=Codex Bridge meeting inbox in Google Drive (every 10 minutes)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/batata/Projects/codex-cli-mobile-bridge
+ExecStart=/home/batata/Projects/codex-cli-mobile-bridge/.venv/bin/python -m services.relevamientos.inbox watch
+Restart=on-failure
+RestartPreventExitStatus=2
+RestartSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,19 @@
+[Unit]
+Description=ChatGPT Pro monitor for Codex Bridge DEV only
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=batata
+WorkingDirectory=/home/batata/Projects/codex-cli-mobile-bridge
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/home/batata/.local/bin:/home/batata/.nvm/versions/node/v22.22.2/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/batata/Projects/codex-cli-mobile-bridge/.venv/bin/python -m services.chatgpt_collaboration.server --state /home/batata/.local/share/chatgpt-collaboration/backend-dev --port 8167 --bridge-url http://127.0.0.1:8118 --bridge-environment dev --required-project codex-cli-mobile-bridge --required-repository brunojaime/codex-cli-mobile-bridge
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=120
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

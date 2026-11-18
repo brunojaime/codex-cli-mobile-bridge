@@ -130,7 +130,7 @@ export function mountFeedback(config) {
       <label id="queue-label">Capturas y recorridos pendientes</label><div id="queue" aria-labelledby="queue-label"></div>
       <label for="preset">Flujo de trabajo</label><select id="preset"><option value="generator_only">Generador</option><option value="generator_reviewer">Generador + revisor</option></select>
       <p class="muted">Conectá Tailscale para enviar. Sólo se envía al tocar «Enviar a Codex».</p>
-      <div class="actions"><button id="send" class="primary" type="button">Enviar a Codex</button></div>
+      <label>Cuándo ejecutar<select id="execution-mode"><option value="execute">Ejecutar ahora</option><option value="backlog">Añadir al backlog</option></select></label><div class="actions"><button id="send" class="primary" type="button">Enviar a Codex</button></div>
       <p id="status" class="status" role="status" aria-live="polite"></p>
     </div></dialog>`;
   document.body.append(host);
@@ -302,10 +302,10 @@ export function mountFeedback(config) {
     if (snapshot || traceDraft) { status('Guardá o descartá la captura o recorrido actual antes de enviar.', true); return; }
     setBusy(true); status('Enviando a Codex…');
     try {
-      const result = await submitBatch(config, items, el('preset').value);
+      const result = await submitBatch(config, items, el('preset').value, fetch, el('execution-mode').value);
       items = [];
       try { await queueStore.save([]); } catch { queueError = true; }
-      if (!disposed) status(`Enviado a Codex. Seguí el trabajo en Codex Mobile.\nReferencia: ${result.batchId || result.feedback_batch_id || result.job_id || result.jobId}${queueError ? '\nNo se pudo limpiar el almacenamiento: no reenvíes estas capturas al recargar.' : ''}`);
+      if (!disposed) status(`${result.backlogId ? 'Guardado en backlog; se ejecutará después del trabajo anterior.' : 'Enviado a Codex. Seguí el trabajo en Codex Mobile.'}\nReferencia: ${result.backlogId || result.batchId || result.feedback_batch_id || result.job_id || result.jobId}${queueError ? '\nNo se pudo limpiar el almacenamiento: no reenvíes estas capturas al recargar.' : ''}`);
     } catch (error) {
       if (!disposed) status(error.name === 'TimeoutError' || error instanceof TypeError
         ? 'No se pudo confirmar el envío. La cola sigue guardada. Revisá en Codex Mobile si llegó antes de reintentar; verificá Tailscale y el Bridge.' : error.message, true);

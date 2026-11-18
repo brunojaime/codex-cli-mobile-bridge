@@ -69,7 +69,13 @@ def main():
                 if config['engine'] == 'chatterbox':
                     from huggingface_hub import snapshot_download
                     from chatterbox.mtl_tts import ChatterboxMultilingualTTS
-                    weights = snapshot_download(config['model'], revision=config['revision'], local_files_only=True)
+                    # Match Chatterbox's loader: the offline cache intentionally
+                    # contains only the selected model, not every repository file.
+                    t3_file = {'v2': 't3_mtl23ls_v2.safetensors',
+                               'v3': 't3_mtl23ls_v3.safetensors'}.get(config['t3_model'], config['t3_model'])
+                    weights = snapshot_download(config['model'], revision=config['revision'], local_files_only=True,
+                        allow_patterns=['ve.pt', t3_file, 's3gen.pt',
+                                        'grapheme_mtl_merged_expanded_v1.json', 'conds.pt', 'Cangjie5_TC.json'])
                     model = ChatterboxMultilingualTTS.from_local(weights, 'cpu', t3_model=config['t3_model'])
                     model.prepare_conditionals(str(ROOT/config['reference']), exaggeration=config['exaggeration'])
                 else:

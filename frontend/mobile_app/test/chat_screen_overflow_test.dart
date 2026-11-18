@@ -271,7 +271,8 @@ void main() {
       matching: find.widgetWithText(FilledButton, 'Save'),
     );
 
-    await tester.tap(find.byKey(const ValueKey<String>('agent-engine-generator-codex')));
+    await tester.tap(
+        find.byKey(const ValueKey<String>('agent-engine-generator-codex')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Claude Code').last);
     await tester.pumpAndSettle();
@@ -288,7 +289,8 @@ void main() {
     await tester.tap(find.byType(AgentStudioStatusButton));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const ValueKey<String>('agent-engine-generator-claude')));
+    await tester.tap(
+        find.byKey(const ValueKey<String>('agent-engine-generator-claude')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Codex').last);
     await tester.pumpAndSettle();
@@ -306,6 +308,40 @@ void main() {
         .cast<Map<String, dynamic>>()
         .firstWhere((agent) => agent['agent_id'] == 'generator');
     expect(generatorPayload.containsKey('model'), isFalse);
+  });
+
+  testWidgets('project actions expose deployments and notifications beside chats', (tester) async {
+    final session = _buildSession(messages: const <ChatMessage>[]);
+    await _pumpChatScreen(tester, session: session, width: 430, height: 932,
+      sidebarWorkspaces: const [Workspace(name: 'Workspace A', path: '/workspace/a')]);
+    await tester.tap(find.byTooltip('Projects'));
+    await tester.pumpAndSettle();
+    expect(find.text('Deploys'), findsOneWidget);
+    expect(find.text('Notificaciones'), findsOneWidget);
+    expect(find.text('Backlog'), findsOneWidget);
+    await tester.tap(find.byTooltip('Project actions for Workspace A'));
+    await tester.pumpAndSettle();
+    expect(find.text('Deploys · Dev / QA / Pro'), findsOneWidget);
+    expect(find.text('Notificaciones del proyecto'), findsOneWidget);
+    expect(find.text('Backlog del proyecto'), findsOneWidget);
+    await tester.tap(find.text('Backlog del proyecto'));
+    await tester.pumpAndSettle();
+    expect(find.text('Workspace A'), findsOneWidget);
+    expect(find.text('Todos los proyectos'), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('global deployments are available without selecting a project', (tester) async {
+    await _pumpChatScreen(tester, session: _buildSession(messages: const <ChatMessage>[]), width: 430, height: 932);
+    await tester.tap(find.byTooltip('More actions'));
+    await tester.pumpAndSettle();
+    expect(find.text('Deploys · Workspace'), findsOneWidget);
+    expect(find.text('Backlog · Workspace'), findsOneWidget);
+    await tester.tap(find.text('Backlog · Workspace'));
+    await tester.pumpAndSettle();
+    expect(find.text('Todos los proyectos'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
   testWidgets('sidebar session tile shows minimal timeline metadata',
@@ -409,40 +445,46 @@ void main() {
     );
   });
 
-  testWidgets('sidebar colors WhatsApp intake titles with their profile color',
-      (WidgetTester tester) async {
-    const whatsappGreen = Color(0xFF25D366);
-    final session = _buildSession(
-      title: 'WhatsApp · Add project indicator',
-      messages: const <ChatMessage>[],
-      agentProfileId: 'whatsapp_intake_planner',
-      agentProfileName: 'WhatsApp Intake',
-      agentProfileColor: '#25D366',
-    );
+  for (final profileId in const [
+    'whatsapp_intake_planner',
+    'whatsapp_intake_conversation',
+    'whatsapp_intake_execution',
+  ]) {
+    testWidgets('sidebar colors $profileId titles with their profile color',
+        (WidgetTester tester) async {
+      const whatsappGreen = Color(0xFF25D366);
+      final session = _buildSession(
+        title: 'WhatsApp · Add project indicator',
+        messages: const <ChatMessage>[],
+        agentProfileId: profileId,
+        agentProfileName: 'WhatsApp Intake',
+        agentProfileColor: '#25D366',
+      );
 
-    await _pumpChatScreen(
-      tester,
-      session: session,
-      apiClient: _ChatScreenOverflowApiClient(session),
-      sidebarWorkspaces: const <Workspace>[
-        Workspace(name: 'Workspace A', path: '/workspace/a'),
-      ],
-    );
+      await _pumpChatScreen(
+        tester,
+        session: session,
+        apiClient: _ChatScreenOverflowApiClient(session),
+        sidebarWorkspaces: const <Workspace>[
+          Workspace(name: 'Workspace A', path: '/workspace/a'),
+        ],
+      );
 
-    tester.state<ScaffoldState>(find.byType(Scaffold)).openDrawer();
-    await tester.pumpAndSettle();
+      tester.state<ScaffoldState>(find.byType(Scaffold)).openDrawer();
+      await tester.pumpAndSettle();
 
-    final title = tester.widget<Text>(
-      find.descendant(
-        of: find.byType(Drawer),
-        matching: find.text(
-          'WhatsApp · Add project indicator',
-          skipOffstage: false,
+      final title = tester.widget<Text>(
+        find.descendant(
+          of: find.byType(Drawer),
+          matching: find.text(
+            'WhatsApp · Add project indicator',
+            skipOffstage: false,
+          ),
         ),
-      ),
-    );
-    expect(title.style?.color, whatsappGreen);
-  });
+      );
+      expect(title.style?.color, whatsappGreen);
+    });
+  }
 
   testWidgets('sidebar session tiles sort by last message and hide metadata',
       (WidgetTester tester) async {

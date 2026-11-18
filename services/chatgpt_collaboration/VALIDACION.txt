@@ -1,0 +1,40 @@
+VALIDACIÓN REAL EN BATATA — 2026-11-03
+
+Servicio instalado, habilitado al arranque y activo en loopback 127.0.0.1:8166.
+Bridge original conservó PID 1829086; no se reinició ni se editaron sus rutas.
+
+15 pruebas de backend aprobadas en Batata (persistencia, idempotencia, pérdida
+ACK, ejecución activa, turno intermedio, cierre real con current_run=null,
+validación, timeout, cancelación, concurrencia y autenticación HTTP).
+9 pruebas del verificador aprobadas. 9 pruebas existentes de outbox aprobadas.
+Unidad systemd verificada con systemd-analyze verify.
+
+Prueba aislada real: backend-smoke-20261103-01
+Repositorio: brunojaime/codex-chatgpt-one-shot-dev
+Rama: collaboration/backend-smoke-20261103-01
+ChatGPT: https://chatgpt.com/c/6aea4106-13b8-83e9-8959-e2eb40be6d3d
+Entrada: f13966aec66f73ba3089dd85f5a89322bcf37013
+Resultado escrito por ChatGPT Pro, NO fixture publicado por Codex:
+3a44a80cce800fcfe0f4e79fd438e48eb687db5e
+Estado final: completed. Productor: chatgpt.
+Bridge chat: 179cb517-2540-4b02-894e-fad51840d8e5
+Provider thread original y continuación: 01a1a30c-6587-7781-9d0c-feb2936201e5
+Job continuación: 8b610f3c-0022-4e06-b6b3-2ff812901899
+Respuesta: CONTINUACION_BACKEND_OK
+Outbox estable: 187ee661adaec04e24fb02e6307a1463d5645bda30d6216b5e55d4229b017905
+
+Se reinició el servicio durante waiting y waking: conservó estado y una sola
+continuación. La prueba descubrió y corrigió que Bridge mueve current_run al
+historial al cerrar; dos pruebas de regresión cubren cierre y turno intermedio.
+El único registro de prueba previo al arreglo se migró a su run original real.
+
+El primer permiso de escritura del conector GitHub requirió confirmación puntual
+en el navegador; Codex aprobó sólo la escritura autorizada en la rama de prueba.
+El monitor no controla permisos, login ni cuota en ChatGPT. El envío inicial
+sigue a cargo de Codex y la espera sólo se registra tras enviar. Si el conector
+no puede entregar, el resultado queda pendiente/vence; una exportación explícita
+por Codex debe declarar producer=codex-export. No es un extractor de navegador.
+
+Cambios de este trabajo están en servicios/chatgpt_collaboration, script de
+handoff y test correspondiente, además de la skill instalada. Se conservaron
+los cambios ajenos preexistentes. No se publicó ni desplegó código de productos.
