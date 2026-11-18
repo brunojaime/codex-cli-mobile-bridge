@@ -56,6 +56,7 @@ def get_work(container=Depends(get_container)):
                 Path.cwd() / ".data" / "whatsapp_ingest" / "inbox",
             ),
         )
+        service.owner_environment = getattr(settings, "bridge_environment", "unknown")
         service._temporary_store = temporary
         container.work_coordinator_service = service
     return service
@@ -74,7 +75,7 @@ def call(function, *args):
 
 @router.get("")
 def overview(service=Depends(get_work)):
-    return call(service.overview)
+    return {**call(service.overview), "coordinator": {"environment": getattr(service, "owner_environment", "unknown"), "local": True}}
 
 
 @router.post("/backlog", status_code=201)
@@ -118,11 +119,12 @@ def update_project_settings(payload: ProjectSettingsUpdate, service=Depends(get_
 class Control(BaseModel):
     revision: int = Field(ge=1)
     action: str
+    target_commit: str | None = Field(default=None, pattern=r"^[a-f0-9]{40}$")
 
 
 @router.post("/backlog/{task_id}/control")
 def control(task_id: UUID, payload: Control, service=Depends(get_work)):
-    return call(service.control, str(task_id), payload.revision, payload.action)
+    return call(service.control, str(task_id), payload.revision, payload.action, payload.target_commit)
 
 
 class Choice(BaseModel):
