@@ -409,6 +409,7 @@ def _build_execution_provider(settings: Settings) -> ExecutionProvider:
         return LambdaExecutionProvider(
             endpoint=settings.lambda_endpoint,
             timeout_seconds=settings.execution_timeout_seconds,
+            ai_policy=policy,
         )
 
     return LocalExecutionProvider(

@@ -37,7 +37,7 @@ from backend.app.domain.entities.chat_message import (
     ChatMessageStatus,
     validate_manual_recovery_candidate,
 )
-from backend.app.domain.engine import session_matches_model
+from backend.app.domain.engine import is_claude_model, session_matches_model
 from backend.app.domain.entities.agent_configuration import (
     AgentConfiguration,
     AgentId,
@@ -2172,15 +2172,24 @@ class MessageService:
     ) -> Job:
         retryable_image_paths = self._persist_retryable_image_paths(image_paths)
         model = self._execution_provider.resolve_model(model)
+        # Retries and drain descriptors reuse the request without transferred history.
+        stored_execution_message = execution_message
         if not session_matches_model(provider_session_id, model):
             provider_session_id = None
+            # Only conversation owners inherit the transcript. Reviewer, Summary and
+            # specialists keep their bridge-built input so their judgment stays independent.
+            inherits_history = (
+                conversation_kind in {JobConversationKind.PRIMARY, JobConversationKind.SUPERVISOR}
+                and agent_id != AgentId.REVIEWER
+                and agent_type != AgentType.REVIEWER
+            )
             history = [
                 {"role": item.role.value, "agent": item.agent_id.value,
                  "content": item.content}
                 for item in self._repository.list_messages(session.id)
                 if item.status == ChatMessageStatus.COMPLETED and item.content
-                and agent_id != AgentId.REVIEWER
-            ]
+                and item.id != user_message_id
+            ] if inherits_history else []
             if history:
                 transcript = json.dumps(history, ensure_ascii=False)
                 # Keep the first request and recent work within a bounded prompt.
@@ -2219,10 +2228,17 @@ class MessageService:
             trigger_source=trigger_source,
             run_id=run_id,
             submission_token=submission_token,
-            execution_message=execution_message,
+            execution_message=stored_execution_message,
             image_paths=retryable_image_paths,
             video_paths=list(video_paths or []),
         )
+
+    def _text_only_options(self, model: str | None) -> CodexRunOptions | None:
+        # Titles and summaries read untrusted chat text; under Claude's broader
+        # permission modes they must not get tools. Codex runs keep their contract.
+        if not is_claude_model(self._execution_provider.resolve_model(model)):
+            return None
+        return CodexRunOptions(config_overrides=("features.shell_tool=false",))
 
     def _persist_retryable_image_paths(
         self,
@@ -4408,14 +4424,11 @@ class MessageService:
         self,
         raw: str,
     ) -> SupervisorDecision | None:
-        normalized = raw.strip()
-        if not normalized:
+        if not raw.strip():
             return None
-        try:
-            payload = json.loads(normalized)
-        except json.JSONDecodeError:
-            return None
-        if not isinstance(payload, dict):
+        # Providers differ in fencing JSON; the decision schema below stays strict.
+        payload = self._parse_json_object_response(raw)
+        if payload is None:
             return None
 
         status = str(payload.get("status") or "").strip().lower()
@@ -4579,6 +4592,7 @@ class MessageService:
                 prompt,
                 serial_key=f"{session.id}:turn-summary",
                 workdir=session.workspace_path,
+                codex_options=self._text_only_options(None),
             )
         except Exception:
             return None
@@ -4705,6 +4719,7 @@ class MessageService:
                 serial_key=f"{session.id}:title",
                 workdir=session.workspace_path,
                 model=self._title_generation_model,
+                codex_options=self._text_only_options(self._title_generation_model),
             )
         except Exception:
             return None

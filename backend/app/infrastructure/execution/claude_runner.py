@@ -11,6 +11,10 @@ import threading
 from pathlib import Path
 
 from backend.app.domain.entities.job import JobStatus
+from backend.app.infrastructure.execution.claude_evidence import (
+    ClaudeRuntimeMismatch,
+    verify_init,
+)
 from backend.app.infrastructure.execution.claude_options import translate_options
 
 
@@ -30,6 +34,8 @@ def run_claude(
     result = None
     errors = []
     reader_errors = []
+    runtime_errors = []
+    verified = []
     native_id = provider_session_id
 
     def update(**kwargs):
@@ -143,11 +149,23 @@ def run_claude(
                                     phase="Claude working",
                                     latest_activity=f"Claude: {block.get('name', 'tool')}",
                                 )
-                    elif kind == "system":
+                    elif kind == "system" and event.get("subtype") == "init":
+                        try:
+                            evidence = verify_init(event, argv=command, source="chat")
+                        except ClaudeRuntimeMismatch as exc:
+                            # Stop before any tool runs under an unexpected policy.
+                            runtime_errors.append(str(exc))
+                            provider._terminate_process_tree(process, kill=True)
+                            return
+                        verified.append(evidence)
                         update(
                             status=JobStatus.RUNNING,
                             phase="Claude working",
-                            latest_activity="Claude session connected.",
+                            latest_activity=(
+                                "Claude session connected: "
+                                f"model={evidence['model']}, "
+                                f"permissions={evidence['permission_mode']}."
+                            ),
                         )
             except Exception as exc:
                 reader_errors.append(str(exc))
@@ -174,12 +192,16 @@ def run_claude(
             reader.join(timeout=2)
         if provider._is_cancelled(job_id):
             return
+        if runtime_errors:
+            raise RuntimeError(runtime_errors[0])
         if reader_errors:
             raise RuntimeError("Invalid Claude stream: " + reader_errors[0])
         if result is None:
             raise RuntimeError(
                 "Claude did not return a final result. " + "\n".join(errors)
             )
+        if not verified:
+            raise RuntimeError("Claude did not report its runtime; execution was not verified.")
         response = result.get("result") or ""
         if return_code or result.get("is_error"):
             raise RuntimeError(

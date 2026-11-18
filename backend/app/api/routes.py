@@ -5897,14 +5897,20 @@ def _humanize_feedback_source(value: str) -> str:
 @router.get("/ai/runtime")
 async def ai_runtime(container: AppContainer = Depends(get_container)) -> dict:
     from backend.app.container import _ai_policy
+    from backend.app.infrastructure.execution.claude_evidence import latest
     policy = _ai_policy(container.settings)
+    claude = policy.engine == "claude"
     return {
         "provider": policy.engine, "routing": policy.provider,
         "model": policy.resolve_model(), "effort": policy.effort,
         "backend_owned": policy.provider != "auto",
+        "permission_mode": container.settings.claude_permission_mode if claude else None,
+        # Reported by the CLI's init event of the last run per surface, not by the model.
+        "verified_runs": latest() if claude else {},
         "limitations": (["Codex profiles/plugins/MCP selections need Claude configuration",
                          "Read-only uses a Claude tool allowlist, not Codex OS sandbox",
-                         "Lambda Claude execution is not supported"] if policy.engine == "claude" else []),
+                         "Permission denials fail the whole job, even if other work finished",
+                         "Lambda Claude execution is not supported"] if claude else []),
     }
 
 
@@ -7733,6 +7739,13 @@ async def _validate_codex_options(
 ):
     if codex_options is None or not codex_options.mcp_server_ids:
         return codex_options
+    from backend.app.container import _ai_policy
+    if _ai_policy(container.settings).engine == "claude":
+        # Never consult the inactive Codex CLI to validate a Claude run.
+        raise HTTPException(
+            status_code=422,
+            detail="Selected Codex MCP servers have no Claude mapping; configure them for Claude before use.",
+        )
 
     selection_snapshot = await run_in_threadpool(
         inspect_codex_mcp_server_selection,

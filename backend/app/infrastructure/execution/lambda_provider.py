@@ -9,6 +9,8 @@ from uuid import uuid4
 
 import httpx
 
+from backend.app.domain.ai_runtime import AiRuntimePolicy
+from backend.app.domain.engine import is_claude_model
 from backend.app.domain.entities.codex_options import CodexRunOptions
 from backend.app.domain.entities.job import JobStatus
 from backend.app.infrastructure.execution.base import (
@@ -46,7 +48,9 @@ class LambdaExecutionProvider(ExecutionProvider):
         *,
         endpoint: str,
         timeout_seconds: float | None = 30,
+        ai_policy: AiRuntimePolicy | None = None,
     ) -> None:
+        self._ai_policy = ai_policy or AiRuntimePolicy()
         self._endpoint = endpoint.rstrip("/")
         self._timeout_seconds = (
             None if timeout_seconds is None or timeout_seconds <= 0 else timeout_seconds
@@ -61,6 +65,9 @@ class LambdaExecutionProvider(ExecutionProvider):
         self._submission_tokens: dict[str, str] = {}
         self._lock = threading.RLock()
 
+    def resolve_model(self, requested: str | None = None) -> str | None:
+        return self._ai_policy.resolve_model(requested)
+
     def execute(
         self,
         message: str,
@@ -74,6 +81,10 @@ class LambdaExecutionProvider(ExecutionProvider):
         submission_token: str | None = None,
         workdir: str | None = None,
     ) -> str:
+        model = self.resolve_model(model)
+        if is_claude_model(model):
+            # No validated Lambda adapter; never forward a Claude model to Codex.
+            raise ValueError("Lambda has no verified Claude adapter.")
         job_id = str(uuid4())
         execution = _QueuedLambdaExecution(
             job_id=job_id,

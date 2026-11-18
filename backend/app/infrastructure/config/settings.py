@@ -35,7 +35,8 @@ class Settings(BaseSettings):
     cors_origins: list[str] = Field(default_factory=lambda: ["*"])
     codex_command: str = "codex"
     claude_command: str = "claude"
-    claude_permission_mode: Literal["default", "acceptEdits", "dontAsk"] = "default"
+    # "auto" uses Claude Code's action classifier; bypassPermissions stays unsupported.
+    claude_permission_mode: Literal["default", "acceptEdits", "dontAsk", "auto"] = "default"
     claude_effort: Literal["low", "medium", "high", "xhigh", "max"] = "medium"
     agent_default_model: str | None = None
     ai_provider: Literal["auto", "codex", "claude"] = "auto"

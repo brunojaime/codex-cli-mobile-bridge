@@ -10,6 +10,10 @@ import subprocess
 from dataclasses import dataclass
 
 from backend.app.domain.ai_runtime import AiRuntimePolicy
+from backend.app.infrastructure.execution.claude_evidence import (
+    ClaudeRuntimeMismatch,
+    verify_init,
+)
 
 
 @dataclass(frozen=True)
@@ -29,7 +33,8 @@ class AgentCli:
             raise ValueError("AI executable is empty")
         model = self.policy.resolve_model()
         if self.policy.engine == "claude":
-            args = (*base, "--print", "--output-format", "json", "--model",
+            # --verbose makes JSON output include the init event used as runtime evidence.
+            args = (*base, "--print", "--verbose", "--output-format", "json", "--model",
                     model.removeprefix("claude:"), "--effort", self.policy.effort,
                     "--permission-mode", self.permission_mode)
             if prompt_path is not None:
@@ -66,9 +71,14 @@ def run_process(*, argv, cwd, env, timeout_seconds):
     # Only our explicitly structured Claude invocation uses this result contract.
     if "--output-format" in argv and "json" in argv and "--print" in argv:
         try:
-            payload = json.loads(stdout)
-            if not isinstance(payload, dict) or payload.get("type") != "result":
+            events = json.loads(stdout)
+            events = events if isinstance(events, list) else [events]
+            payload = next((e for e in reversed(events) if isinstance(e, dict)
+                            and e.get("type") == "result"), None)
+            if payload is None:
                 raise ValueError("missing result")
+            init = next((e for e in events if isinstance(e, dict) and e.get("type") == "system"
+                         and e.get("subtype") == "init"), None)
             denied = bool(payload.get("permission_denials"))
             result.stdout = payload.get("result") or ""
             if payload.get("is_error") or denied:
@@ -76,6 +86,12 @@ def run_process(*, argv, cwd, env, timeout_seconds):
                 result.stderr = ("Claude tool permissions denied. " if denied else "Claude failed. ") + (
                     result.stdout or "; ".join(payload.get("errors", []))
                 )
+            else:
+                try:
+                    verify_init(init, argv=argv, source="agent_cli")
+                except ClaudeRuntimeMismatch as exc:
+                    result.returncode = result.returncode or 1
+                    result.stderr = str(exc)
         except (ValueError, TypeError):
             result.returncode = result.returncode or 1
             result.stderr = "Claude returned no valid final result. " + stderr
