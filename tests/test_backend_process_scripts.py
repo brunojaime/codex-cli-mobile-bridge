@@ -126,6 +126,7 @@ def test_run_backend_detached_exports_codex_runtime_settings() -> None:
     assert "CODEX_RESUME_ARGS" in script
     assert "PROJECT_FACTORY_GITHUB_OWNER" in script
     assert "APP_UPDATE_PUBLIC_BASE_URL" in script
+    assert "APP_UPDATE_GITHUB_TOKEN" in script
     assert "BRIDGE_PUBLIC_URL" in script
     assert "INSTALLABLE_APPS_REGISTRATION_TOKEN" in script
     assert "backend_export_env_file_values" in script
@@ -164,6 +165,7 @@ def test_run_backend_foreground_contract() -> None:
     assert "CODEX_EXEC_ARGS" in script
     assert "PROJECT_FACTORY_GITHUB_OWNER" in script
     assert "APP_UPDATE_PUBLIC_BASE_URL" in script
+    assert "APP_UPDATE_GITHUB_TOKEN" in script
     assert "BRIDGE_PUBLIC_URL" in script
     assert "INSTALLABLE_APPS_REGISTRATION_TOKEN" in script
     assert (
@@ -212,11 +214,11 @@ def test_main_loads_allowlisted_runtime_env_only() -> None:
     assert "CODEX_EXEC_ARGS" in source
     assert "PROJECT_FACTORY_GITHUB_OWNER" in source
     assert "APP_UPDATE_PUBLIC_BASE_URL" in source
+    assert "APP_UPDATE_GITHUB_TOKEN" in source
     assert "BRIDGE_PUBLIC_URL" in source
     assert "INSTALLABLE_APPS_REGISTRATION_TOKEN" in source
     assert "dotenv_values" in source
     assert "os.environ.setdefault" in source
-    assert "APP_UPDATE_GITHUB_TOKEN" not in source
     assert "SMTP_PASSWORD" not in source
     assert "OPENAI_API_KEY" not in source
 

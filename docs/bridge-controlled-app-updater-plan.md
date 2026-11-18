@@ -174,6 +174,14 @@ Example response when current app is up to date:
 
 For private GitHub repositories, `apkUrl` must point back to the Bridge APK proxy endpoint, not to `browser_download_url` on GitHub. The Bridge uses its configured GitHub token server-side to stream the selected release asset to the app. This keeps Flutter apps decoupled from GitHub authentication and avoids exposing private repository URLs or tokens to devices.
 
+Operational requirement: environments that register or serve installable apps
+from private GitHub repositories must set `APP_UPDATE_GITHUB_TOKEN` for the
+Bridge backend process. Without that server-side token, GitHub returns private
+release metadata as unavailable and Bridge installable-app responses can surface
+`release_metadata_unavailable` even when the release exists. The token is a
+runtime secret only; keep it out of registry files, response bodies, URLs,
+headers, and logs.
+
 The APK proxy must:
 
 - Re-resolve the configured `sourceApp`, release tag, channel, platform, and asset name before serving bytes.
