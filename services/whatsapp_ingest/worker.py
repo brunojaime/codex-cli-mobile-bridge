@@ -764,6 +764,21 @@ class WhatsAppIntakeWorker:
             )
 
     def _process_group(self, records: list[PreparedRecord]) -> int:
+        # Projects that opt into the idea pipeline (e.g. "Ideas proyectos") skip triage and the
+        # planning chat: the settled group batch goes to the pipeline as is. Private routed
+        # batches keep their own flow.
+        if all(item.source != "whatsapp-direct" for item in records):
+            from services.whatsapp_ingest.ideas_forward import forward_batch, ideas_config
+            ideas = ideas_config(records[0].workspace)
+            if ideas is not None:
+                receipt = forward_batch(records, ideas, data_dir=self.settings.data_dir)
+                if receipt is None:
+                    return 0
+                LOGGER.info(
+                    "Forwarded %s message(s) from %s to the idea pipeline (%s)",
+                    len(records), records[0].project, receipt.get("id") or "dry-run",
+                )
+                return len(records)
         channels = {item.response_channel for item in records}
         if len(channels) != 1:
             raise RuntimeError("Intake batch mixes response channels.")
