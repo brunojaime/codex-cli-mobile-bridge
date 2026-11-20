@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "hosts": {
+    "lenovo": {
+      "match_hostnames": [
+        "brunojaime-Lenovo-V15-G3-IAP",
+        "brunojaime-lenovo-v15-g3-iap"
+      ],
+      "bridges": [
+        "http://127.0.0.1:8000",
+        "http://127.0.0.1:8001"
+      ],
+      "projects_root": "/home/brunojaime/Documents/Projects",
+      "socks5": null,
+      "landing_workspace": "/home/brunojaime/Documents/Projects/cli-codex-project"
+    },
+    "batata": {
+      "match_hostnames": [
+        "batata",
+        "batata-default-string"
+      ],
+      "bridges": [
+        "http://batata-default-string.tail0302c4.ts.net:8000"
+      ],
+      "projects_root": "/home/batata/Projects",
+      "socks5": "127.0.0.1:1055",
+      "landing_workspace": "/home/batata/Projects/codex-cli-mobile-bridge"
+    },
+    "mac": {
+      "enabled": false,
+      "match_hostnames": [],
+      "bridges": [],
+      "projects_root": null,
+      "socks5": null,
+      "note": "Completar bridge (URL Tailscale) y projects_root cuando la Mac tenga Bridge instalado.",
+      "landing_workspace": null
+    }
+  }
+}

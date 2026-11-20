@@ -62,6 +62,7 @@ import '../widgets/project_documents_panel.dart';
 import '../widgets/project_secrets_sheet.dart';
 import '../widgets/reviewer_status_banner.dart';
 import 'operations_screen.dart';
+import 'relevo_screen.dart';
 import 'session_file_screen.dart';
 
 const String _defaultAutoReviewerPrompt =
@@ -434,6 +435,7 @@ enum _AppBarOverflowAction {
   saveCurrentAgent,
   replyMode,
   operations,
+  relevo,
   servers,
   newProject,
   projectHistory,
@@ -5307,6 +5309,11 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
               label: 'Operations',
             ),
             _buildAppBarOverflowMenuItem(
+              action: _AppBarOverflowAction.relevo,
+              icon: Icons.swap_horiz_rounded,
+              label: 'Pasar a Batata',
+            ),
+            _buildAppBarOverflowMenuItem(
               action: _AppBarOverflowAction.servers,
               icon: Icons.computer,
               label: 'Servers',
@@ -5469,6 +5476,13 @@ Durante intake el reviewer esta apagado a proposito. Cuando el usuario confirme 
         return;
       case _AppBarOverflowAction.operations:
         await _openOperations();
+        return;
+      case _AppBarOverflowAction.relevo:
+        await Navigator.of(context).push<void>(
+          MaterialPageRoute<void>(
+            builder: (context) => RelevoScreen(client: _chatController.apiClient),
+          ),
+        );
         return;
       case _AppBarOverflowAction.servers:
         await _openServerManager();
