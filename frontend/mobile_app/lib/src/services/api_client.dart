@@ -1,3 +1,4 @@
+import '../models/relevo.dart';
 import '../models/run_overview.dart';
 import 'dart:convert';
 
@@ -137,6 +138,38 @@ class ApiClient {
       scheme: scheme,
       path: '${httpUri.path.replaceAll(RegExp(r'/$'), '')}/ws/runs',
     );
+  }
+
+  Future<List<RelevoDestination>> getRelevoDestinations() async {
+    final response = await _client.get(Uri.parse('$baseUrl/relevo/destinations'));
+    if (response.statusCode != 200) {
+      throw Exception('No pude leer los equipos: ${response.body}');
+    }
+    final body = jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+    return (body['destinations'] as List<dynamic>)
+        .map((e) => RelevoDestination.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Inicia el relevo de todo el sistema. Si ya hay uno en curso devuelve ese.
+  Future<RelevoRun> startRelevo(String destination) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/relevo/runs'),
+      headers: const <String, String>{'Content-Type': 'application/json'},
+      body: jsonEncode(<String, String>{'destination': destination}),
+    );
+    if (response.statusCode != 202) {
+      throw Exception('No pude iniciar el relevo: ${response.body}');
+    }
+    return RelevoRun.fromJson(jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>);
+  }
+
+  Future<RelevoRun> getLatestRelevo() async {
+    final response = await _client.get(Uri.parse('$baseUrl/relevo/runs/latest'));
+    if (response.statusCode != 200) {
+      throw Exception('No pude leer el relevo: ${response.body}');
+    }
+    return RelevoRun.fromJson(jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>);
   }
 
   Future<RunsOverview> getRunsOverview() async {
