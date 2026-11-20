@@ -1965,14 +1965,67 @@ class MessageService:
         cancelled_job = self.get_job(job_id)
         return cancelled_job or job
 
-    def steer_job(self, job_id: str, message: str) -> bool:
-        """Redirect a running job. Returns False when the job cannot be steered."""
+    def steer_job(
+        self,
+        job_id: str,
+        message: str,
+        *,
+        client_submission_id: str | None = None,
+    ) -> ChatMessage | None:
+        """Inject a human instruction into a running job (real steering).
+
+        Returns the persisted user message, or None when the agent could not
+        take it; the caller then sends it as the next turn instead.
+        """
         job = self.get_job(job_id)
         if job is None:
             raise ValueError(f"Job {job_id} was not found.")
-        if job.status.is_terminal:
-            return False
-        return bool(self._execution_provider.steer_job(job_id, message))
+        text = message.strip()
+        if client_submission_id:
+            message_id = self._client_submission_message_id(client_submission_id)
+            existing = self._repository.get_message(message_id)
+            if existing is not None:
+                # A retried submission never injects the instruction twice.
+                return existing
+        else:
+            message_id = str(uuid4())
+        # Native CLI commands (/compact) only work as the start of a turn.
+        if job.status.is_terminal or not text or text.lower() in _NATIVE_AGENT_COMMANDS:
+            return None
+        session = self._repository.get_session(job.session_id)
+        steer_text = text
+        if (
+            session is not None
+            and self._quality_service is not None
+            and job.conversation_kind == JobConversationKind.PRIMARY
+        ):
+            intake = self._quality_service.chat_intake_context(
+                workspace=session.workspace_path,
+                source_ref=f"chat:{job.session_id}:run:{job.run_id}:steer:{message_id}",
+                text=text,
+            )
+            if intake:
+                steer_text += "\n\n" + intake
+        if not self._execution_provider.steer_job(job_id, steer_text, display_text=text):
+            return None
+        steered = ChatMessage(
+            id=message_id,
+            session_id=job.session_id,
+            role=ChatMessageRole.USER,
+            author_type=ChatMessageAuthorType.HUMAN,
+            agent_id=AgentId.USER,
+            agent_type=AgentType.HUMAN,
+            trigger_source=AgentTriggerSource.USER,
+            run_id=job.run_id,
+            content=text,
+            status=ChatMessageStatus.COMPLETED,
+            reason_code=ChatMessageReasonCode.STEERED_INTO_RUNNING_TURN,
+        )
+        self._repository.save_message(steered)
+        if session is not None:
+            session.touch()
+            self._repository.save_session(session)
+        return steered
 
     def runs_overview(self, *, recent_limit: int = 30, recent_hours: int = 48) -> dict:
         """Dashboard data: active runs first, then recently finished ones."""
@@ -4249,6 +4302,9 @@ class MessageService:
             if message.run_id == run_id
             and message.role == ChatMessageRole.USER
             and message.author_type == ChatMessageAuthorType.HUMAN
+            # Steering is answered by the running turn; the run's request stays
+            # the message that started it.
+            and message.reason_code != ChatMessageReasonCode.STEERED_INTO_RUNNING_TURN
         ]
         if not messages:
             return None

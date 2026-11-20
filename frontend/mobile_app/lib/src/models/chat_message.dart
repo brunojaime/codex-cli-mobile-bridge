@@ -22,7 +22,8 @@ enum ChatMessageReasonCode {
   submissionOutcomeUnknown,
   manualRetryRequested,
   manualCancelRequested,
-  followUpTerminalCompletedRun
+  followUpTerminalCompletedRun,
+  steeredIntoRunningTurn
 }
 
 class ChatMessageAttachment {
@@ -277,6 +278,8 @@ ChatMessageReasonCode? _reasonCodeFromJson(String value) {
       return ChatMessageReasonCode.manualCancelRequested;
     case 'follow_up_terminal_completed_run':
       return ChatMessageReasonCode.followUpTerminalCompletedRun;
+    case 'steered_into_running_turn':
+      return ChatMessageReasonCode.steeredIntoRunningTurn;
     default:
       return null;
   }

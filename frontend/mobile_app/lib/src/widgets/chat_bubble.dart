@@ -153,6 +153,24 @@ class ChatBubble extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
               ],
+              if (isUser &&
+                  message.reasonCode ==
+                      ChatMessageReasonCode.steeredIntoRunningTurn) ...[
+                Row(
+                  key: const ValueKey('steered-message-label'),
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Icon(Icons.alt_route_rounded,
+                        size: 14, color: textColor.withValues(alpha: 0.74)),
+                    const SizedBox(width: 4),
+                    Text('Indicación durante la ejecución',
+                        style: TextStyle(
+                            color: textColor.withValues(alpha: 0.74),
+                            fontSize: 12)),
+                  ],
+                ),
+                const SizedBox(height: 6),
+              ],
               if (isUser && message.status == ChatMessageStatus.sending) ...[
                 Text('Enviando…',
                     style: TextStyle(
@@ -1427,6 +1445,7 @@ String? _diagnosticReasonText(ChatMessageReasonCode? reasonCode) {
       return 'This uncertain follow-up was manually dismissed.';
     case ChatMessageReasonCode.followUpTerminalCompletedRun:
       return 'This follow-up ended the active run.';
+    case ChatMessageReasonCode.steeredIntoRunningTurn:
     case null:
       return null;
   }

@@ -36,6 +36,8 @@ class ChatMessageReasonCode(StrEnum):
     MANUAL_RETRY_REQUESTED = "manual_retry_requested"
     MANUAL_CANCEL_REQUESTED = "manual_cancel_requested"
     FOLLOW_UP_TERMINAL_COMPLETED_RUN = "follow_up_terminal_completed_run"
+    # A human instruction injected into the turn that was already running.
+    STEERED_INTO_RUNNING_TURN = "steered_into_running_turn"
 
 
 class ChatMessageStatus(StrEnum):

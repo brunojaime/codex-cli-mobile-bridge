@@ -171,6 +171,11 @@ class LocalExecutionProvider(ExecutionProvider):
         self._processes: dict[str, subprocess.Popen[str]] = {}
         # job_id -> (thread_id, turn_id) of the running app-server turn.
         self._steer_targets: dict[str, tuple[str, str]] = {}
+        # job_id -> callable that injects a user message into a running Claude
+        # process; returns False once the process can no longer take input.
+        self._claude_steerers: dict[str, Callable[[str], bool]] = {}
+        # request id -> [event, error message or None] for in-flight turn/steer.
+        self._pending_steer_requests: dict[str, list] = {}
         self._interactions: dict[str, dict[str, Callable[[dict], None]]] = {}
         self._token_usage: dict[str, dict[str, int]] = {}
         self._stdin_lock = threading.Lock()
@@ -346,8 +351,14 @@ class LocalExecutionProvider(ExecutionProvider):
             return False
         return True
 
-    def steer_job(self, job_id: str, message: str) -> bool:
-        """Add a user instruction to the running Codex turn without stopping it."""
+    def steer_job(
+        self, job_id: str, message: str, *, display_text: str | None = None
+    ) -> bool:
+        """Add a user instruction to the running turn without stopping it.
+
+        Returns True only when the agent accepted the instruction: Claude got it
+        on its open stream-json input, or Codex acknowledged ``turn/steer``.
+        """
         text = message.strip()
         if not text:
             return False
@@ -355,20 +366,56 @@ class LocalExecutionProvider(ExecutionProvider):
             current = self._states.get(job_id)
             process = self._processes.get(job_id)
             target = self._steer_targets.get(job_id)
+            claude_steerer = self._claude_steerers.get(job_id)
         if (
             current is None
             or current.status.is_terminal
             or process is None
             or process.poll() is not None
-            or target is None
         ):
             return False
+        if claude_steerer is not None:
+            try:
+                accepted = bool(claude_steerer(text))
+            except (OSError, ValueError):
+                accepted = False
+        elif target is not None:
+            accepted = self._steer_app_server_turn(job_id, process, target, text)
+        else:
+            return False
+        if not accepted:
+            return False
+        self._record_activity(
+            job_id,
+            activity_entry(
+                f"steer-{uuid4().hex[:12]}",
+                "steer",
+                (display_text or text).strip(),
+                "",
+                "completed",
+            ),
+        )
+        return True
+
+    def _steer_app_server_turn(
+        self,
+        job_id: str,
+        process: subprocess.Popen[str],
+        target: tuple[str, str],
+        text: str,
+        *,
+        timeout_seconds: float = 10.0,
+    ) -> bool:
         thread_id, turn_id = target
+        request_id = f"steer-{uuid4().hex[:12]}"
+        waiter: list = [threading.Event(), None]
+        with self._lock:
+            self._pending_steer_requests[request_id] = waiter
         try:
             self._app_server_send(
                 process,
                 {
-                    "id": f"steer-{uuid4().hex[:12]}",
+                    "id": request_id,
                     "method": "turn/steer",
                     "params": {
                         "threadId": thread_id,
@@ -378,17 +425,29 @@ class LocalExecutionProvider(ExecutionProvider):
                 },
             )
         except (OSError, ValueError, _AppServerRequestError):
+            with self._lock:
+                self._pending_steer_requests.pop(request_id, None)
             return False
-        self._record_activity(
-            job_id,
-            activity_entry(
-                f"steer-{uuid4().hex[:12]}",
-                "steer",
-                text,
-                "",
-                "completed",
-            ),
-        )
+        # The job thread reads stdout and resolves the request: only an explicit
+        # success counts, so a turn that just ended never swallows the message.
+        acknowledged = waiter[0].wait(timeout_seconds)
+        with self._lock:
+            self._pending_steer_requests.pop(request_id, None)
+        return acknowledged and waiter[1] is None
+
+    def _resolve_pending_steer(self, payload: dict[str, object]) -> bool:
+        request_id = payload.get("id")
+        if not isinstance(request_id, str) or "method" in payload:
+            return False
+        with self._lock:
+            waiter = self._pending_steer_requests.get(request_id)
+        if waiter is None:
+            return False
+        error = payload.get("error")
+        if error is not None:
+            message = error.get("message") if isinstance(error, dict) else None
+            waiter[1] = str(message or "turn/steer was rejected.")
+        waiter[0].set()
         return True
 
     def _record_token_usage(self, job_id: str, params: object) -> None:
@@ -1494,6 +1553,8 @@ class LocalExecutionProvider(ExecutionProvider):
         final_agent_message_item_ids: set[str],
         non_final_agent_message_item_ids: set[str],
     ) -> bool:
+        if self._resolve_pending_steer(payload):
+            return False
         method = payload.get("method")
         if not isinstance(method, str):
             return False
@@ -1617,6 +1678,9 @@ class LocalExecutionProvider(ExecutionProvider):
             )
 
         if method == "turn/completed":
+            # Later instructions must become the next turn, not a lost steer.
+            with self._lock:
+                self._steer_targets.pop(job_id, None)
             mark_turn_completed()
             return True
 

@@ -80,7 +80,9 @@ class ExecutionProvider(ABC):
     def supports_job_steering(self) -> bool:
         return False
 
-    def steer_job(self, job_id: str, message: str) -> bool:
+    def steer_job(
+        self, job_id: str, message: str, *, display_text: str | None = None
+    ) -> bool:
         """Inject a user instruction into a running job; False when unsupported."""
         return False
 

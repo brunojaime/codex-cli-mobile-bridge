@@ -1847,7 +1847,6 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   onDraftChanged: _draftUpdaterForCurrentSession(),
                   onBackgroundDraftChanged: _draftUpdaterForCurrentSession(onlyIfUnchanged: true),
                   onSend: _handleSend,
-                  onSteer: _handleSteer,
                   activeJobCount: _chatController.selectedSessionId == null ? 0 : _chatController.activeJobCountForSession(_chatController.selectedSessionId!),
                   queuedJobCount: _chatController.selectedSessionId == null ? 0 : _chatController.queuedJobCountForSession(_chatController.selectedSessionId!),
                   onSendAudio: _audioSenderForCurrentSession(),
@@ -2069,6 +2068,33 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
       return false;
     }
     _updateStickToBottom(true);
+    // Like Claude Code: while the agent works, Enter talks to that same turn.
+    // It never cancels the run; if the agent cannot take it now it becomes
+    // the next turn.
+    final runningJobId = sessionIdBeforeSend == null
+        ? null
+        : originController.runningJobIdForSession(sessionIdBeforeSend);
+    if (runningJobId != null && !_isNativeAgentCommand(submittedText)) {
+      if (!mounted) return false;
+      final messenger = ScaffoldMessenger.maybeOf(context);
+      if (await originController.steerJob(
+        runningJobId,
+        submittedText.trim(),
+        sessionId: sessionIdBeforeSend,
+      )) {
+        if (mounted && _chatController.selectedSessionId == sessionIdBeforeSend) {
+          _updateStickToBottom(true);
+          _scrollToBottom();
+        }
+        return true;
+      }
+      messenger?.showSnackBar(const SnackBar(
+        content: Text(
+          'El agente no podía recibirlo en este momento: quedó como siguiente turno.',
+        ),
+        duration: Duration(seconds: 4),
+      ));
+    }
     final didSend = await originController.enqueueMessage(
       submittedText,
       sessionIdOverride: sessionIdBeforeSend,
@@ -2089,47 +2115,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     unawaited(_serverProfileStore.saveSidebarCollapsed(_sidebarCollapsed));
   }
 
-  String? _runningJobIdForCurrentSession() {
-    final session = _chatController.currentSession;
-    if (session == null) return null;
-    for (final message in session.messages.reversed) {
-      final jobId = message.jobId;
-      if (jobId == null || message.isUser) continue;
-      if (message.isPendingLike) return jobId;
-    }
-    return null;
-  }
-
-  /// Sends [text] to the running agent: a real mid-turn instruction when the
-  /// backend supports it (Codex app-server), otherwise stop and resend.
-  Future<bool> _handleSteer(String text) async {
-    final message = text.trim();
-    final jobId = _runningJobIdForCurrentSession();
-    if (message.isEmpty) return false;
-    if (jobId == null) {
-      _textController.text = message;
-      return _handleSend();
-    }
-    final messenger = ScaffoldMessenger.maybeOf(context);
-    if (await _chatController.steerJob(jobId, message)) {
-      messenger?.showSnackBar(const SnackBar(
-        content: Text('Indicación enviada: el agente la toma sin detenerse.'),
-        duration: Duration(seconds: 3),
-      ));
-      return true;
-    }
-    await _chatController.cancelJob(jobId);
-    if (!mounted) return false;
-    _textController.text = message;
-    final sent = await _handleSend();
-    messenger?.showSnackBar(SnackBar(
-      content: Text(sent
-          ? 'Se detuvo la ejecución y se envió tu mensaje.'
-          : 'No se pudo redirigir la ejecución.'),
-      duration: const Duration(seconds: 3),
-    ));
-    return sent;
-  }
+  static bool _isNativeAgentCommand(String text) =>
+      text.trim().toLowerCase() == '/compact';
 
   /// Esc stops the newest running job of the open chat, like in the CLI.
   bool _cancelRunningJobWithEscape() {
@@ -8118,7 +8105,6 @@ class _Composer extends StatefulWidget {
     required this.onDraftChanged,
     this.onBackgroundDraftChanged,
     required this.onSend,
-    this.onSteer,
     this.activeJobCount = 0,
     this.queuedJobCount = 0,
     required this.onSendAudio,
@@ -8141,7 +8127,6 @@ class _Composer extends StatefulWidget {
   final ValueChanged<_ComposerDraft> onDraftChanged;
   final ValueChanged<_ComposerDraft>? onBackgroundDraftChanged;
   final Future<bool> Function() onSend;
-  final Future<bool> Function(String text)? onSteer;
   final int activeJobCount;
   final int queuedJobCount;
   final Future<bool> Function(XFile audioFile, {String? message}) onSendAudio;
@@ -8478,18 +8463,9 @@ class _ComposerState extends State<_Composer> {
               spacing: 8,
               children: <Widget>[
                 Text(
-                  '${widget.activeJobCount - widget.queuedJobCount} en curso · ${widget.queuedJobCount} en cola · Enter encola · Esc detiene',
+                  '${widget.activeJobCount - widget.queuedJobCount} en curso · ${widget.queuedJobCount} en cola · Enter le escribe al agente sin detenerlo · Esc detiene',
                   style: const TextStyle(color: Color(0xFFC5C9D3), fontSize: 12),
                 ),
-                if (widget.onSteer != null)
-                  TextButton.icon(
-                    key: const ValueKey('composer-steer'),
-                    onPressed: _hasText && !_isSubmittingAttachments
-                        ? () => unawaited(_steerNow())
-                        : null,
-                    icon: const Icon(Icons.alt_route_rounded, size: 16),
-                    label: const Text('Redirigir ahora (Ctrl+Enter)'),
-                  ),
               ],
             ),
           ),
@@ -8663,29 +8639,9 @@ class _ComposerState extends State<_Composer> {
     return filterSlashCommands(_slashCommands, query);
   }
 
-  Future<void> _steerNow() async {
-    final onSteer = widget.onSteer;
-    final text = widget.controller.text.trim();
-    if (onSteer == null || text.isEmpty) return;
-    widget.controller.clear();
-    final ok = await onSteer(text);
-    if (!ok && mounted && widget.controller.text.isEmpty) {
-      widget.controller.text = text;
-    }
-  }
-
   KeyEventResult _handleComposerKeyEvent(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
-    }
-    if (event.logicalKey == LogicalKeyboardKey.enter &&
-        (HardwareKeyboard.instance.isControlPressed ||
-            HardwareKeyboard.instance.isMetaPressed) &&
-        widget.activeJobCount > 0 &&
-        widget.onSteer != null &&
-        _slashQuery == null) {
-      unawaited(_steerNow());
-      return KeyEventResult.handled;
     }
     final query = _slashQuery;
     if (query == null) {

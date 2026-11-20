@@ -1432,12 +1432,37 @@ class ChatController extends ChangeNotifier {
     }
   }
 
-  Future<bool> steerJob(String jobId, String message) async {
+  /// The job of [sessionId] that is executing right now (not queued), the
+  /// one a new message steers.
+  String? runningJobIdForSession(String sessionId) {
+    String? running;
+    for (final entry in _pendingJobs.entries) {
+      if (entry.value == sessionId &&
+          _jobSnapshots[entry.key]?.status == 'running') {
+        running = entry.key;
+      }
+    }
+    return running;
+  }
+
+  /// Injects [message] into the running job (real steering). On success the
+  /// persisted user message is loaded into the open transcript.
+  Future<bool> steerJob(String jobId, String message, {String? sessionId}) async {
+    final bool steered;
     try {
-      return await _apiClient.steerJob(jobId, message);
+      steered = await _apiClient.steerJob(jobId, message);
     } catch (_) {
       return false;
     }
+    final targetSessionId = sessionId ?? _sessionIdForJob(jobId);
+    if (steered && targetSessionId != null) {
+      await _backgroundRefresh(() async {
+        if (!_disposed && _selectedSessionId == targetSessionId) {
+          await _reloadCurrentSession();
+        }
+      });
+    }
+    return steered;
   }
 
   Future<bool> cancelJob(String jobId) async {

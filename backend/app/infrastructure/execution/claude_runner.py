@@ -33,6 +33,8 @@ def run_claude(
 ):
     process = None
     result = None
+    results = []
+    input_state = {"closing": False, "watchdog": None}
     errors = []
     reader_errors = []
     native_id = provider_session_id
@@ -57,6 +59,9 @@ def run_claude(
             "--effort",
             provider._claude_effort,
             "--include-partial-messages",
+            # Echo every user message when Claude consumes it, so steering
+            # instructions sent mid-turn can be tracked until answered.
+            "--replay-user-messages",
             # Permission prompts, questions and plan approvals reach the
             # front through the stdio control protocol instead of being
             # silently denied.
@@ -135,9 +140,11 @@ def run_claude(
             )
             provider._processes[job_id] = process
 
-        live = {"text": "", "last_push": 0.0}
+        live = {"text": "", "prefix": "", "last_push": 0.0}
         compaction: dict = {}
         stdin_lock = threading.Lock()
+        # uuid -> text of steering messages Claude has not consumed yet.
+        pending_steers: dict[str, str] = {}
 
         def send(obj):
             with stdin_lock:
@@ -146,13 +153,81 @@ def run_claude(
                 process.stdin.write(json.dumps(obj) + "\n")
                 process.stdin.flush()
 
+        def close_stdin_locked():
+            input_state["closing"] = True
+            try:
+                if process.stdin is not None and not process.stdin.closed:
+                    process.stdin.close()
+            except OSError:
+                pass
+
         def close_stdin():
             with stdin_lock:
-                try:
-                    if process.stdin is not None and not process.stdin.closed:
-                        process.stdin.close()
-                except OSError:
-                    pass
+                close_stdin_locked()
+
+        def steer(text):
+            """Queue a user message on Claude's live input (real steering).
+
+            Claude takes it at the next pause between tools; if the turn already
+            ended it answers it as a continuation in this same process.
+            """
+            with stdin_lock:
+                if (
+                    input_state["closing"]
+                    or process.stdin is None
+                    or process.stdin.closed
+                    or process.poll() is not None
+                ):
+                    return False
+                steer_id = str(uuid4())
+                process.stdin.write(
+                    json.dumps(
+                        {
+                            "type": "user",
+                            "uuid": steer_id,
+                            "message": {
+                                "role": "user",
+                                "content": [{"type": "text", "text": text}],
+                            },
+                        }
+                    )
+                    + "\n"
+                )
+                process.stdin.flush()
+                pending_steers[steer_id] = text
+                return True
+
+        def mark_consumed(event):
+            blocks = (event.get("message") or {}).get("content")
+            texts = [
+                str(block.get("text", ""))
+                for block in (blocks if isinstance(blocks, list) else [])
+                if isinstance(block, dict) and block.get("type") == "text"
+            ]
+            with stdin_lock:
+                if event.get("uuid") in pending_steers:
+                    pending_steers.pop(event["uuid"], None)
+                    return
+                for steer_id, text in list(pending_steers.items()):
+                    if text in texts:
+                        pending_steers.pop(steer_id, None)
+                        return
+
+        def finish_or_wait_for_steers(event):
+            with stdin_lock:
+                results.append(event)
+                if not pending_steers:
+                    # The turn is over and nothing is waiting: closing stdin
+                    # lets Claude exit.
+                    close_stdin_locked()
+                    return
+                if input_state["watchdog"] is None:
+                    # Claude answers queued input right after a result; never
+                    # leave the process waiting forever if it does not.
+                    timer = threading.Timer(180, close_stdin)
+                    timer.daemon = True
+                    input_state["watchdog"] = timer
+                    timer.start()
 
         def handle_control_request(event):
             request_id = str(event.get("request_id") or "")
@@ -212,7 +287,7 @@ def run_claude(
             update(
                 status=JobStatus.RUNNING,
                 phase="Claude responding",
-                response=live["text"],
+                response=live["prefix"] + live["text"],
                 latest_activity="Claude is responding.",
             )
 
@@ -272,8 +347,10 @@ def run_claude(
                         continue
                     if kind == "result":
                         result = event
-                        # The turn is over: closing stdin lets Claude exit.
-                        close_stdin()
+                        if str(event.get("result") or "").strip():
+                            live["prefix"] += str(event["result"]).strip() + "\n\n"
+                        live["text"] = ""
+                        finish_or_wait_for_steers(event)
                     elif kind == "assistant":
                         message_id = str(event.get("message", {}).get("id") or uuid4())
                         parent_id = event.get("parent_tool_use_id")
@@ -302,7 +379,7 @@ def run_claude(
                                 update(
                                     status=JobStatus.RUNNING,
                                     phase="Claude responding",
-                                    response=block.get("text", ""),
+                                    response=live["prefix"] + block.get("text", ""),
                                     latest_activity="Claude is responding.",
                                 )
                             elif block.get("type") == "tool_use":
@@ -325,6 +402,8 @@ def run_claude(
                                     ),
                                 )
                     elif kind == "user":
+                        if pending_steers:
+                            mark_consumed(event)
                         blocks = (event.get("message") or {}).get("content")
                         # After /compact Claude replays the summary as a plain
                         # string; only tool results (lists of blocks) matter.
@@ -401,6 +480,9 @@ def run_claude(
                 process.stdin.flush()
         except OSError:
             pass  # Early startup/auth failures are reported through stdout/stderr.
+        # Steering opens only after the request itself is on Claude's input.
+        with provider._lock:
+            provider._claude_steerers[job_id] = steer
         timeout = provider._timeout_seconds
         return_code = process.wait(timeout=timeout if timeout and timeout > 0 else None)
         for reader in readers:
@@ -413,7 +495,14 @@ def run_claude(
             raise RuntimeError(
                 "Claude did not return a final result. " + "\n".join(errors)
             )
-        response = result.get("result") or ""
+        # A late instruction is answered as a continuation: keep every answer.
+        response = "\n\n".join(
+            str(item.get("result") or "").strip()
+            for item in results
+            if str(item.get("result") or "").strip()
+        ) or (result.get("result") or "")
+        if len(results) > 1:
+            result = _merge_results(results)
         if return_code or result.get("is_error"):
             raise RuntimeError(
                 response
@@ -481,6 +570,10 @@ def run_claude(
     except Exception as exc:
         update(status=JobStatus.FAILED, phase="Failed", error=str(exc))
     finally:
+        with provider._lock:
+            provider._claude_steerers.pop(job_id, None)
+        if input_state["watchdog"] is not None:
+            input_state["watchdog"].cancel()
         if process is not None:
             if process.poll() is None:
                 provider._terminate_process_tree(process, kill=True)
@@ -494,6 +587,25 @@ def run_claude(
             provider._processes.pop(job_id, None)
         provider.clear_interactions(job_id)
         provider._cleanup_paths(cleanup_paths)
+
+
+def _merge_results(results: list[dict]) -> dict:
+    """Fold the results of one process (original turn plus continuations)."""
+    merged = dict(results[-1])
+    merged["permission_denials"] = [
+        denial for item in results for denial in (item.get("permission_denials") or [])
+    ]
+    usage: dict[str, int] = {}
+    for item in results:
+        for key, value in (item.get("usage") or {}).items():
+            if isinstance(value, (int, float)):
+                usage[key] = usage.get(key, 0) + int(value)
+    merged["usage"] = usage
+    for key in ("total_cost_usd", "num_turns", "duration_ms"):
+        values = [item.get(key) for item in results if isinstance(item.get(key), (int, float))]
+        if values:
+            merged[key] = sum(values)
+    return merged
 
 
 def _compact_number(value: int) -> str:

@@ -7272,6 +7272,7 @@ async def cancel_job(
 
 class SteerJobRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=20000)
+    client_submission_id: str | None = Field(default=None, max_length=200)
 
 
 @router.post("/jobs/{job_id}/steer")
@@ -7280,17 +7281,28 @@ async def steer_job(
     payload: SteerJobRequest,
     service: MessageService = Depends(get_message_service),
 ) -> dict[str, object]:
-    """Send an instruction to a running job without stopping it (Codex app-server)."""
+    """Inject an instruction into a running job without stopping it.
+
+    Claude takes it at the next pause between tools; Codex through
+    ``turn/steer`` (app-server). 409 means the caller must send it as the
+    next turn instead: the running work is never cancelled here.
+    """
     try:
-        steered = await run_in_threadpool(service.steer_job, job_id, payload.message)
+        steered = await run_in_threadpool(
+            lambda: service.steer_job(
+                job_id,
+                payload.message,
+                client_submission_id=payload.client_submission_id,
+            )
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    if not steered:
+    if steered is None:
         raise HTTPException(
             status_code=409,
             detail="This job cannot be redirected while it runs.",
         )
-    return {"job_id": job_id, "steered": True}
+    return {"job_id": job_id, "steered": True, "message_id": steered.id}
 
 
 @router.get("/runs/overview")
