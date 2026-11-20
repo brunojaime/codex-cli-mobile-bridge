@@ -5,6 +5,13 @@ sin internet. No detecta conectividad: se dispara a mano.
 
 ## Cómo se usa
 
+- **App (todo el sistema):** menú ⋮ → **Pasar a Batata** → confirmar. El Bridge corre
+  `relevo ir batata --todo` desacoplado (`POST /relevo/runs`, una sola ejecución a la vez) y la
+  pantalla muestra el progreso y el resultado por proyecto (`GET /relevo/runs/latest`). Cierra
+  **todos** los chats activos de los Bridges 8000 y 8001, incluido el que tenés abierto. Los
+  proyectos que no pueden subir su WIP (repo público o sin remoto) igual cierran sus chats y
+  abren la continuación en Batata sólo con el contexto.
+
 - Desde cualquier chat en Lenovo: **"pasate a batata"**. El agente ejecuta `relevo ir batata`.
 - Para volver: **"volvemos a lenovo"** → `relevo volver batata`.
 - Terminal: `relevo ir batata [--proyecto RUTA] [--simular]`, `relevo volver batata`,
