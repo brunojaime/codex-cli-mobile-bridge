@@ -370,3 +370,13 @@ def test_bypass_permissions_server_default_reaches_claude(tmp_path):
     result = wait(p, p.execute("hello", model="claude:sonnet", workdir=str(tmp_path)))
     argv = json.loads(result.response)["argv"]
     assert argv[argv.index("--permission-mode") + 1] == "bypassPermissions"
+
+
+def test_full_access_without_approvals_maps_to_bypass_permissions():
+    from backend.app.infrastructure.execution.claude_options import translate_options
+    args, _ = translate_options(CodexRunOptions(config_overrides=(
+        'sandbox_mode="danger-full-access"', 'approval_policy="never"')), workdir=None)
+    assert args[args.index("--permission-mode") + 1] == "bypassPermissions"
+    assert "--tools" not in args
+    with pytest.raises(ValueError):
+        translate_options(CodexRunOptions(config_overrides=('sandbox_mode="danger-full-access"',)), workdir=None)

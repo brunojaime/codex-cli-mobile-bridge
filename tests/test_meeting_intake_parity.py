@@ -44,3 +44,58 @@ def test_attachment_cannot_escape_delivery_cache(tmp_path):
     messages=Messages(tmp_path);service=MeetingIntakeService(messages,tmp_path/'ledger.sqlite3')
     with pytest.raises(ValueError,match='attachment_outside_cache'): service.launch(request(tmp_path,attachments=['../../private.txt']))
     assert messages.submits==0 and not messages.sessions
+
+
+def test_survey_digest_unchanged_by_modes(tmp_path):
+    import hashlib
+    req = request(tmp_path)
+    legacy = hashlib.sha256(req.model_dump_json(exclude={'mode', 'deploy_target'}).encode()).hexdigest()
+    assert req.digest() == legacy
+
+
+def test_deploy_mode_requires_target(tmp_path):
+    with pytest.raises(ValueError):
+        request(tmp_path, mode='deploy')
+    with pytest.raises(ValueError):
+        request(tmp_path, mode='survey', deploy_target='dev')
+
+
+def test_implement_and_deploy_modes_get_write_access_and_checks(tmp_path, monkeypatch):
+    monkeypatch.setenv('CODEX_HOME', str(tmp_path/'codex'))
+    messages = Messages(tmp_path); service = MeetingIntakeService(messages, tmp_path/'ledger.sqlite3')
+    service.launch(request(tmp_path, mode='deploy', deploy_target='qa'))
+    assert 'sandbox_mode="danger-full-access"' in messages.options.config_overrides
+    from backend.app.domain.entities.agent_configuration import AgentId
+    prompt = messages.configuration.agents[AgentId.GENERATOR].prompt
+    assert 'QA' in prompt and '## Checks' in prompt
+
+
+def test_plan_mode_is_read_only_then_decision_implements_once(tmp_path, monkeypatch):
+    from backend.app.application.services.meeting_intake_service import MeetingDecisionRequest
+    from backend.app.domain.entities.agent_configuration import AgentId
+    monkeypatch.setenv('CODEX_HOME', str(tmp_path/'codex'))
+    messages = Messages(tmp_path); service = MeetingIntakeService(messages, tmp_path/'ledger.sqlite3')
+    service.launch(request(tmp_path, mode='plan'))
+    assert 'sandbox_mode="read-only"' in messages.options.config_overrides
+    assert '## Plan propuesto' in messages.configuration.agents[AgentId.GENERATOR].prompt
+    status = {'value': 'running'}
+    messages.get_job = lambda job_id: SimpleNamespace(status=status['value'])
+    approve = MeetingDecisionRequest(decision='approve', notes='Sin tocar la factura', deploy_target='dev')
+    with pytest.raises(MeetingIntakeConflict, match='plan_not_ready'):
+        service.decide('a'*64, approve)
+    status['value'] = 'completed'
+    first = service.decide('a'*64, approve); second = service.decide('a'*64, approve)
+    assert first['state'] == 'started' and first == second and messages.submits == 2
+    assert 'sandbox_mode="danger-full-access"' in messages.options.config_overrides
+    assert 'DEV' in messages.configuration.agents[AgentId.GENERATOR].prompt
+    with pytest.raises(MeetingIntakeConflict):
+        service.decide('a'*64, MeetingDecisionRequest(decision='reject'))
+
+
+def test_decision_rejected_for_non_plan_meeting(tmp_path, monkeypatch):
+    from backend.app.application.services.meeting_intake_service import MeetingDecisionRequest
+    monkeypatch.setenv('CODEX_HOME', str(tmp_path/'codex'))
+    messages = Messages(tmp_path); service = MeetingIntakeService(messages, tmp_path/'ledger.sqlite3')
+    service.launch(request(tmp_path))
+    with pytest.raises(ValueError, match='no_plan'):
+        service.decide('a'*64, MeetingDecisionRequest(decision='approve'))

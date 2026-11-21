@@ -52,8 +52,10 @@ def translate_options(options: CodexRunOptions | None, *, workdir: str | None) -
     effort = overrides.pop("model_reasoning_effort", None)
     if effort not in {None, "low", "medium", "high", "xhigh", "max", "minimal", "none"}:
         raise ValueError("Unsupported reasoning option")
-    if readonly not in {None, "read-only"}:
+    if readonly not in {None, "read-only", "danger-full-access"}:
         raise ValueError("Claude cannot reproduce this Codex sandbox mode automatically")
+    if readonly == "danger-full-access" and approval != "never":
+        raise ValueError("Claude full access requires approval_policy=never (bypassPermissions)")
     if approval not in {None, "never"}:
         raise ValueError("Claude cannot reproduce this approval policy automatically")
     if search not in {None, "disabled"}:
@@ -76,6 +78,9 @@ def translate_options(options: CodexRunOptions | None, *, workdir: str | None) -
         # not a claim that Claude implements Codex's OS sandbox.
         args += ["--safe-mode", "--restricted", "--strict-mcp-config", "--tools",
                  "" if no_tools else "Read,Glob,Grep", "--permission-mode", "dontAsk"]
+    elif readonly == "danger-full-access":
+        # Codex full access without approvals == Claude never asking.
+        args += ["--permission-mode", "bypassPermissions"]
     elif approval == "never":
         args += ["--permission-mode", "dontAsk"]
     if mcp and readonly != "read-only" and not no_tools:
@@ -84,7 +89,7 @@ def translate_options(options: CodexRunOptions | None, *, workdir: str | None) -
         args += ["--disallowedTools", "WebSearch,WebFetch"]
     context = []
     if options.search_enabled:
-        if readonly or no_tools or search == "disabled":
+        if readonly == "read-only" or no_tools or search == "disabled":
             raise ValueError("Search conflicts with the requested read-only/no-tools policy")
         args += ["--allowedTools", "WebSearch"]
         context.append("Web search was requested; use WebSearch when relevant.")
