@@ -9,6 +9,9 @@ import tomllib
 from backend.app.domain.entities.codex_options import CodexRunOptions
 
 
+NON_TOOL_FEATURES = frozenset({"apps", "plugins", "multi_agent"})
+
+
 def resolve_skill(skill: str, workdir: str | None) -> Path | None:
     if not re.fullmatch(r"[A-Za-z0-9._-]+", skill) or skill in {".", ".."}:
         return None
@@ -57,7 +60,10 @@ def translate_options(options: CodexRunOptions | None, *, workdir: str | None) -
         raise ValueError("Unsupported legacy web-search policy")
     features = overrides.pop("features", {})
     mcp = overrides.pop("mcp_servers", {})
-    no_tools = bool(features)
+    # Codex apps/plugins/multi-agent have no Claude file-tool equivalent; turning
+    # them off must not remove read access (meeting intake needs Read/Glob/Grep).
+    # Any other disabled feature (e.g. shell_tool) keeps the legacy no-tools policy.
+    no_tools = any(key not in NON_TOOL_FEATURES for key in features)
     # Legacy analyzer disables all tools. Accept only restrictions, never enables.
     if (not isinstance(features, dict) or any(value is not False for value in features.values())
             or not isinstance(mcp, dict)
