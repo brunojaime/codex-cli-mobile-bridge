@@ -74,7 +74,8 @@ def run_claude(
                 "--permission-mode",
                 project_permissions.effective_mode(workdir, provider._claude_permission_mode),
             ]
-        if provider._claude_chrome:
+        if provider._claude_chrome and "--tools" not in option_args:
+            # Restricted (read-only / no-tools) runs must not gain browser tools.
             command.append("--chrome")
         command += option_args
         if option_context and not message.lstrip().startswith("/"):

@@ -270,6 +270,16 @@ def test_claude_readonly_and_no_tools_translation():
     assert args[args.index("--tools") + 1] == ""
 
 
+def test_meeting_intake_options_keep_read_tools_without_chrome():
+    p = provider(claude_chrome=True)
+    result = wait(p, p.execute("relevamiento", model="claude-opus-5-5", codex_options=CodexRunOptions(config_overrides=(
+        'sandbox_mode="read-only"', 'approval_policy="never"', 'web_search="disabled"',
+        'features.apps=false', 'features.plugins=false', 'features.multi_agent=false'))))
+    argv = json.loads(result.response)["argv"]
+    assert argv[argv.index("--tools") + 1] == "Read,Glob,Grep"
+    assert "--chrome" not in argv
+
+
 @pytest.mark.parametrize("options", [CodexRunOptions(profile="legacy"),
     CodexRunOptions(mcp_server_ids=("legacy-mcp",)),
     CodexRunOptions(config_overrides=('features.shell_tool=true', 'features.apps=false'))])
