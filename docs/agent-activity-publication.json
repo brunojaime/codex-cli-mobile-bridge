@@ -1,0 +1,218 @@
+{
+  "targets": [
+    {
+      "target": "lenovo-dev",
+      "url": "http://127.0.0.1:5178",
+      "api_url": "http://127.0.0.1:8001",
+      "revision": "activity-20261117T004022Z-17ca4c6b7d80",
+      "main_sha256": "17ca4c6b7d806e49bc92902180729faf5c791a933c94f85c316c1bc5c11413f3",
+      "backup": "/home/brunojaime/.local/share/codex-bridge-runtime/backups/fronts-20261117T004022Z/lenovo-dev"
+    },
+    {
+      "target": "lenovo-prod",
+      "url": "http://127.0.0.1:5179",
+      "api_url": "http://127.0.0.1:8000",
+      "revision": "activity-20261117T004022Z-17ca4c6b7d80",
+      "main_sha256": "17ca4c6b7d806e49bc92902180729faf5c791a933c94f85c316c1bc5c11413f3",
+      "backup": "/home/brunojaime/.local/share/codex-bridge-runtime/backups/fronts-20261117T004022Z/lenovo-prod"
+    },
+    {
+      "target": "batata-dev",
+      "url": "http://127.0.0.1:5188",
+      "api_url": "http://127.0.0.1:18201",
+      "revision": "activity-20261117T004022Z-17ca4c6b7d80",
+      "main_sha256": "17ca4c6b7d806e49bc92902180729faf5c791a933c94f85c316c1bc5c11413f3",
+      "backup": "/home/brunojaime/.local/share/codex-bridge-runtime/backups/fronts-20261117T004022Z/batata-dev"
+    },
+    {
+      "target": "batata-prod",
+      "url": "http://127.0.0.1:5189",
+      "api_url": "http://127.0.0.1:18200",
+      "revision": "activity-20261117T004022Z-17ca4c6b7d80",
+      "main_sha256": "17ca4c6b7d806e49bc92902180729faf5c791a933c94f85c316c1bc5c11413f3",
+      "backup": "/home/brunojaime/.local/share/codex-bridge-runtime/backups/fronts-20261117T004022Z/batata-prod"
+    }
+  ],
+  "browser_checks": [
+    {
+      "key": "lenovo-dev",
+      "web": 5178,
+      "api": 8001,
+      "env": "dev",
+      "label": "Lenovo DEV",
+      "server": "lenovo-dev",
+      "environment": "dev",
+      "revision": "activity-20261117T004022Z-17ca4c6b7d80",
+      "title": "Codex Bridge Lenovo DEV",
+      "apiConfigured": "http://127.0.0.1:8001",
+      "errors": [],
+      "ok": true
+    },
+    {
+      "key": "lenovo-prod",
+      "web": 5179,
+      "api": 8000,
+      "env": "prod",
+      "label": "Lenovo PROD",
+      "server": "lenovo-prod",
+      "environment": "prod",
+      "revision": "activity-20261117T004022Z-17ca4c6b7d80",
+      "title": "Codex Bridge Lenovo PROD",
+      "apiConfigured": "http://127.0.0.1:8000",
+      "errors": [],
+      "ok": true
+    },
+    {
+      "key": "batata-dev",
+      "web": 5188,
+      "api": 18201,
+      "env": "dev",
+      "label": "Batata DEV",
+      "server": "local-machine",
+      "environment": "dev",
+      "revision": "activity-20261117T004022Z-17ca4c6b7d80",
+      "title": "Codex Bridge Batata DEV",
+      "apiConfigured": "http://127.0.0.1:18201",
+      "errors": [],
+      "ok": true
+    },
+    {
+      "key": "batata-prod",
+      "web": 5189,
+      "api": 18200,
+      "env": "prod",
+      "label": "Batata PROD",
+      "server": "local-machine",
+      "environment": "prod",
+      "revision": "activity-20261117T004022Z-17ca4c6b7d80",
+      "title": "Codex Bridge Batata PROD",
+      "apiConfigured": "http://127.0.0.1:18200",
+      "errors": [],
+      "ok": true
+    }
+  ],
+  "real_concurrent_send": {
+    "session_id": "a3c3a083-9b2c-4b42-b43e-5518c1903f24",
+    "first_job_id": "22f1ec00-50aa-49d2-8c07-332f8ddfbfd8",
+    "first_status_when_sent": "running",
+    "second_job_id": "deeec380-e554-4f4a-a6eb-6a936aeb30eb",
+    "second_accepted_seconds": 0.08,
+    "second_status": "pending",
+    "second_phase": "Queued behind previous turn",
+    "first_final_status": "completed",
+    "second_final_status": "completed",
+    "first_activity_count": 3,
+    "second_activity_count": 2
+  },
+  "limits": [
+    "Backend event detail depends on each server version",
+    "Native in-turn steering was not added",
+    "Existing active primary backends were not restarted"
+  ],
+  "remote_fronts_data_ready": [
+    {
+      "key": "batata-dev",
+      "web": 5188,
+      "api": 18201,
+      "responses": [
+        {
+          "path": "/workspaces",
+          "status": 200
+        },
+        {
+          "path": "/health",
+          "status": 200
+        },
+        {
+          "path": "/capabilities",
+          "status": 200
+        },
+        {
+          "path": "/dev-pipeline/prod-update/status",
+          "status": 403
+        },
+        {
+          "path": "/sessions/page",
+          "status": 200
+        },
+        {
+          "path": "/agent-proposals",
+          "status": 200
+        },
+        {
+          "path": "/sessions/3a4f9a94-a50c-423f-ac46-3a9c856483fe",
+          "status": 200
+        },
+        {
+          "path": "/agent-profiles",
+          "status": 200
+        }
+      ],
+      "failed": [],
+      "bodyLength": 429,
+      "bodyStart": "Projects\nWhatsApp · codex-cli-mobile-bridge Server: Local • codex-cli-mobile-bridge • Last run completed WhatsApp Intake\nPropuestas del agente\nAgents: Solo generator\nView summary\nDeploys · Workspace\nB"
+    },
+    {
+      "key": "batata-prod",
+      "web": 5189,
+      "api": 18200,
+      "responses": [
+        {
+          "path": "/health",
+          "status": 200
+        },
+        {
+          "path": "/capabilities",
+          "status": 200
+        }
+      ],
+      "failed": [],
+      "bodyLength": 299,
+      "bodyStart": "Projects\nCodex Remote Server: Local\nPropuestas del agente\nAgents\nView summary\nDeploys · Workspace\nBacklog · Workspace\nApps\nProject secrets\nWhat are we doing?\nOperations\nCodex tools\nSave current agent\n"
+    }
+  ],
+  "batata_prod_ready": {
+    "readyOk": true,
+    "responses": [
+      {
+        "path": "/dev-pipeline/prod-update/status",
+        "status": 200
+      },
+      {
+        "path": "/health",
+        "status": 200
+      },
+      {
+        "path": "/capabilities",
+        "status": 200
+      },
+      {
+        "path": "/workspaces",
+        "status": 200
+      },
+      {
+        "path": "/agent-proposals",
+        "status": 200
+      },
+      {
+        "path": "/sessions/page",
+        "status": 200
+      },
+      {
+        "path": "/sessions/fac11f9b-a078-4a5a-9848-d16be45edd23",
+        "status": 200
+      },
+      {
+        "path": "/agent-profiles",
+        "status": 200
+      }
+    ],
+    "bodyStart": "Projects\nObjective · recovery · ef1664a8ff24eb8d106d5e63 Server: Local • nienfos-team-bf17a88365fe8b192137ebc4-286-recovery • Last run completed Generator\nPropuestas del agente\nAgents: Solo generator\nView summary\nDeploys · Workspace\nBacklog · Workspa"
+  },
+  "legacy_shortcut": {
+    "name": "Lenovo Prod",
+    "previous_target_unreachable": true,
+    "now_opens": "http://127.0.0.1:5179",
+    "original_launcher_backup": "/home/brunojaime/.local/share/codex-bridge-runtime/backups/legacy-lenovo-prod-activity"
+  }
+}

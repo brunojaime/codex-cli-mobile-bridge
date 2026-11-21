@@ -323,3 +323,15 @@ def test_auto_permission_mode_preserves_readonly_policy(tmp_path, restricted):
     assert "--dangerously-skip-permissions" not in argv
     if restricted:
         assert argv[argv.index("--tools") + 1] == "Read,Glob,Grep"
+
+
+def test_claude_preserves_public_progress_and_tool_results():
+    p = provider()
+    job = p.execute("ACTIVITY_FIXTURE", model="claude:sonnet")
+    snapshot = wait(p, job)
+    assert snapshot.status == JobStatus.COMPLETED
+    assert len(snapshot.activities) == 2
+    assert snapshot.activities[0]["title"] == "Voy a revisar el archivo"
+    assert snapshot.activities[1]["status"] == "completed"
+    assert "app.dart" in snapshot.activities[1]["detail"]
+    assert "File contents" in snapshot.activities[1]["detail"]

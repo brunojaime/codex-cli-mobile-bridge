@@ -35,13 +35,21 @@ void main() {
     if (!controllerDisposed) controller.dispose();
   });
 
-  test('outbox: pending audio frees another chat and late receipt keeps selection', () async {
+  test(
+      'outbox: pending audio frees another chat and late receipt keeps selection',
+      () async {
     final transport = QueueApi();
-    final queue = MessageOutbox(api: transport, store: MemoryStore(), pollInterval: const Duration(milliseconds: 5));
+    final queue = MessageOutbox(
+        api: transport,
+        store: MemoryStore(),
+        pollInterval: const Duration(milliseconds: 5));
     final queuedController = ChatController(apiClient: api, outbox: queue);
     try {
       await queuedController.selectSession('a');
-      expect(await queuedController.enqueueAudio(XFile.fromData(Uint8List.fromList([1,2,3]), name: 'note.m4a')), isTrue);
+      expect(
+          await queuedController.enqueueAudio(
+              XFile.fromData(Uint8List.fromList([1, 2, 3]), name: 'note.m4a')),
+          isTrue);
       await until(() => transport.submissions.isNotEmpty);
       expect(queuedController.messages.last.text, contains('audio'));
       await queuedController.selectSession('b');
@@ -52,17 +60,24 @@ void main() {
       transport.complete(transport.submissions.first['id'] as String);
       await until(() => queuedController.activeJobCountForSession('a') == 1);
       expect(queuedController.selectedSessionId, 'b');
-      expect(queuedController.messages.any((m) => m.text.contains('Transcribiendo')), isFalse);
+      expect(
+          queuedController.messages
+              .any((m) => m.text.contains('Transcribiendo')),
+          isFalse);
     } finally {
-      queuedController.dispose(); queue.dispose();
+      queuedController.dispose();
+      queue.dispose();
     }
   });
 
-  test('rollout: old backend keeps legacy sends, upgrade enables queue without another APK', () async {
+  test(
+      'rollout: old backend keeps legacy sends, upgrade enables queue without another APK',
+      () async {
     final legacy = _RolloutApi();
     final transport = QueueApi();
     final queue = MessageOutbox(api: transport, store: MemoryStore());
-    final rolling = ChatController(apiClient: legacy, outbox: queue, negotiateOutbox: true);
+    final rolling =
+        ChatController(apiClient: legacy, outbox: queue, negotiateOutbox: true);
     try {
       await rolling.selectSession('a');
       final sending = rolling.enqueueMessage('before backend restart');
@@ -70,7 +85,10 @@ void main() {
       expect(queue.entries, isEmpty);
       legacy.accept.complete(_accepted());
       expect(await sending, isTrue);
-      expect(await rolling.enqueueAudio(XFile.fromData(Uint8List.fromList([1,2,3]), name: 'note.m4a')), isTrue);
+      expect(
+          await rolling.enqueueAudio(
+              XFile.fromData(Uint8List.fromList([1, 2, 3]), name: 'note.m4a')),
+          isTrue);
       expect(legacy.audioCount, 1);
       expect(transport.submissions, isEmpty);
       legacy.supportsOutbox = true;
@@ -80,7 +98,8 @@ void main() {
       expect(transport.submissions.single['message'], 'after backend restart');
       expect(legacy.sendCount, 1);
     } finally {
-      rolling.dispose(); queue.dispose();
+      rolling.dispose();
+      queue.dispose();
     }
   });
 
@@ -361,12 +380,16 @@ void main() {
     });
   }
 
-  testWidgets('send: first conversation shows pending bubble before HTTP acceptance', (tester) async {
+  testWidgets(
+      'send: first conversation shows pending bubble before HTTP acceptance',
+      (tester) async {
     api.accept = Completer<JobStatusResponse>();
-    await tester.pumpWidget(MaterialApp(home: ChatScreen(
+    await tester.pumpWidget(MaterialApp(
+        home: ChatScreen(
       initialApiBaseUrl: 'http://127.0.0.1:1',
       notificationService: const NoopChatNotificationService(),
-      controllerOverride: controller, enableServerBootstrap: false,
+      controllerOverride: controller,
+      enableServerBootstrap: false,
     )));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField).first, 'first message');
@@ -380,6 +403,44 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     controller.dispose();
     controllerDisposed = true;
+  });
+
+  testWidgets('composer sends a second message while the first job is running',
+      (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final liveApi = _ConcurrentApi();
+    final live = ChatController(apiClient: liveApi);
+    await live.selectSession('a');
+    await tester.pumpWidget(MaterialApp(
+        home: ChatScreen(
+      initialApiBaseUrl: 'http://127.0.0.1:1',
+      notificationService: const NoopChatNotificationService(),
+      controllerOverride: live,
+      enableServerBootstrap: false,
+    )));
+    await tester.pumpAndSettle();
+    final field = find.byType(TextField).first;
+    await tester.enterText(field, 'Primer mensaje');
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.arrow_upward_rounded).first);
+    await tester.pumpAndSettle();
+    expect(live.activeJobCountForSession('a'), 1);
+    expect(tester.widget<TextField>(field).enabled, isTrue);
+    await tester.enterText(field, 'Segundo mensaje');
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.arrow_upward_rounded).first);
+    await tester.pumpAndSettle();
+    expect(liveApi.received, ['Primer mensaje', 'Segundo mensaje']);
+    expect(live.activeJobCountForSession('a'), 2);
+    expect(live.queuedJobCountForSession('a'), 1);
+    expect(find.text('En cola'), findsOneWidget);
+    expect(find.textContaining('Podés seguir enviando'), findsOneWidget);
+    expect(tester.widget<TextField>(field).controller!.text, isEmpty);
+    await tester.pumpWidget(const SizedBox());
+    live.dispose();
   });
 
   testWidgets('send: real bubble distinguishes pending from accepted',
@@ -459,13 +520,58 @@ class _RolloutApi extends _DelayedApi {
   bool supportsOutbox = false;
   int audioCount = 0;
   @override
-  Future<ServerCapabilities> getCapabilities() async => ServerCapabilities.fromJson({
-    'features': {'message_outbox': supportsOutbox},
-  });
+  Future<ServerCapabilities> getCapabilities() async =>
+      ServerCapabilities.fromJson({
+        'features': {'message_outbox': supportsOutbox},
+      });
   @override
-  Future<JobStatusResponse> sendAudioMessage(XFile audioFile, {String? message,
-    String? language, String? sessionId, String? workspacePath, CodexRunOptions? codexRunOptions}) async {
+  Future<JobStatusResponse> sendAudioMessage(XFile audioFile,
+      {String? message,
+      String? language,
+      String? sessionId,
+      String? workspacePath,
+      CodexRunOptions? codexRunOptions}) async {
     audioCount += 1;
     return accept.future;
+  }
+}
+
+class _ConcurrentApi extends _DelayedApi {
+  final List<String> received = [];
+  @override
+  Future<SessionDetail> getSession(String id,
+          {String? before, int? limit, bool fullTranscript = false}) async =>
+      _session(id).copyWith(messages: [
+        for (var i = 0; i < received.length; i++) ...[
+          _message('concurrent-user-$i', received[i], runId: 'run-${i + 1}')
+              .copyWith(
+                  jobId: 'concurrent-${i + 1}',
+                  jobStatus: i == 0 ? 'running' : 'pending'),
+          ChatMessage(
+              id: 'concurrent-assistant-$i',
+              text: '',
+              isUser: false,
+              authorType: ChatMessageAuthorType.assistant,
+              status: ChatMessageStatus.pending,
+              createdAt: _date.add(Duration(seconds: i + 1)),
+              updatedAt: _date,
+              jobId: 'concurrent-${i + 1}',
+              jobStatus: i == 0 ? 'running' : 'pending',
+              runId: 'run-${i + 1}'),
+        ]
+      ]);
+
+  @override
+  Future<JobStatusResponse> sendMessage(String message,
+      {String? sessionId,
+      String? workspacePath,
+      CodexRunOptions? codexRunOptions}) async {
+    received.add(message);
+    return JobStatusResponse(
+        jobId: 'concurrent-${received.length}',
+        sessionId: 'a',
+        status: received.length == 1 ? 'running' : 'pending',
+        elapsedSeconds: 0,
+        runId: 'run-${received.length}');
   }
 }

@@ -2800,6 +2800,7 @@ class ChatMessageResponse(BaseModel):
     job_id: str | None = None
     job_status: JobStatus | None = None
     job_phase: str | None = None
+    job_activities: list[dict[str, str]] = Field(default_factory=list)
     job_latest_activity: str | None = None
     job_elapsed_seconds: int | None = None
     provider_session_id: str | None = None
@@ -2836,9 +2837,10 @@ class ChatMessageResponse(BaseModel):
             status=message.status,
             created_at=message.created_at,
             updated_at=message.updated_at,
-            job_id=message.job_id,
+            job_id=message.job_id or (job.id if job else None),
             job_status=job.status if job else None,
             job_phase=job.phase if job else None,
+            job_activities=job.activities if job else [],
             job_latest_activity=job.latest_activity if job else None,
             job_elapsed_seconds=job.elapsed_seconds if job else None,
             provider_session_id=job.provider_session_id if job else None,
@@ -3459,6 +3461,7 @@ class JobResponse(BaseModel):
     run_id: str | None = None
     submission_token: str | None = None
     phase: str | None = None
+    activities: list[dict[str, str]] = Field(default_factory=list)
     latest_activity: str | None = None
     elapsed_seconds: int
     created_at: datetime
@@ -3482,6 +3485,7 @@ class JobResponse(BaseModel):
             run_id=job.run_id,
             submission_token=job.submission_token,
             phase=job.phase,
+            activities=job.activities,
             latest_activity=job.latest_activity,
             elapsed_seconds=job.elapsed_seconds,
             created_at=job.created_at,

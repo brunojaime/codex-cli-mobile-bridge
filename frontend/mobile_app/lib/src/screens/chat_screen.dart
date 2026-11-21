@@ -1584,6 +1584,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                   onDraftChanged: _draftUpdaterForCurrentSession(),
                   onBackgroundDraftChanged: _draftUpdaterForCurrentSession(onlyIfUnchanged: true),
                   onSend: _handleSend,
+                  activeJobCount: _chatController.selectedSessionId == null ? 0 : _chatController.activeJobCountForSession(_chatController.selectedSessionId!),
+                  queuedJobCount: _chatController.selectedSessionId == null ? 0 : _chatController.queuedJobCountForSession(_chatController.selectedSessionId!),
                   onSendAudio: _audioSenderForCurrentSession(),
                   onSendAttachments: _attachmentSenderForCurrentSession(),
                   onBeginRecording: _handleBeginRecording,
@@ -7366,6 +7368,8 @@ class _Composer extends StatefulWidget {
     required this.onDraftChanged,
     this.onBackgroundDraftChanged,
     required this.onSend,
+    this.activeJobCount = 0,
+    this.queuedJobCount = 0,
     required this.onSendAudio,
     required this.onSendAttachments,
     required this.onBeginRecording,
@@ -7386,6 +7390,8 @@ class _Composer extends StatefulWidget {
   final ValueChanged<_ComposerDraft> onDraftChanged;
   final ValueChanged<_ComposerDraft>? onBackgroundDraftChanged;
   final Future<bool> Function() onSend;
+  final int activeJobCount;
+  final int queuedJobCount;
   final Future<bool> Function(XFile audioFile, {String? message}) onSendAudio;
   final Future<bool> Function(
     List<_PendingAttachmentDraft> attachments, {
@@ -7700,6 +7706,14 @@ class _ComposerState extends State<_Composer> {
                   _slashCommandErrorText = null;
                 });
               },
+            ),
+          ),
+        if (widget.activeJobCount > 0)
+          Padding(
+            padding: const EdgeInsets.only(left: 12, bottom: 8),
+            child: Text(
+              '${widget.activeJobCount - widget.queuedJobCount} en curso · ${widget.queuedJobCount} en cola · Podés seguir enviando',
+              style: const TextStyle(color: Color(0xFFB8C8E0), fontSize: 12),
             ),
           ),
         TextField(

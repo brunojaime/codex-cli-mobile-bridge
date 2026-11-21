@@ -27,6 +27,13 @@ print(
     ),
     flush=True,
 )
+if "ACTIVITY_FIXTURE" in text:
+    for event in [
+        {"type": "assistant", "message": {"id": "message-progress", "content": [{"type": "text", "text": "Voy a revisar el archivo"}]}},
+        {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "read-file", "name": "Read", "input": {"file_path": "app.dart"}}]}},
+        {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "read-file", "content": [{"type": "text", "text": "File contents"}]}]}},
+    ]:
+        print(json.dumps(event), flush=True)
 if "MISSING_RESULT_FIXTURE" not in text:
     print(
         json.dumps(

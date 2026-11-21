@@ -149,7 +149,7 @@ class SqliteChatRepository(ChatRepository):
                        NULL AS submission_token, auto_chain_processed,
                        NULL AS execution_message, '[]' AS image_paths_json,
                        '[]' AS video_paths_json, status, NULL AS response,
-                       NULL AS error, phase, latest_activity,
+                       NULL AS error, phase, latest_activity, '[]' AS activities_json,
                        created_at, updated_at, completed_at
                 FROM jobs ORDER BY updated_at DESC, id DESC
             """).fetchall()
@@ -717,6 +717,7 @@ class SqliteChatRepository(ChatRepository):
         self._ensure_column(connection, "jobs", "error", "TEXT")
         self._ensure_column(connection, "jobs", "phase", "TEXT")
         self._ensure_column(connection, "jobs", "latest_activity", "TEXT")
+        self._ensure_column(connection, "jobs", "activities_json", "TEXT NOT NULL DEFAULT '[]'")
         self._ensure_column(connection, "jobs", "completed_at", "TEXT")
         self._ensure_column(
             connection, "messages", "author_type", "TEXT NOT NULL DEFAULT 'human'"
@@ -1213,6 +1214,7 @@ class SqliteChatRepository(ChatRepository):
             error=row["error"],
             phase=row["phase"],
             latest_activity=row["latest_activity"],
+            activities=json.loads(row["activities_json"] or "[]"),
             created_at=self._deserialize_required_datetime(
                 row["created_at"],
                 table="jobs",
@@ -1760,10 +1762,11 @@ class SqliteChatRepository(ChatRepository):
                 error,
                 phase,
                 latest_activity,
+                activities_json,
                 created_at,
                 updated_at,
                 completed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 session_id = excluded.session_id,
                 message = excluded.message,
@@ -1785,6 +1788,7 @@ class SqliteChatRepository(ChatRepository):
                 error = excluded.error,
                 phase = excluded.phase,
                 latest_activity = excluded.latest_activity,
+                activities_json = excluded.activities_json,
                 created_at = excluded.created_at,
                 updated_at = excluded.updated_at,
                 completed_at = excluded.completed_at
@@ -1811,6 +1815,7 @@ class SqliteChatRepository(ChatRepository):
                 job.error,
                 job.phase,
                 job.latest_activity,
+                json.dumps(job.activities, ensure_ascii=False),
                 self._serialize_datetime(job.created_at),
                 self._serialize_datetime(job.updated_at),
                 self._serialize_datetime(job.completed_at),

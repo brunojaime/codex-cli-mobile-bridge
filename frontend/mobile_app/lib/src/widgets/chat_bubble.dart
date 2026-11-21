@@ -6,6 +6,7 @@ import '../models/agent_configuration.dart';
 import '../models/chat_message.dart';
 import '../utils/chat_timestamp_formatter.dart';
 import 'rich_message_content.dart';
+import 'agent_activity_timeline.dart';
 
 class ChatBubble extends StatelessWidget {
   const ChatBubble({
@@ -145,17 +146,39 @@ class ChatBubble extends StatelessWidget {
               ],
               if (isUser && message.status == ChatMessageStatus.sending) ...[
                 Text('Enviando…',
-                    style: TextStyle(color: textColor.withValues(alpha: 0.74),
+                    style: TextStyle(
+                        color: textColor.withValues(alpha: 0.74),
                         fontSize: 12)),
                 const SizedBox(height: 6),
               ],
-              if (activityPresentation != null) ...[
+              if (isUser &&
+                  message.status != ChatMessageStatus.sending &&
+                  (message.jobStatus == 'pending' ||
+                      message.jobStatus == 'running')) ...[
+                Text(
+                    message.jobStatus == 'pending'
+                        ? 'En cola'
+                        : 'El agente lo está atendiendo',
+                    style: TextStyle(
+                        color: textColor.withValues(alpha: 0.8), fontSize: 12)),
+                const SizedBox(height: 6),
+              ],
+              if (activityPresentation != null &&
+                  (message.activities.isEmpty || isCollapsed)) ...[
                 _ActivityStatusStrip(
                   presentation: activityPresentation,
                   textColor: textColor,
                 ),
                 const SizedBox(height: 10),
               ],
+              if (!isUser && !isCollapsed && message.activities.isNotEmpty)
+                AgentActivityTimeline(
+                  key: ValueKey('activity-${message.id}'),
+                  activities: message.activities,
+                  isRunning: message.isPendingLike,
+                  responseText: message.text,
+                  onLinkTap: onLinkTap,
+                ),
               if (isCollapsed)
                 _CollapsedMessagePreview(
                   text: collapsedPreview,

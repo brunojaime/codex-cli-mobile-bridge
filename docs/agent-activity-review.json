@@ -1,0 +1,147 @@
+{
+  "kind": "visual-reference",
+  "scope": "Historial de actividad dentro de cada respuesta del chat",
+  "date": "2026-11-16",
+  "composition_decision": {
+    "considered": [
+      "Panel de actividad separado del chat",
+      "Secuencia dentro de la respuesta"
+    ],
+    "chosen": "Secuencia dentro de la respuesta",
+    "reason": "Conserva contexto de agente y turno en móvil; evita otra navegación y tarjetas de estado repetidas."
+  },
+  "references": [
+    {
+      "id": "linear_proyecto",
+      "role": "direction",
+      "inspected": true,
+      "complete": true,
+      "criteria": [
+        "RV146",
+        "RV147",
+        "RV148"
+      ],
+      "reason": "Contexto y estado compactos en el detalle",
+      "decisions": [
+        "Actividad junto a la respuesta",
+        "Estado reconocible con icono y texto",
+        "Detalles por demanda"
+      ]
+    },
+    {
+      "id": "notion_tabla",
+      "role": "pattern",
+      "inspected": true,
+      "complete": false,
+      "criteria": [
+        "RV140",
+        "RV142"
+      ],
+      "reason": "Anatomía estable y controles secundarios por demanda",
+      "decisions": [
+        "Nombre, estado y resumen en posiciones estables",
+        "Comandos y salida desplegables"
+      ]
+    },
+    {
+      "id": "todoist_tablero",
+      "role": "pattern",
+      "inspected": true,
+      "complete": true,
+      "criteria": [
+        "RV143",
+        "RV144"
+      ],
+      "reason": "Unidades de tarea compactas",
+      "decisions": [
+        "Una fila por herramienta",
+        "Actualizar la misma fila al terminar"
+      ]
+    }
+  ],
+  "screenshots": [
+    {
+      "path": "../frontend/mobile_app/test/activity_preview/activity-320.png",
+      "width": 320,
+      "text_scale": 1.25,
+      "source": "Flutter widget test fixture; not a published session"
+    },
+    {
+      "path": "../frontend/mobile_app/test/activity_preview/activity-390.png",
+      "width": 390,
+      "text_scale": 1.25,
+      "source": "Flutter widget test fixture; not a published session"
+    },
+    {
+      "path": "../frontend/mobile_app/test/activity_preview/activity-1280.png",
+      "width": 1280,
+      "text_scale": 1.25,
+      "source": "Flutter widget test fixture; not a published session"
+    }
+  ],
+  "delta": [
+    {
+      "rules": [
+        "V04",
+        "V09",
+        "V13",
+        "C08",
+        "D07"
+      ],
+      "status": "Verificado en widgets",
+      "evidence": "Capturas inspeccionadas; detalles desplegables y acceso a pasos anteriores"
+    },
+    {
+      "rules": [
+        "E02",
+        "E09",
+        "E15",
+        "E16",
+        "V12"
+      ],
+      "status": "Verificado en pruebas de protocolo y widgets",
+      "evidence": "Estados running/completed/failed/cancelled/unknown; sin inventar éxito"
+    },
+    {
+      "rules": [
+        "M05",
+        "M08",
+        "M09",
+        "A02",
+        "A08",
+        "A09"
+      ],
+      "status": "Verificado en pruebas de widgets",
+      "evidence": "Expansión, teclado, texto ampliado y movimiento reducido"
+    },
+    {
+      "rules": [
+        "S08",
+        "O02"
+      ],
+      "status": "Verificado en pruebas locales",
+      "evidence": "Reapertura SQLite, serialización API, snapshots y protección de eventos atrasados"
+    },
+    {
+      "rules": [
+        "B01",
+        "B02",
+        "H01"
+      ],
+      "status": "No aplica al delta de presentación",
+      "reason": "No se incorporan mutaciones administrativas; historial producido por ejecución ya autorizada"
+    },
+    {
+      "rules": [
+        "Q01",
+        "Q05"
+      ],
+      "status": "Verificado en instancia local de revisión y apertura de los cuatro fronts",
+      "evidence": "docs/agent-activity-publication.json: navegador, WebSocket real y dos turnos consecutivos; no acredita pruebas manuales en teléfono ni native steering"
+    }
+  ],
+  "limits": [
+    "Referencias estáticas no prueban sus interacciones",
+    "No se afirma conformidad integral ni una auditoría de toda la aplicación"
+  ]
+}

@@ -1,3 +1,4 @@
+import 'agent_activity.dart';
 import 'agent_configuration.dart';
 
 enum ChatMessageStatus {
@@ -75,6 +76,7 @@ class ChatMessage {
     this.jobStatus,
     this.jobPhase,
     this.jobLatestActivity,
+    this.activities = const [],
     this.jobElapsedSeconds,
     this.providerSessionId,
     this.completedAt,
@@ -104,6 +106,7 @@ class ChatMessage {
   final String? jobStatus;
   final String? jobPhase;
   final String? jobLatestActivity;
+  final List<AgentActivity> activities;
   final int? jobElapsedSeconds;
   final String? providerSessionId;
   final DateTime? completedAt;
@@ -161,6 +164,7 @@ class ChatMessage {
       jobStatus: json['job_status'] as String?,
       jobPhase: json['job_phase'] as String?,
       jobLatestActivity: json['job_latest_activity'] as String?,
+      activities: _messageActivitiesFromJson(json),
       jobElapsedSeconds: json['job_elapsed_seconds'] as int?,
       providerSessionId: json['provider_session_id'] as String?,
       completedAt: json['completed_at'] != null
@@ -191,6 +195,7 @@ class ChatMessage {
     String? jobStatus,
     String? jobPhase,
     String? jobLatestActivity,
+    List<AgentActivity>? activities,
     int? jobElapsedSeconds,
     String? providerSessionId,
     DateTime? createdAt,
@@ -222,6 +227,7 @@ class ChatMessage {
       jobStatus: jobStatus ?? this.jobStatus,
       jobPhase: jobPhase ?? this.jobPhase,
       jobLatestActivity: jobLatestActivity ?? this.jobLatestActivity,
+      activities: activities ?? this.activities,
       jobElapsedSeconds: jobElapsedSeconds ?? this.jobElapsedSeconds,
       providerSessionId: providerSessionId ?? this.providerSessionId,
       createdAt: createdAt ?? this.createdAt,
@@ -322,4 +328,23 @@ ChatMessageStatus _statusFromJson(String status) {
     default:
       return ChatMessageStatus.completed;
   }
+}
+
+List<AgentActivity> _messageActivitiesFromJson(Map<String, dynamic> json) {
+  final structured = parseAgentActivities(json['job_activities']);
+  final latest = json['job_latest_activity'];
+  if (structured.isNotEmpty ||
+      json['role'] == 'user' ||
+      latest is! String ||
+      latest.trim().isEmpty) {
+    return structured;
+  }
+  return [
+    AgentActivity(
+        id: 'status-${json['job_id']}-initial',
+        kind: 'status',
+        title: latest.trim(),
+        status: 'observed',
+        createdAt: DateTime.tryParse(json['updated_at'] as String? ?? ''))
+  ];
 }

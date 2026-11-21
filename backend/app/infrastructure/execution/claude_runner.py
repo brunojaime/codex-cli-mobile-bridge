@@ -9,9 +9,11 @@ import shlex
 import subprocess
 import threading
 from pathlib import Path
+from uuid import uuid4
 
 from backend.app.domain.entities.job import JobStatus
 from backend.app.infrastructure.execution.claude_options import translate_options
+from backend.app.infrastructure.execution.activity import activity_item, entry
 
 
 def run_claude(
@@ -129,8 +131,21 @@ def run_claude(
                     if kind == "result":
                         result = event
                     elif kind == "assistant":
-                        for block in event.get("message", {}).get("content", []):
+                        message_id = str(event.get("message", {}).get("id") or uuid4())
+                        for block_index, block in enumerate(
+                            event.get("message", {}).get("content", [])
+                        ):
                             if block.get("type") == "text":
+                                provider._record_activity(
+                                    job_id,
+                                    entry(
+                                        f"{message_id}-{block_index}",
+                                        "commentary",
+                                        block.get("text", ""),
+                                        "",
+                                        "completed",
+                                    ),
+                                )
                                 update(
                                     status=JobStatus.RUNNING,
                                     phase="Claude responding",
@@ -138,10 +153,48 @@ def run_claude(
                                     latest_activity="Claude is responding.",
                                 )
                             elif block.get("type") == "tool_use":
+                                provider._record_activity(
+                                    job_id, activity_item(block, completed=False)
+                                )
                                 update(
                                     status=JobStatus.RUNNING,
                                     phase="Claude working",
                                     latest_activity=f"Claude: {block.get('name', 'tool')}",
+                                )
+                    elif kind == "user":
+                        for block in event.get("message", {}).get("content", []):
+                            if block.get("type") != "tool_result":
+                                continue
+                            tool_id = block.get("tool_use_id")
+                            snapshot = provider.get_snapshot(job_id)
+                            previous = next(
+                                (
+                                    item
+                                    for item in snapshot.activities
+                                    if item["id"] == tool_id
+                                ),
+                                None,
+                            )
+                            if previous is not None:
+                                content = block.get("content", "")
+                                if isinstance(content, list):
+                                    content = "\n".join(
+                                        str(part.get("text", ""))
+                                        for part in content
+                                        if isinstance(part, dict)
+                                        and part.get("type") == "text"
+                                    )
+                                provider._record_activity(
+                                    job_id,
+                                    {
+                                        **previous,
+                                        "status": "failed"
+                                        if block.get("is_error")
+                                        else "completed",
+                                        "detail": (
+                                            previous["detail"] + "\n\n" + str(content)
+                                        )[:16000],
+                                    },
                                 )
                     elif kind == "system":
                         update(
